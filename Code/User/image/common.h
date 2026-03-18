@@ -40,7 +40,7 @@
 // 正常状态默认看 y=90 附近；前方弯越急，会动态把该值往更小处推，形成更强前瞻。
 #define PUREANGLE_PREVIEW_BASE_IMAGE_Y   (90)
 // pure_angle 预瞄图像行允许推到的最远位置（越小越看远，也越激进）。
-#define PUREANGLE_PREVIEW_MIN_IMAGE_Y    (55)
+#define PUREANGLE_PREVIEW_MIN_IMAGE_Y    (60)
 // 预瞄曲率链的局部曲率计算跨度（点数）。
 #define PUREANGLE_PREVIEW_CURV_DIST      (3)
 // 预瞄曲率链的曲率 NMS 窗口大小（点数）。
@@ -52,7 +52,7 @@
 // 约等于 theta≈35deg，对应明显弯道，前推到最大。
 #define PUREANGLE_PREVIEW_CURVE_HIGH     (0.1809f)
 // 纯局部几何连续映射所允许的最大前推量（图像行）。
-#define PUREANGLE_PREVIEW_SHIFT_MAX      (24)
+#define PUREANGLE_PREVIEW_SHIFT_MAX      (20)
 // 特殊几何形态下的附加前推量：连续弯通常比普通弯更需要提前切入。
 #define PUREANGLE_PREVIEW_S_CURVE_SHIFT  (12)
 // 直角弯/大角度弯下的附加前推量。
