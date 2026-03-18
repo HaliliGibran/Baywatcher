@@ -6,20 +6,60 @@
 // 作用域: 文件内静态，全局“强制复位”请求（由 track_force_reset 置位）
 static std::atomic<bool> g_track_force_reset{false};
 
+namespace {
+
+static void set_runtime_normal_state(bool reset_follow_mode, bool clear_far_line)
+{
+    element_type = ElementType::NORMAL;
+    circle_state = CircleState::CIRCLE_NONE;
+    crossing_state = CrossingState::CROSSING_NONE;
+    circle_direction = CircleDirection::CIRCLE_DIR_NONE;
+    if (reset_follow_mode)
+    {
+        follow_mode = FollowLine::MIXED;
+    }
+    if (clear_far_line)
+    {
+        image_reset_far_line_state();
+    }
+}
+
+static void enter_crossing_runtime_state()
+{
+    element_type = ElementType::CROSSING;
+    if (crossing_state == CrossingState::CROSSING_NONE)
+    {
+        crossing_state = CrossingState::CROSSING_IN;
+    }
+    circle_state = CircleState::CIRCLE_NONE;
+    circle_direction = CircleDirection::CIRCLE_DIR_NONE;
+}
+
+static void enter_circle_runtime_state(CircleDirection direction)
+{
+    element_type = ElementType::CIRCLE;
+    if (circle_state == CircleState::CIRCLE_NONE)
+    {
+        circle_state = CircleState::CIRCLE_BEGIN;
+    }
+    crossing_state = CrossingState::CROSSING_NONE;
+    circle_direction = direction;
+}
+
+} // namespace
+
+void track_reset_element_runtime_state(bool reset_follow_mode)
+{
+    set_runtime_normal_state(reset_follow_mode, true);
+}
+
 // 功能: 强制复位赛道元素状态（清空状态机与中线缓存）
 // 类型: 全局功能函数
 // 关键参数: 无
 void track_force_reset()
 {
     // 先把全局状态置回默认（立刻生效）
-    element_type = ElementType::NORMAL;
-    circle_state = CircleState::CIRCLE_NONE;
-    crossing_state = CrossingState::CROSSING_NONE;
-    circle_direction = CircleDirection::CIRCLE_DIR_NONE;
-    follow_mode = FollowLine::MIXED;
-    if_find_far_line = false;
-    reset_pts(pts_far_left);
-    reset_pts(pts_far_right);
+    set_runtime_normal_state(true, true);
 
     // 复位各状态机内部计数器
     roundabout_reset();
@@ -162,14 +202,7 @@ void element_detect()
     // 手动复位（例如键盘输入 'c'）：清空投票/保护帧/锁定态，并把元素状态回到 NORMAL。
     if (g_track_force_reset.exchange(false))
     {
-        element_type = ElementType::NORMAL;
-        circle_state = CircleState::CIRCLE_NONE;
-        crossing_state = CrossingState::CROSSING_NONE;
-        circle_direction = CircleDirection::CIRCLE_DIR_NONE;
-        follow_mode = FollowLine::MIXED;
-        if_find_far_line = false;
-        reset_pts(pts_far_left);
-        reset_pts(pts_far_right);
+        set_runtime_normal_state(true, true);
 
         crossing_vote = 0;
         circle_vote = 0;
@@ -231,14 +264,11 @@ void element_detect()
     if ((last == ElementType::CIRCLE || last == ElementType::CROSSING) && pts_left.is_straight && pts_right.is_straight)
     {
         // 强制复位所有状态与计数
-        element_type = ElementType::NORMAL;
+        set_runtime_normal_state(false, false);
         last = element_type;
-        circle_direction = CircleDirection::CIRCLE_DIR_NONE;
         circle_vote = 0;
         crossing_vote = 0;
         protect = 0;
-        circle_state = CircleState::CIRCLE_NONE;
-        crossing_state = CrossingState::CROSSING_NONE;
         publish_debug();
         std::printf("[TRACK] reset NONE\r\nreason=force_reset_straight\r\n"
                     "vote(cross=%d circle=%d)\r\nprotect=%d\r\n",
@@ -281,13 +311,10 @@ void element_detect()
     if (crossing_vote >= FRAME_THRESHOLD_roundabout_or_crossing_frame)
     {
         // 十字始终可覆盖其他状态
-        element_type = ElementType::CROSSING;
-        if (crossing_state == CrossingState::CROSSING_NONE) crossing_state = CrossingState::CROSSING_IN;
+        enter_crossing_runtime_state();
         last = element_type;
         protect = FRAME_THRESHOLD_one_corner_crossing_protect_frame;
         circle_vote = 0;
-        circle_state = CircleState::CIRCLE_NONE;
-        circle_direction = CircleDirection::CIRCLE_DIR_NONE;
         log_element_if_changed();
         return;
     }
@@ -295,24 +322,16 @@ void element_detect()
     if (circle_vote >= FRAME_THRESHOLD_roundabout_or_crossing_frame)
     {
         // 环岛可以覆盖 NORMAL，但不能覆盖正在进行的十字（上面已处理）
-        element_type = ElementType::CIRCLE;
-        if (circle_state == CircleState::CIRCLE_NONE)
-        {
-            circle_state = CircleState::CIRCLE_BEGIN;
-        }
-        crossing_state = CrossingState::CROSSING_NONE;
+        enter_circle_runtime_state(want_circle_dir);
         last = element_type;
         protect = FRAME_THRESHOLD_roundabout_protect_frame;
         crossing_vote = 0;
-        circle_direction = want_circle_dir;
         log_element_if_changed();
         return;
     }
 
     // 否则为 NORMAL
-    element_type = ElementType::NORMAL;
+    set_runtime_normal_state(false, false);
     last = element_type;
-    crossing_state = CrossingState::CROSSING_NONE;
-    circle_direction = CircleDirection::CIRCLE_DIR_NONE;
     log_element_if_changed();
 }

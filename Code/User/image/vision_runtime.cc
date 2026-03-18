@@ -177,6 +177,102 @@ static bool CaptureFrameForMode(CameraWorkMode active_mode, bool want_recognitio
     return camera.capture_frame(frame, true, decode_flags, false);
 }
 
+// [Vision Runtime] 处理手动复位。
+// 作用：统一清图像状态、识别链状态和相机模式，避免这组动作散落在主循环里。
+static void HandleManualVisionReset(RecognitionChain* recognition, CameraWorkMode* active_mode)
+{
+    if (recognition == nullptr || active_mode == nullptr)
+    {
+        return;
+    }
+
+    char ch = 0;
+    if (read(STDIN_FILENO, &ch, 1) != 1 || (ch != 'c' && ch != 'C'))
+    {
+        return;
+    }
+
+    track_force_reset();
+    recognition->Reset();
+    recognition_follow_override = RecognitionFollowOverride::NONE;
+    SwitchCameraMode(CameraWorkMode::LINE, active_mode);
+}
+
+// [Vision Runtime] 绕行执行中的显示分支。
+// 作用：绕行期间完全旁路巡线与识别，只输出原图和提示文本。
+static bool RenderBypassBranchIfNeeded()
+{
+    if (!handler_sys.Is_Executing())
+    {
+        return false;
+    }
+
+    view = img.clone();
+    putText(view, "Bypass Running...", Point(5, 20), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 0, 255), 1);
+    recognition_follow_override = RecognitionFollowOverride::NONE;
+    return true;
+}
+
+// [Vision Runtime] 识别态处理分支。
+// 作用：识别态完全交给 RecognitionChain 管理，并在退出时切回巡线分辨率。
+static bool ProcessRecognitionBranchIfNeeded(RecognitionChain* recognition, uint64_t t_ms, CameraWorkMode* active_mode)
+{
+    if (recognition == nullptr || active_mode == nullptr || !recognition->IsInRecognitionMode())
+    {
+        return false;
+    }
+
+    recognition_follow_override = RecognitionFollowOverride::NONE;
+    const bool was_in_recognition = recognition->IsInRecognitionMode();
+    recognition->ProcessRecognitionFrame(img, t_ms, pure_angle, view);
+    if (was_in_recognition && !recognition->IsInRecognitionMode())
+    {
+        SwitchCameraMode(CameraWorkMode::LINE, active_mode);
+    }
+    return true;
+}
+
+// [Vision Runtime] 检测是否应从普通态切入识别态。
+// 作用：命中红色触发器后只显示触发框，本帧不再继续普通巡线。
+static bool TryEnterRecognitionBranch(RecognitionChain* recognition, uint64_t t_ms, CameraWorkMode* active_mode)
+{
+    if (recognition == nullptr || active_mode == nullptr)
+    {
+        return false;
+    }
+
+    if (!recognition->TryEnterRecognition(img, t_ms, view))
+    {
+        return false;
+    }
+
+    recognition_follow_override = RecognitionFollowOverride::NONE;
+    SwitchCameraMode(CameraWorkMode::RECOGNITION, active_mode);
+    return true;
+}
+
+// [Vision Runtime] 普通态的“保持航向 / 正常巡线”分支。
+// 作用：把识别链产生的短时 hold 和普通巡线链都收敛到同一个出口。
+static void ProcessTrackingBranch(RecognitionChain* recognition, uint64_t t_ms, const cv::Mat& kernel)
+{
+    if (recognition == nullptr)
+    {
+        return;
+    }
+
+    float hold_yaw = 0.0f;
+    if (recognition->TryRenderVehicleHold(img, t_ms, view, &hold_yaw))
+    {
+        track_force_reset();
+        recognition_follow_override = RecognitionFollowOverride::NONE;
+        pure_angle = hold_yaw;
+        return;
+    }
+
+    recognition_follow_override = recognition->GetFollowOverride();
+    RenderLineTrackingView(img, kernel);
+}
+
 } // namespace
 
 void Vision_System_Run(bool stream_enabled, bool recognition_enabled_by_switch)
@@ -213,15 +309,7 @@ void Vision_System_Run(bool stream_enabled, bool recognition_enabled_by_switch)
     // 4. 发布图传帧
     while (1)
     {
-        char ch = 0;
-        if (read(STDIN_FILENO, &ch, 1) == 1 && (ch == 'c' || ch == 'C'))
-        {
-            // 手动复位既要清元素状态，也要清识别链状态，避免上一轮识别结果残留。
-            track_force_reset();
-            recognition.Reset();
-            recognition_follow_override = RecognitionFollowOverride::NONE;
-            SwitchCameraMode(CameraWorkMode::LINE, &active_camera_mode);
-        }
+        HandleManualVisionReset(&recognition, &active_camera_mode);
 
         const bool want_recognition_frame = recognition.IsInRecognitionMode();
         if (!CaptureFrameForMode(active_camera_mode, want_recognition_frame, img))
@@ -232,48 +320,18 @@ void Vision_System_Run(bool stream_enabled, bool recognition_enabled_by_switch)
 
         const uint64_t t_ms = now_ms();
 
-        if (handler_sys.Is_Executing())
+        if (RenderBypassBranchIfNeeded())
         {
-            // 绕行执行期间，不再进入巡线或识别，只保留原图和状态提示。
-            view = img.clone();
-            putText(view, "Bypass Running...", Point(5, 20), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 0, 255), 1);
-            recognition_follow_override = RecognitionFollowOverride::NONE;
         }
-        else if (recognition.IsInRecognitionMode())
+        else if (ProcessRecognitionBranchIfNeeded(&recognition, t_ms, &active_camera_mode))
         {
-            // 识别态完全交给识别链处理，包括 ROI 截取、投票和结果收敛。
-            recognition_follow_override = RecognitionFollowOverride::NONE;
-            const bool was_in_recognition = recognition.IsInRecognitionMode();
-            recognition.ProcessRecognitionFrame(img, t_ms, pure_angle, view);
-            if (was_in_recognition && !recognition.IsInRecognitionMode())
-            {
-                SwitchCameraMode(CameraWorkMode::LINE, &active_camera_mode);
-            }
         }
-        else if (recognition.TryEnterRecognition(img, t_ms, view))
+        else if (TryEnterRecognitionBranch(&recognition, t_ms, &active_camera_mode))
         {
-            // 命中红色触发器后，本帧直接显示触发框，不再继续普通巡线。
-            recognition_follow_override = RecognitionFollowOverride::NONE;
-            SwitchCameraMode(CameraWorkMode::RECOGNITION, &active_camera_mode);
         }
         else
         {
-            float hold_yaw = 0.0f;
-            if (recognition.TryRenderVehicleHold(img, t_ms, view, &hold_yaw))
-            {
-                // vehicle 类别对应的是短时保持当前航向，因此这里不再跑图像路径更新。
-                track_force_reset();
-                recognition_follow_override = RecognitionFollowOverride::NONE;
-                pure_angle = hold_yaw;
-            }
-            else
-            {
-                // [Recognition Chain Step 8] 识别结果转为图像侧巡线覆盖。
-                // 这里的覆盖只影响“中线来自左/右哪一侧”，不直接输出电机量。
-                recognition_follow_override = recognition.GetFollowOverride();
-                // [Vision Runtime] 普通巡线分支统一交给图像链处理。
-                RenderLineTrackingView(img, kernel);
-            }
+            ProcessTrackingBranch(&recognition, t_ms, kernel);
         }
 
         // [Stream Chain Step 2] 把当前 view 交给图传链。

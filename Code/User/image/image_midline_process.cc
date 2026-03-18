@@ -1,6 +1,11 @@
-#include "image_headfile.h"
-#include <cstring>
+#include "common.h"
+#include "image_data.h"
+#include "image_handle.h"
+#include "image_math.h"
+#include "image_midline_process.h"
+#include "transform_table.h"
 #include <cmath>
+#include <cstring>
 
 // 功能: 计数值夹紧到 [0, PT_MAXLEN]
 // 类型: 局部功能函数
@@ -177,30 +182,29 @@ void MID(float (&mid_left)[PT_MAXLEN][2], int32_t* mid_left_count,
             return;
         }
 
-        int min_count = (*mid_left_count < *mid_right_count) ? *mid_left_count : *mid_right_count ;
-        if(min_count < MIXED_POINT_NUM_THRESHOLD)
-        {
-            // 重合段太短时，混合平均不可靠：选点更多的一侧。
-            const bool pick_right = (*mid_right_count >= *mid_left_count);
-            const int n = pick_right ? clamp_count_i32(*mid_right_count) : clamp_count_i32(*mid_left_count);
-            if (pick_right)
-            {
-                copy_line(mid, mid_right, n);
-            }
-            else
-            {
-                copy_line(mid, mid_left, n);
-            }
-            *mid_count = n;
-            return;
-        }
+        const int min_count = (*mid_left_count < *mid_right_count) ? *mid_left_count : *mid_right_count;
+        const bool pick_right_tail = (*mid_right_count > *mid_left_count);
+        const float (*tail_src)[2] = pick_right_tail ? mid_right : mid_left;
+        const int tail_count = pick_right_tail ? *mid_right_count : *mid_left_count;
 
-        for(int i = 0 ; i < min_count ; ++i)
+        // MIXED 模式统一规则：
+        // 1) 能一一对应的重合段先做混合平均
+        // 2) 点更多一侧的剩余段直接接到后面
+        // 这样既保留双边共同信息，也不丢掉较长一侧额外看到的远端点
+        for (int i = 0; i < min_count; ++i)
         {
             mid[i][1] = (mid_left[i][1] + mid_right[i][1]) / 2.0f ;
             mid[i][0] = (mid_left[i][0] + mid_right[i][0]) / 2.0f ;
         }
-        *mid_count = min_count ;
+
+        int out_count = min_count;
+        for (int i = min_count; i < tail_count && out_count < PT_MAXLEN; ++i)
+        {
+            mid[out_count][0] = tail_src[i][0];
+            mid[out_count][1] = tail_src[i][1];
+            ++out_count;
+        }
+        *mid_count = out_count;
     }
     
     
@@ -862,8 +866,8 @@ void MidLineGeometryAbstract(const float (&mid_in)[PT_MAXLEN][2], int* mid_in_co
 // =========================
 // 赛道几何“段级抽象/判别”
 // =========================
-// 说明（世界坐标系 / 米制）：
-// - 这里假设 mid_in 已经是在逆透视后的世界坐标（单位米），x/y 的正方向取决于你的标定约定。
+// 说明（逆透视像素坐标系 / 像素尺度）：
+// - 这里假设 mid_in 已经是在逆透视后的俯视像素坐标，x/y 的正方向取决于你的标定约定。
 // - “顺/逆时针”的符号来自 local_signed_curvature 的 cross 符号：它与坐标系手性有关。
 //   你只要保证符号一致即可：比如在你的坐标系里 cross<0 被你定义为“右转”。
 
@@ -888,16 +892,16 @@ struct MidTrackPrimitive
     int type;           // MidTrackPrimitiveType
     int start;          // 在重采样点列中的起点 index（含）
     int end;            // 终点 index（不含）
-    float len_m;        // 段长度（米），line 用投影长度，arc 用弧长近似
+    float len_px;       // 段长度（逆透视像素），line 用投影长度，arc 用弧长近似
 
-    // 直线段：单位方向向量（世界坐标）
+    // 直线段：单位方向向量（逆透视像素坐标）
     float dir_x;
     float dir_y;
 
     // 圆弧段：拟合圆心/半径/扫角
     float cx;
     float cy;
-    float radius_m;
+    float radius_px;
     float sweep_rad;    // 有符号扫角（弧度）；符号代表转向方向（坐标系相关）
     float fit_rel_err;  // 圆拟合相对误差（越小越接近圆）
 
@@ -1098,8 +1102,8 @@ static __attribute__((unused)) void MidLineExtractPrimitives(const float (&mid_i
 
             p.dir_x = dirx;
             p.dir_y = diry;
-            p.len_m = ex * dirx + ey * diry;
-            if (p.len_m < 0.0f) p.len_m = -p.len_m;
+            p.len_px = ex * dirx + ey * diry;
+            if (p.len_px < 0.0f) p.len_px = -p.len_px;
         }
         else
         {
@@ -1114,13 +1118,13 @@ static __attribute__((unused)) void MidLineExtractPrimitives(const float (&mid_i
             p.fit_rel_err = err;
             if (!ok)
             {
-                p.radius_m = 0.0f;
+                p.radius_px = 0.0f;
                 p.sweep_rad = 0.0f;
-                p.len_m = (float)(seg_len - 1) * dist;
+                p.len_px = (float)(seg_len - 1) * dist;
             }
             else
             {
-                p.radius_m = Q_sqrt(rr2);
+                p.radius_px = Q_sqrt(rr2);
 
                 // 扫角：atan2( v0 x v1, v0 · v1 )
                 const float v0x = resampled[i][1] - cx;
@@ -1144,7 +1148,7 @@ static __attribute__((unused)) void MidLineExtractPrimitives(const float (&mid_i
 
                 float abs_sweep = sweep;
                 if (abs_sweep < 0.0f) abs_sweep = -abs_sweep;
-                p.len_m = p.radius_m * abs_sweep;
+                p.len_px = p.radius_px * abs_sweep;
             }
         }
 
@@ -1182,7 +1186,7 @@ static MidTrackState MidLineClassifyTrackEx(const MidTrackPrimitive* prim, int p
     }
 
     // ===== 环岛：长圆弧主导 + 拟合误差小 + 扫角较大 =====
-    // 米制阈值建议：
+    // 像素尺度阈值建议：
     // - sweep > 120°（2.094rad）更像“在环岛内”，如果你只看近端，可以放宽到 90°。
     // - 半径范围需根据你的赛道标定调整。
     for (int i = 0; i < prim_count; ++i)
@@ -1194,7 +1198,9 @@ static MidTrackState MidLineClassifyTrackEx(const MidTrackPrimitive* prim, int p
         float abs_sweep = prim[i].sweep_rad;
         if (abs_sweep < 0.0f) abs_sweep = -abs_sweep;
 
-        if (prim[i].fit_rel_err < 1e-2f && abs_sweep > 2.094f && prim[i].radius_m > 0.15f)
+        if (prim[i].fit_rel_err < 1e-2f &&
+            abs_sweep > 2.094f &&
+            prim[i].radius_px > MID_TRACK_ROUNDABOUT_MIN_RADIUS_PIX)
         {
             return MID_TRACK_ROUNDABOUT;
         }
@@ -1263,7 +1269,7 @@ static MidTrackState MidLineClassifyTrackEx(const MidTrackPrimitive* prim, int p
         {
             continue;
         }
-        if (prim[i].len_m < 0.20f)
+        if (prim[i].len_px < MID_TRACK_S_CURVE_MIN_ARC_LEN_PIX)
         {
             continue; // 太短的弧段多半是噪声分段
         }
@@ -1290,6 +1296,126 @@ static MidTrackState MidLineClassifyTrackEx(const MidTrackPrimitive* prim, int p
 static __attribute__((unused)) MidTrackState MidLineClassifyTrack(const MidTrackPrimitive* prim, int prim_count)
 {
     return MidLineClassifyTrackEx(prim, prim_count, nullptr);
+}
+
+// 功能: 根据中线局部几何，为 pure_angle 建议一个更前瞻的预瞄图像行
+// 类型: 图像处理函数
+// 关键参数: mid/mid_count-输入中线, base_img_y-默认预瞄图像行
+// 说明:
+// - 普通直道/缓弯：尽量保持在 base_img_y 附近，避免过分激进
+// - 前方存在明显弯道：把预瞄行往更小的 y 推，让控制更早感知转向趋势
+// - 当前版本使用“整条 mid -> curvature -> nms -> 非零峰值均值”作为连续几何量
+int MidLineSuggestPureAnglePreviewImageY(const float (&mid)[PT_MAXLEN][2], int32_t mid_count,
+                                         int base_img_y)
+{
+    if (base_img_y < 0) base_img_y = 0;
+    if (base_img_y > IMAGE_H - 1) base_img_y = IMAGE_H - 1;
+
+    int preview_img_y_out = base_img_y;
+    if (mid_count < 3)
+    {
+        average_curvature = 0.0f;
+        preview_img_y = (float)preview_img_y_out;
+        return preview_img_y_out;
+    }
+
+    // 1) 整条中线的曲率链：
+    //    先算 curvature(1-cos)，再做 NMS，只对非零峰值做平均。
+    float curvature[PT_MAXLEN] = {0.0f};
+    float curvature_nms[PT_MAXLEN] = {0.0f};
+    int curvature_count = (mid_count > PT_MAXLEN) ? PT_MAXLEN : (int)mid_count;
+    int curvature_nms_count = 0;
+    local_curvature_points(mid, &curvature_count,
+                           curvature, &curvature_count,
+                           PUREANGLE_PREVIEW_CURV_DIST);
+    nms_curvature(curvature, &curvature_count,
+                  curvature_nms, &curvature_nms_count,
+                  PUREANGLE_PREVIEW_CURV_NMS_KERNEL);
+
+    float curvature_sum = 0.0f;
+    int nonzero_peak_count = 0;
+    for (int i = 0; i < curvature_nms_count; ++i)
+    {
+        if (curvature_nms[i] > 0.0f)
+        {
+            curvature_sum += curvature_nms[i];
+            ++nonzero_peak_count;
+        }
+    }
+    average_curvature = (nonzero_peak_count > 0)
+        ? (curvature_sum / (float)nonzero_peak_count)
+        : 0.0f;
+
+    int shift = 0;
+    const float curve_low = PUREANGLE_PREVIEW_CURVE_LOW;
+    float curve_high = PUREANGLE_PREVIEW_CURVE_HIGH;
+    if (curve_high < curve_low)
+    {
+        curve_high = curve_low;
+    }
+    if (curve_high > curve_low)
+    {
+        float t = (average_curvature - curve_low) / (curve_high - curve_low);
+        t = fclip(t, 0.0f, 1.0f);
+        shift = (int)std::lroundf((float)PUREANGLE_PREVIEW_SHIFT_MAX * t);
+    }
+    else if (average_curvature >= curve_high)
+    {
+        shift = PUREANGLE_PREVIEW_SHIFT_MAX;
+    }
+
+    // 2) “粗粒度状态补偿”暂时停用：
+    //    当前阶段只保留“average_curvature -> shift”的连续量控制，
+    //    不再叠加直角弯/S弯/环岛等粗粒度状态对 shift 的最小覆盖。
+    // MidTrackPrimitive prim[16];
+    // int prim_count = 0;
+    // int mid_tmp_count = mid_count;
+    // MidLineExtractPrimitives(mid, &mid_tmp_count,
+    //                          prim, &prim_count,
+    //                          RESAMPLEDIST * PIXPERMETER,
+    //                          2, 1,
+    //                          ANGLE_THRESHOLD_is_straight,
+    //                          2);
+
+    // float turn_deg = 0.0f;
+    // const MidTrackState track_state = MidLineClassifyTrackEx(prim, prim_count, &turn_deg);
+    // switch (track_state)
+    // {
+    // case MID_TRACK_RIGHT_ANGLE:
+    // case MID_TRACK_LEFT_ANGLE:
+    //     if (shift < PUREANGLE_PREVIEW_ANGLE_SHIFT)
+    //     {
+    //         shift = PUREANGLE_PREVIEW_ANGLE_SHIFT;
+    //     }
+    //     break;
+    // case MID_TRACK_S_CURVE:
+    //     if (shift < PUREANGLE_PREVIEW_S_CURVE_SHIFT)
+    //     {
+    //         shift = PUREANGLE_PREVIEW_S_CURVE_SHIFT;
+    //     }
+    //     break;
+    // case MID_TRACK_ROUNDABOUT:
+    //     if (shift < PUREANGLE_PREVIEW_ROUND_SHIFT)
+    //     {
+    //         shift = PUREANGLE_PREVIEW_ROUND_SHIFT;
+    //     }
+    //     break;
+    // default:
+    //     break;
+    // }
+    // (void)turn_deg;
+
+    preview_img_y_out = base_img_y - shift;
+    if (preview_img_y_out < PUREANGLE_PREVIEW_MIN_IMAGE_Y)
+    {
+        preview_img_y_out = PUREANGLE_PREVIEW_MIN_IMAGE_Y;
+    }
+    if (preview_img_y_out > IMAGE_H - 1)
+    {
+        preview_img_y_out = IMAGE_H - 1;
+    }
+    preview_img_y = (float)preview_img_y_out;
+    return preview_img_y_out;
 }
 
 // 功能: 角度归一化到 [-PI, PI]

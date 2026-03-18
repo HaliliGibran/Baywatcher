@@ -1,7 +1,11 @@
 #ifndef _HEADFILE_H_
 #define _HEADFILE_H_
 
-/* 图像模块通用头文件（作用域: 全局包含聚合） */
+/* 图像模块历史兼容聚合头（作用域: 全局包含聚合）
+ * 说明：
+ * - 主要服务于旧代码和上层快速接入。
+ * - 新的核心实现文件应尽量改用最小必要 include，避免把系统库依赖继续扩散。
+ */
 /* 第三方库 */
 #include <opencv2/opencv.hpp>
 // #include <json/json.h>

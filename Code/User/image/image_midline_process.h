@@ -25,4 +25,11 @@ void BuildPathFromCoreToMidlineArc(const float (&mid)[PT_MAXLEN][2], int32_t mid
                                   float (&path)[PT_MAXLEN][2], int32_t* path_count,
                                   float step);
 
+// 功能: 根据中线局部几何给出 pure_angle 的建议预瞄图像行
+// 类型: 图像处理函数
+// 关键参数: mid/mid_count-输入中线, base_img_y-默认预瞄图像行
+// 返回: 建议使用的预瞄图像行（已做边界限制，越小表示看得越远）
+int MidLineSuggestPureAnglePreviewImageY(const float (&mid)[PT_MAXLEN][2], int32_t mid_count,
+                                         int base_img_y);
+
 #endif

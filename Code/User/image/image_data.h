@@ -7,6 +7,7 @@
 // 作用域: 全局变量，斑马线停车请求标志（视觉侧置位，控制层处理）
 extern bool zebra_stop;
 
+// -------------------- 单侧边线处理上下文 --------------------
 struct pts_well_processed
 {
     // 原始边线点（像素坐标，pts[i][0]=y, pts[i][1]=x）
@@ -77,6 +78,7 @@ static inline void reset_pts(pts_well_processed& p)
 extern pts_well_processed pts_left;
 extern pts_well_processed pts_right;
 
+// -------------------- 十字远端线缓存 --------------------
 // 十字远端线专用缓冲（与 pts_left/pts_right 同结构，便于复用 process_line 流水线）
 // 作用域: 全局变量，十字远端线处理上下文（仅十字阶段使用）
 extern pts_well_processed pts_far_left;
@@ -86,6 +88,13 @@ extern pts_well_processed pts_far_right;
 // 作用域: 全局变量，十字远端线是否找到
 extern bool if_find_far_line;
 
+// 功能: 清空十字远端线缓存与有效标志
+// 类型: 全局状态辅助函数
+// 关键参数: 无
+// 说明：统一管理 if_find_far_line / pts_far_left / pts_far_right 的复位，减少跨文件散写。
+void image_reset_far_line_state();
+
+// -------------------- 融合中线 / 最终路径 --------------------
 struct midline_data
 {
     float mid[PT_MAXLEN][2];   // 中线点列（融合后）
@@ -98,6 +107,13 @@ struct midline_data
 // 作用域: 全局变量，中线/路径数据（供控制/纯跟踪角计算）
 extern midline_data midline;
 
+// 功能: 清空融合中线与路径输出
+// 类型: 全局状态辅助函数
+// 关键参数: 无
+// 说明：只清 count，不清数组内容；供图像主链短路或复位时统一调用。
+void image_reset_midline_path_state();
+
+// -------------------- 跟线模式与识别覆盖 --------------------
 // 跟线模式（作用域: 全局枚举类型）
 enum class FollowLine:uint8_t
 {
@@ -123,6 +139,7 @@ extern FollowLine follow_mode;
 // 作用域: 全局变量，识别结果驱动的巡线覆盖模式
 extern RecognitionFollowOverride recognition_follow_override;
 
+// -------------------- 元素状态机 --------------------
 // 元素类型（作用域: 全局枚举类型）
 enum class ElementType:uint8_t
 {
@@ -167,6 +184,7 @@ enum class CrossingState:uint8_t
 extern CrossingState crossing_state;
 
 
+// -------------------- 调试观测与控制输出 --------------------
 // 调试：用于把 element_detect 的投票/保护帧等信息提供给其它模块（环岛/十字打印等）。
 // 说明：这是“调试观测数据”，不参与算法决策。
 struct track_debug_status
@@ -183,6 +201,18 @@ extern float pure_angle;
 
 // 作用域: 全局变量，环岛 RUNNING 阶段纯跟踪角的平均值
 extern float circle_average_angle;
+
+// 作用域: 全局变量，MidLineSuggestPureAnglePreviewImageY 当前帧的平均曲率观测量
+extern float average_curvature;
+
+// 作用域: 全局变量，MidLineSuggestPureAnglePreviewImageY 当前帧输出的预瞄图像行
+extern float preview_img_y;
+
+// 功能: 清空图像主链输出观测量
+// 类型: 全局状态辅助函数
+// 关键参数: 无
+// 说明：统一管理 pure_angle / average_curvature / preview_img_y 的复位语义。
+void image_reset_tracking_observation_state();
 
 
 #endif

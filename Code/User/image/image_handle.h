@@ -47,6 +47,18 @@ void GetLinesResample(float (&pts_in)[PT_MAXLEN][2], int32_t* num1,
                       float (&pts_out)[PT_MAXLEN][2], int32_t* num2, float dist,
                       int32_t* out_src_index = nullptr);
 
+// 功能: 计算点列局部弯曲强度（1-cos）
+// 类型: 图像处理函数
+// 关键参数: dist-局部跨度(点数), curv_out-输出曲率
+void local_curvature_points(const float (&pts_in)[PT_MAXLEN][2], int* pts_in_count,
+                            float (&curv_out)[PT_MAXLEN], int* curv_out_count, int dist);
+
+// 功能: 曲率一维极大值抑制
+// 类型: 图像处理函数
+// 关键参数: kernel-NMS窗口大小, curv_out-抑制后曲率
+void nms_curvature(float (&curv_in)[PT_MAXLEN], int* curv_in_count,
+                   float (&curv_out)[PT_MAXLEN], int* curv_out_count, int kernel);
+
 // 功能: 通用边线处理流水线（逆透视→滤波→重采样→曲率/角点→中线）
 // 类型: 图像处理函数
 // 关键参数: is_left-是否为左线, pts_in/pts_count-输入边线点, mid_line/mid_count-输出中线
@@ -86,6 +98,15 @@ static inline void process_line(bool is_left, pts_well_processed& ctx)
 // 功能: 由路径点列计算“pure angle”（度，右转为负/左转为正）
 // 类型: 图像处理函数
 // 关键参数: path/path_count-路径点列, out_pure_angle-输出角度
+// 说明:
+// - 当前版本使用“车轴 -> 预瞄点”的割线方向计算偏航角
+// - 预瞄点默认取 PUREANGLE_PREVIEW_BASE_IMAGE_Y 对应位置
+// - 若中线几何显示前方已有明显弯道，会自动把预瞄点向更远处前推
 void CalculatePureAngleFromPath(const float (&path)[PT_MAXLEN][2], int32_t path_count, float* out_pure_angle);
+
+// 功能: 复位 pure_angle 预瞄过渡状态
+// 类型: 图像处理函数
+// 关键参数: 无
+void ResetPureAnglePreviewTransitionState();
 
 #endif

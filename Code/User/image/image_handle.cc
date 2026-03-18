@@ -1,13 +1,69 @@
 #include "common.h"
-#include "transform_table.h"
-#include "headfile.h"
-#include "image_math.h"
 #include "image_data.h"
+#include "image_math.h"
+#include "image_midline_process.h"
+#include "transform_table.h"
+#include <cmath>
 
 // 迷宫法爬线方向表（作用域: 文件内常量）
 const int32_t direction_front[4][2] = {{0,  -1},{1,  0},{0,  1},{-1, 0}};      // 正前方向
 const int32_t direction_frontleft[4][2] = {{-1, -1},{1,  -1},{1,  1},{-1, 1}}; // 前左方向
 const int32_t direction_frontright[4][2] ={{1,  -1},{1,  1},{-1, 1},{-1, -1}}; // 前右方向
+
+typedef struct
+{
+    float last_preview_img_y;
+    uint8_t had_last;
+} pure_angle_preview_state_t;
+
+static pure_angle_preview_state_t g_pure_angle_preview = {0};
+
+// 功能: 对动态预瞄图像行做“限速 + 轻滤波”过渡
+// 类型: 局部功能函数
+// 关键参数: target_img_y-几何链给出的目标预瞄图像行
+static int pure_angle_apply_preview_transition(int target_img_y)
+{
+    if (target_img_y < 0) target_img_y = 0;
+    if (target_img_y > IMAGE_H - 1) target_img_y = IMAGE_H - 1;
+
+    if (!g_pure_angle_preview.had_last)
+    {
+        g_pure_angle_preview.last_preview_img_y = (float)target_img_y;
+        g_pure_angle_preview.had_last = 1;
+        return target_img_y;
+    }
+
+    if (!PUREANGLE_PREVIEW_TRANSITION_ENABLE)
+    {
+        g_pure_angle_preview.last_preview_img_y = (float)target_img_y;
+        return target_img_y;
+    }
+
+    float delta = (float)target_img_y - g_pure_angle_preview.last_preview_img_y;
+    delta = fclip(delta,
+                  -PUREANGLE_PREVIEW_TRANSITION_MAX_STEP,
+                  PUREANGLE_PREVIEW_TRANSITION_MAX_STEP);
+
+    const float limited = g_pure_angle_preview.last_preview_img_y + delta;
+    float blended = g_pure_angle_preview.last_preview_img_y
+                  + PUREANGLE_PREVIEW_TRANSITION_ALPHA * (limited - g_pure_angle_preview.last_preview_img_y);
+
+    if (std::fabs((float)target_img_y - blended) < 0.5f)
+    {
+        blended = (float)target_img_y;
+    }
+
+    if (blended < 0.0f) blended = 0.0f;
+    if (blended > (float)(IMAGE_H - 1)) blended = (float)(IMAGE_H - 1);
+
+    g_pure_angle_preview.last_preview_img_y = blended;
+    return (int)std::lroundf(blended);
+}
+
+void ResetPureAnglePreviewTransitionState()
+{
+    g_pure_angle_preview = {0};
+}
 
 // 功能: 迷宫法爬左边线
 // 类型: 图像处理函数
@@ -1238,29 +1294,75 @@ void process_line(
 // 关键参数: path/path_count-路径点列, out_pure_angle-输出角度
 void CalculatePureAngleFromPath(const float (&path)[PT_MAXLEN][2], int32_t path_count, float* out_pure_angle)
 {
-    // 判断有效
     if (out_pure_angle == nullptr)
     {
         return;
     }
     if (path_count <= 0)
     {
+        g_pure_angle_preview.had_last = 0;
         *out_pure_angle = 0.0f;
         return;
     }
-    
-    // 基于车轴位置到路径近点（不修改全局/宏配置）
-    int idx = PATH_NEAR_ID_FOR_PURE_ANGLE;
-    if (idx < 0) idx = 0;
-    if (idx > (path_count - 1)) idx = (path_count - 1);
-
+    // 当前逻辑：
+    // 1. 以车轴位置作为控制参考点
+    // 2. 在 path 上取“接近某个预瞄图像行”的目标点
+    // 3. 用 car -> target 的割线方向计算 pure_angle
+    // 4. 若中线几何显示前方已有明显弯道，则把预瞄行往更远处前推
+    const float car_y = UndistInverseMapH[SET_IMAGE_CORE_Y][SET_IMAGE_CORE_X]
+                      + DISTANCE_FROM_VIEW_TO_CAR * PIXPERMETER;
     const float car_x = UndistInverseMapW[SET_IMAGE_CORE_Y][SET_IMAGE_CORE_X];
 
-    const float dx = path[idx][1] - car_x;
-    const float dy = path[0][0] - path[idx][0];
-    const float forward = dy + DISTANCE_FROM_VIEW_TO_CAR * PIXPERMETER;0
+    const int preview_img_y_target = MidLineSuggestPureAnglePreviewImageY(midline.mid,
+                                                                          midline.mid_count,
+                                                                          PUREANGLE_PREVIEW_BASE_IMAGE_Y);
+    const int preview_img_y = pure_angle_apply_preview_transition(preview_img_y_target);
+    const float preview_y = UndistInverseMapH[preview_img_y][SET_IMAGE_CORE_X];
 
-    // 用 atan2f 替代 dx/forward，避免 forward 很小时数值爆炸
+    int target_idx = -1;
+    float best_abs = 1e30f;
+    for (int i = 0; i < path_count; ++i)
+    {
+        if (path[i][0] > car_y)
+        {
+            continue;
+        }
+        float a = path[i][0] - preview_y;
+        if (a < 0.0f) a = -a;
+        if (a < best_abs)
+        {
+            best_abs = a;
+            target_idx = i;
+        }
+    }
+
+    if (target_idx < 0)
+    {
+        for (int i = 0; i < path_count; ++i)
+        {
+            float a = path[i][0] - preview_y;
+            if (a < 0.0f) a = -a;
+            if (a < best_abs)
+            {
+                best_abs = a;
+                target_idx = i;
+            }
+        }
+    }
+
+    if (target_idx < 0)
+    {
+        *out_pure_angle = 0.0f;
+        return;
+    }
+
+    const float dx = path[target_idx][1] - car_x;
+    float forward = car_y - path[target_idx][0];
+    if (forward < 1e-3f)
+    {
+        forward = 1e-3f;
+    }
+
     float angle = -atan2f(dx, forward) * 180.0f / PI32;
     angle = fclip(angle, -80.0f, 80.0f);
     *out_pure_angle = angle;

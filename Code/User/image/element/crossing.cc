@@ -38,11 +38,9 @@ void crossing_reset()
     g_lost_line_counter = 0;
     g_last_state = CrossingState::CROSSING_NONE;
     crossing_state = CrossingState::CROSSING_NONE;
-    if_find_far_line = false;
     pts_left_corner_id = -1;
     pts_right_corner_id = -1;
-    reset_pts(pts_far_left);
-    reset_pts(pts_far_right);
+    image_reset_far_line_state();
 }
 
 // 功能: 十字路口状态机更新
@@ -106,9 +104,7 @@ void crossing_update()
 // 关键参数: img-二值图
 void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 {
-    if_find_far_line = false;
-    reset_pts(pts_far_left);
-    reset_pts(pts_far_right);
+    image_reset_far_line_state();
 
 
     if(pts_left.corner_found && pts_right.corner_found && pts_left.corner_id >=9 && pts_right.corner_id >=9)

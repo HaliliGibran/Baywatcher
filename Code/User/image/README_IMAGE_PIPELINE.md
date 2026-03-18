@@ -19,6 +19,8 @@
 - `Code/User/image/element/zebra.cc`
 - `Code/User/image/image_handle.cc`
 - `Code/User/image/image_midline_process.cc`
+- `Code/User/image/common.h`
+- `Code/User/image/image_switch_utils.h`
 - `Code/User/src/PID.cc`
 
 ## 1. 总体链路
@@ -59,6 +61,11 @@
 - 中线融合
 - 路径生成
 - `pure_angle` 输出
+
+补充说明：
+- `Code/User/image/common.h` 是图像侧统一配置入口，图像算法阈值、默认开关和运行时默认值应优先集中在这里维护
+- `Code/User/image/image_switch_utils.h` 提供图传链和识别链共用的布尔开关解析工具
+- `Code/User/image/headfile.h` 与 `Code/User/image/image_headfile.h` 当前仅保留为兼容聚合头，新核心实现文件应优先按最小必要 include 引入依赖
 
 最后，控制层在 `Code/User/src/PID.cc` 中读取全局 `pure_angle`，写入 `PID.vision_yaw`，再进入转向 PID。
 
@@ -117,6 +124,13 @@
 ## 3. 关键全局状态量
 
 这些状态量主要定义在 `image_data.h` / `image_data.cc`。
+
+当前版本中，`image_data.*` 已不再只是“全局变量仓库”，还开始承载少量低风险的状态归口辅助函数，例如：
+- `image_reset_far_line_state()`
+- `image_reset_midline_path_state()`
+- `image_reset_tracking_observation_state()`
+
+这些函数的目的不是隐藏数据，而是先统一复位语义，减少跨文件重复写同一组全局状态。
 
 ### 3.1 边线与路径
 
@@ -234,7 +248,35 @@
 
 ### 4.2 `img_processing(...)` 入口阶段
 
-`img_processing` 先处理斑马线停车相关逻辑：
+当前版本中，`img_processing(...)` 已整理为“阶段函数编排”，主入口只负责组织顺序。主要阶段为：
+
+1. `handle_zebra_stop_lifecycle(...)`
+- 处理 `zebra_stop` 解锁、锁停和延迟停车生命周期
+- 在锁停或 pending 阶段直接短路主链
+
+2. `process_track_edges(...)`
+- 完成左右边线搜索
+- 调用 `process_line(...)` 跑单侧边线流水线
+
+3. `try_trigger_zebra_pending_stop(...)`
+- 在正常直道条件下检测斑马线
+- 命中后进入延迟停车阶段并短路本帧
+
+4. `update_track_state_machine(...)`
+- 推进元素检测、环岛状态机、十字状态机
+- 或在识别覆盖时统一屏蔽元素状态机
+
+5. `build_midline_from_current_state(...)`
+- 根据识别覆盖、十字远端线和普通跟线模式选择最终中线来源
+
+6. `build_path_and_measure_pure_angle(...)`
+- 从最终中线生成控制路径并计算测量角
+
+7. `finalize_pure_angle_output(...)`
+- 应用环岛平均角保护与丢线补偿
+- 最后再叠加趋势前馈补偿
+
+在斑马线相关阶段里，具体行为仍保持原语义：
 
 1. 若检测到 `zebra_stop` 从 true 变 false
 - 进入 cooldown
@@ -530,11 +572,16 @@
 
 `CalculatePureAngleFromPath(...)`：
 
-1. 取路径近端点索引 `PATH_NEAR_ID_FOR_PURE_ANGLE`
-2. 计算该点相对车轴横向偏差 `dx`
-3. 计算前视距离 `forward`
-4. 用 `atan2f(dx, forward)` 得到角度
-5. 限幅到 `[-80, 80]`
+1. 先把车轴位置作为控制参考点
+2. 默认取 `PUREANGLE_PREVIEW_BASE_IMAGE_Y` 对应的预瞄目标
+3. 用 `MidLineSuggestPureAnglePreviewImageY(...)` 根据中线整条曲率链动态前推预瞄点
+4. 曲率链为：整条 `mid` -> `local_curvature_points(...)` -> `nms_curvature(...)` -> 只平均 NMS 非零峰值
+5. 预瞄前推阈值直接工作在曲率域 `1-cos(theta)`，不再做错误的角度换算
+6. 当前未叠加 `S` 弯/直角弯/环岛的粗粒度最小 shift 覆盖，只由平均曲率决定基础 `shift`
+7. 对动态预瞄图像行做“限速 + 轻滤波”过渡，避免预瞄点帧间跳变
+8. 在 `midline.path` 上寻找最接近该预瞄位置的目标点
+9. 用 `car -> target` 的割线方向计算 `atan2f(dx, forward)`
+10. 限幅到 `[-80, 80]`
 
 结果写入全局 `pure_angle`。
 

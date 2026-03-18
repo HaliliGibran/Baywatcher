@@ -1,6 +1,8 @@
 #include "recognition_chain.h"
 
+#include "common.h"
 #include "element.h"
+#include "image_switch_utils.h"
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -10,18 +12,6 @@
 #include <regex>
 #include <sstream>
 #include <unistd.h>
-
-// [Recognition Chain Interface] 模型识别编译期开关默认值。
-// 作用：给整条模型识别链一个统一的默认开关。
-#ifndef BW_ENABLE_RECOGNITION
-#define BW_ENABLE_RECOGNITION 1
-#endif
-
-// [Recognition Chain Interface] 识别后策略编译期开关默认值。
-// 作用：允许“只识别、不执行切线/航向保持策略”。
-#ifndef BW_ENABLE_RECOGNITION_ACTION
-#define BW_ENABLE_RECOGNITION_ACTION 1
-#endif
 
 namespace {
 
@@ -154,33 +144,6 @@ static std::string resolve_runtime_path(const std::string& configured_path)
     }
 
     return configured_path;
-}
-
-// [Recognition Chain Interface] 统一解析 on/off 型开关文本。
-// 作用：识别开关用同一套命令行布尔值解析逻辑。
-static bool parse_bool_text(const std::string& text, bool* out_value)
-{
-    if (out_value == nullptr)
-    {
-        return false;
-    }
-
-    std::string s;
-    s.resize(text.size());
-    std::transform(text.begin(), text.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-    if (s == "1" || s == "on" || s == "true" || s == "yes" || s == "enable" || s == "enabled")
-    {
-        *out_value = true;
-        return true;
-    }
-    if (s == "0" || s == "off" || s == "false" || s == "no" || s == "disable" || s == "disabled")
-    {
-        *out_value = false;
-        return true;
-    }
-    return false;
 }
 
 // [Recognition Chain] 解析类别文件中的转义字符串。
@@ -411,7 +374,7 @@ bool RecognitionChain::ParseSwitch(int argc, char** argv, bool default_value)
         if (arg.compare(0, key.size(), key) == 0)
         {
             bool parsed_value = recognition_enabled;
-            if (parse_bool_text(arg.substr(key.size()), &parsed_value))
+            if (ParseImageBoolSwitchText(arg.substr(key.size()), &parsed_value))
             {
                 recognition_enabled = parsed_value;
             }
@@ -421,7 +384,7 @@ bool RecognitionChain::ParseSwitch(int argc, char** argv, bool default_value)
         if (arg == "--recognition-mode" && i + 1 < argc)
         {
             bool parsed_value = recognition_enabled;
-            if (parse_bool_text(argv[i + 1], &parsed_value))
+            if (ParseImageBoolSwitchText(argv[i + 1], &parsed_value))
             {
                 recognition_enabled = parsed_value;
             }

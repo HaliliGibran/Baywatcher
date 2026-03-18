@@ -1,46 +1,9 @@
 #include "stream_chain.h"
 
-#include <algorithm>
-#include <cctype>
+#include "common.h"
+#include "image_switch_utils.h"
 #include <iostream>
 #include <string>
-
-// [Stream Chain Interface] 图传编译期开关默认值。
-// 作用：给整条图传链一个统一的默认开关。
-#ifndef BW_ENABLE_STREAM
-#define BW_ENABLE_STREAM 1
-#endif
-
-namespace {
-
-// [Stream Chain Interface] 统一解析 on/off 型布尔文本。
-// 作用：给图传命令行参数复用同一套布尔值解析逻辑。
-static bool parse_bool_text(const std::string& text, bool* out_value)
-{
-    if (out_value == nullptr)
-    {
-        return false;
-    }
-
-    std::string s;
-    s.resize(text.size());
-    std::transform(text.begin(), text.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-    if (s == "1" || s == "on" || s == "true" || s == "yes" || s == "enable" || s == "enabled")
-    {
-        *out_value = true;
-        return true;
-    }
-    if (s == "0" || s == "off" || s == "false" || s == "no" || s == "disable" || s == "disabled")
-    {
-        *out_value = false;
-        return true;
-    }
-    return false;
-}
-
-} // namespace
 
 bool StreamChain::DefaultEnabled()
 {
@@ -71,7 +34,7 @@ bool StreamChain::ParseSwitch(int argc, char** argv, bool default_value)
         if (arg.compare(0, key.size(), key) == 0)
         {
             bool parsed_value = stream_enabled;
-            if (parse_bool_text(arg.substr(key.size()), &parsed_value))
+            if (ParseImageBoolSwitchText(arg.substr(key.size()), &parsed_value))
             {
                 stream_enabled = parsed_value;
             }
@@ -81,7 +44,7 @@ bool StreamChain::ParseSwitch(int argc, char** argv, bool default_value)
         if (arg == "--stream-mode" && i + 1 < argc)
         {
             bool parsed_value = stream_enabled;
-            if (parse_bool_text(argv[i + 1], &parsed_value))
+            if (ParseImageBoolSwitchText(argv[i + 1], &parsed_value))
             {
                 stream_enabled = parsed_value;
             }

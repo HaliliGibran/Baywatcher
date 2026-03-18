@@ -1,4 +1,3 @@
-#include "headfile.h"
 #include "image_data.h"
 
 // 作用域: 全局变量，斑马线停车请求标志（视觉侧置位）
@@ -14,8 +13,21 @@ pts_well_processed pts_far_right;
 // 作用域: 全局变量，十字远端线是否找到
 bool if_find_far_line = false;
 
+void image_reset_far_line_state()
+{
+    if_find_far_line = false;
+    reset_pts(pts_far_left);
+    reset_pts(pts_far_right);
+}
+
 // 作用域: 全局变量，中线/路径数据
 midline_data midline;
+
+void image_reset_midline_path_state()
+{
+    midline.mid_count = 0;
+    midline.path_count = 0;
+}
 
 // 作用域: 全局变量，跟线模式（默认混合）
 FollowLine follow_mode = FollowLine::MIXED;
@@ -39,7 +51,18 @@ float pure_angle = 0.0f;
 // 作用域: 全局变量，环岛 RUNNING 阶段纯跟踪角的平均值
 float circle_average_angle = 0.0f;
 
+// 作用域: 全局变量，当前帧平均曲率观测量
+float average_curvature = 0.0f;
+
+// 作用域: 全局变量，当前帧预瞄图像行观测量
+float preview_img_y = (float)PUREANGLE_PREVIEW_BASE_IMAGE_Y;
+
+void image_reset_tracking_observation_state()
+{
+    pure_angle = 0.0f;
+    average_curvature = 0.0f;
+    preview_img_y = (float)PUREANGLE_PREVIEW_BASE_IMAGE_Y;
+}
+
 // 作用域: 全局变量，元素检测投票/保护帧调试信息
 track_debug_status g_track_debug = {0, 0, 0};
-
-
