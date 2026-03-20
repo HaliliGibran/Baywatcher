@@ -107,8 +107,18 @@ static void RenderLineTrackingView(const cv::Mat& frame_bgr, const cv::Mat& kern
 
     img_processing(binimg);
 
-    // 调试显示统一从二值图转回 BGR，再叠加边线/中线/路径，便于图传观察。
-    cvtColor(binimg, view, COLOR_GRAY2BGR);
+    // 普通巡线分支的图传底图可在“二值图”和“彩图”之间切换：
+    // - 二值图更利于观察阈值、寻线和远端补线结果
+    // - 彩图更利于观察现场原始画面与轨迹叠加关系
+    if (BW_STREAM_LINE_USE_BINARY_VIEW != 0)
+    {
+        cvtColor(binimg, view, COLOR_GRAY2BGR);
+    }
+    else
+    {
+        view = line_img.clone();
+    }
+
     if (if_find_far_line)
     {
         // 十字远端线模式下，优先显示远端补线结果和远端中线。

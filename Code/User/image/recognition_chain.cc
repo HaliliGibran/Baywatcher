@@ -5,6 +5,7 @@
 #include "image_switch_utils.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -16,10 +17,24 @@
 namespace {
 
 constexpr uint64_t kRecognitionCooldownMs = 3000;
+constexpr uint64_t kRecognitionTriggerRejectLogIntervalMs = 300;
 
 static bool recognition_action_enabled()
 {
     return (BW_ENABLE_RECOGNITION_ACTION != 0);
+}
+
+static bool red_rect_center_y_in_trigger_band(const cv::Rect& rect, int* center_y_out = nullptr)
+{
+    const int center_y = rect.y + rect.height / 2;
+    if (center_y_out != nullptr)
+    {
+        *center_y_out = center_y;
+    }
+
+    const int min_y = BW_RECOG_TRIGGER_CENTER_Y - BW_RECOG_TRIGGER_CENTER_Y_TOL;
+    const int max_y = BW_RECOG_TRIGGER_CENTER_Y + BW_RECOG_TRIGGER_CENTER_Y_TOL;
+    return center_y >= min_y && center_y <= max_y;
 }
 
 // [Recognition Chain] 文件存在性检查。
@@ -537,6 +552,20 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         return false;
     }
 
+    int center_y = 0;
+    if (!red_rect_center_y_in_trigger_band(trigger_rect, &center_y))
+    {
+        static uint64_t last_reject_log_ms = 0;
+        if (t_ms >= last_reject_log_ms + kRecognitionTriggerRejectLogIntervalMs)
+        {
+            last_reject_log_ms = t_ms;
+            std::cout << "[RECOG] trigger rejected: center_y=" << center_y
+                      << ", expect=" << BW_RECOG_TRIGGER_CENTER_Y
+                      << "+/-" << BW_RECOG_TRIGGER_CENTER_Y_TOL << std::endl;
+        }
+        return false;
+    }
+
     // [Recognition Chain Step 3] 进入识别态。
     // 作用：冻结普通元素状态机，开始累计识别投票。
     mode_ = Mode::RECOGNITION;
@@ -570,13 +599,23 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     {
         cv::rectangle(view, red_rect, cv::Scalar(0, 255, 255), 2);
         cv::Mat roi = frame_bgr(red_rect).clone();
+        const auto infer_begin = std::chrono::steady_clock::now();
         const int pred = classify_roi_index(net_, roi);
+        const auto infer_end = std::chrono::steady_clock::now();
+        const double infer_ms = std::chrono::duration<double, std::milli>(infer_end - infer_begin).count();
         if (pred >= 0 && pred < static_cast<int>(class_names_.size()))
         {
             votes_.push_back(pred);
             const std::string& name = class_names_[pred];
             cv::putText(view, std::string("pred: ") + name, cv::Point(10, 54), cv::FONT_HERSHEY_SIMPLEX,
                         0.75, cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+            std::ostringstream infer_info;
+            infer_info << "infer: " << std::fixed << std::setprecision(2) << infer_ms << " ms";
+            cv::putText(view, infer_info.str(), cv::Point(10, 82), cv::FONT_HERSHEY_SIMPLEX,
+                        0.65, cv::Scalar(255, 255, 0), 2, cv::LINE_AA);
+            std::cout << "[RECOG] frame_pred=" << name
+                      << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
+                      << ", votes=" << votes_.size() << "/" << required_votes_ << std::endl;
         }
     }
 
@@ -626,30 +665,41 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     last_result_ = target;
     vehicle_hold_until_ms_ = 0;
     vehicle_hold_yaw_ = 0.0f;
+    cv::putText(view, std::string("result: ") + label, cv::Point(10, 110), cv::FONT_HERSHEY_SIMPLEX,
+                0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
 
     // [Recognition Chain Step 5A] 类别 -> 策略映射。
     // 作用：这里不直接输出电机控制，只设置识别结果驱动的高层行为。
     if (!recognition_action_enabled())
     {
-        std::cout << "[RECOG] result=" << label << " -> recognition only, action disabled" << std::endl;
+        std::cout << "[RECOG] result=" << label
+                  << ", votes=" << best_count << "/" << votes_.size()
+                  << " -> recognition only, action disabled" << std::endl;
     }
     else if (target == TargetClass::WEAPON)
     {
-        std::cout << "[RECOG] result=weapon -> follow left edge" << std::endl;
+        std::cout << "[RECOG] result=weapon"
+                  << ", votes=" << best_count << "/" << votes_.size()
+                  << " -> follow left edge" << std::endl;
     }
     else if (target == TargetClass::SUPPLY)
     {
-        std::cout << "[RECOG] result=supply -> follow right edge" << std::endl;
+        std::cout << "[RECOG] result=supply"
+                  << ", votes=" << best_count << "/" << votes_.size()
+                  << " -> follow right edge" << std::endl;
     }
     else if (target == TargetClass::VEHICLE)
     {
         vehicle_hold_yaw_ = current_pure_angle;
         vehicle_hold_until_ms_ = t_ms + 1000;
-        std::cout << "[RECOG] result=vehicle -> hold yaw for 1s" << std::endl;
+        std::cout << "[RECOG] result=vehicle"
+                  << ", votes=" << best_count << "/" << votes_.size()
+                  << " -> hold yaw for 1s" << std::endl;
     }
     else
     {
-        std::cout << "[RECOG] result=unknown" << std::endl;
+        std::cout << "[RECOG] result=unknown"
+                  << ", votes=" << best_count << "/" << votes_.size() << std::endl;
     }
 
     track_force_reset();

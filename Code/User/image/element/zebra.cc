@@ -62,7 +62,7 @@ bool zebra_detection(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 
         const int scan_begin = x + 1;
         int scan_end = x + ZEBRA_STEP;
-        if (scan_end > 99) scan_end = 99;
+        // if (scan_end > 99) scan_end = 99;
         if (scan_end > IMAGE_W - 1) scan_end = IMAGE_W - 1;
         if (scan_begin >= scan_end) continue;
 
@@ -127,6 +127,11 @@ bool zebra_detection(const uint8_t (&img)[IMAGE_H][IMAGE_W])
         if (white_count < 2 || black_count < 2)
         {
             continue;
+        }
+
+        if (BW_ENABLE_ZEBRA_RUN_LENGTH_CHECK == 0)
+        {
+            return true;
         }
 
         float white_mean = 0.0f;
