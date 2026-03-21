@@ -79,7 +79,8 @@ void BayWatcher_VOFA::init_UART(const std::string& dev, speed_t baudrate) {
 // ======================= 发送数据 =======================
 void BayWatcher_VOFA::Send_Data(float target_L, float speed_L, int pwm_L, 
                                 float target_R, float speed_R, int pwm_R, 
-                                float yaw, float base_speed) {
+                                float yaw, float base_speed,
+                                float average_curvature, float preview_img_y) {
 // void BayWatcher_VOFA::Send_Data(float base_speed, float speed_L, int pwm_L, 
 //                                 float speed_R, int pwm_R, float speed_average,
 //                                 float yaw, float current_yawspeed) {
@@ -87,8 +88,9 @@ void BayWatcher_VOFA::Send_Data(float target_L, float speed_L, int pwm_L,
 
     char buf[256]; 
     memset(buf, 0, sizeof(buf)); 
-    int len = sprintf(buf, "%.2f,%.2f,%d,%.2f,%.2f,%d,%.2f,%.2f\n", 
-                      target_L, speed_L, pwm_L, target_R,speed_R, pwm_R,  yaw,base_speed);
+    int len = sprintf(buf, "%.2f,%.2f,%d,%.2f,%.2f,%d,%.2f,%.2f,%.4f,%.2f\n", 
+                      target_L, speed_L, pwm_L, target_R, speed_R, pwm_R,
+                      yaw, base_speed, average_curvature, preview_img_y);
     // int len = sprintf(buf, "%.2f,%.2f,%d,%.2f,%d,%.2f,%.2f,%.2f\n", 
     //                   base_speed, speed_L, pwm_L, speed_R, pwm_R, speed_average, yaw,current_yawspeed);
     
@@ -190,11 +192,11 @@ switch (current_mode) {
             BayWatcher_Menu::getInstance().refresh_menu(KeyOp::Up);
         }
         // 外环模糊 PID 调参
-        else if (strncmp(buf, "bkp:", 4) == 0) KP_Base = atof(buf + 4);
-        else if (strncmp(buf, "bkd:", 4) == 0) KD_Base = atof(buf + 4);
-        else if (strncmp(buf, "fkp:", 4) == 0) KP_Fuzzy = atof(buf + 4);
-        else if (strncmp(buf, "fkd:", 4) == 0) KD_Fuzzy = atof(buf + 4);
-        else if (strncmp(buf, "err:", 4) == 0) ERROR_MAX = atof(buf + 4);
+        // else if (strncmp(buf, "bkp:", 4) == 0) KP_Base = atof(buf + 4);
+        // else if (strncmp(buf, "bkd:", 4) == 0) KD_Base = atof(buf + 4);
+        // else if (strncmp(buf, "fkp:", 4) == 0) KP_Fuzzy = atof(buf + 4);
+        // else if (strncmp(buf, "fkd:", 4) == 0) KD_Fuzzy = atof(buf + 4);
+        // else if (strncmp(buf, "err:", 4) == 0) ERROR_MAX = atof(buf + 4);
         // else if (strncmp(buf, "akp:", 4) == 0) PID_Angle.Kp = atof(buf + 4);
         // else if (strncmp(buf, "aki:", 4) == 0) PID_Angle.Ki = atof(buf + 4);
         // else if (strncmp(buf, "akd:", 4) == 0) PID_Angle.Kd = atof(buf + 4);
@@ -208,6 +210,11 @@ switch (current_mode) {
         // else if (strncmp(buf, "rkp:", 4) == 0) PID_Speed_F_R.Kp = atof(buf + 4);
         // else if (strncmp(buf, "rki:", 4) == 0) PID_Speed_F_R.Ki = atof(buf + 4);
         // else if (strncmp(buf, "rkd:", 4) == 0) PID_Speed_F_R.Kd = atof(buf + 4);
+        else if (strncmp(buf, "ckpa:", 4) == 0) PID_Cube.Kp_a = atof(buf + 4);
+        else if (strncmp(buf, "ckdb:", 4) == 0) PID_Cube.Kp_b = atof(buf + 4);
+        else if (strncmp(buf, "cki:", 4) == 0) PID_Cube.Ki = atof(buf + 4);
+        else if (strncmp(buf, "ckda:", 4) == 0) PID_Cube.Kd_a = atof(buf + 4);
+        else if (strncmp(buf, "ckdb:", 4) == 0) PID_Cube.Kd_b = atof(buf + 4);
         else if (strncmp(buf, "lkp:", 4) == 0) PID_Speed_L.Kp = atof(buf + 4);
         else if (strncmp(buf, "lki:", 4) == 0) PID_Speed_L.Ki = atof(buf + 4);
         else if (strncmp(buf, "lkd:", 4) == 0) PID_Speed_L.Kd = atof(buf + 4);

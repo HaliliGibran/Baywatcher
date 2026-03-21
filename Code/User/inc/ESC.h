@@ -13,6 +13,7 @@ public:
     void init();
     void start();
     void stop();
+    bool is_running;
 private:
     bool is_initialized = false;
     uint32_t max_pwm;     // 满油门 PWM 值

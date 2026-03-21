@@ -314,6 +314,25 @@
 #define BW_RECOG_TRIGGER_CENTER_Y_TOL 10
 #endif
 
+// 识别触发逆透视长方形判定开关：
+// 使用位置：recognition_chain.cc / TryEnterRecognition。
+// 作用：控制是否要求“红框在逆透视后仍然是横向长方形”。
+// 1：启用该判定，只有上/下边为长边时才允许进入识别态。
+// 0：关闭该判定，退回为“红框 + y≈80”旧逻辑。
+#ifndef BW_RECOG_TRIGGER_IPM_RECT_ENABLE
+#define BW_RECOG_TRIGGER_IPM_RECT_ENABLE 1
+#endif
+
+// 识别触发逆透视宽高比阈值：
+// 使用位置：recognition_chain.cc / red_rect_is_horizontal_ipm_rect。
+// 作用：要求逆透视后 top/bottom 边长度至少达到 left/right 边长度的该倍数。
+// 调大：更严格，更偏向只接受明显横向长方形。
+// 调小：更宽松，近似方形也更容易通过。
+// 推荐：先从 1.30 起调，若漏触发可适当下调，若误触发可适当上调。
+#ifndef BW_RECOG_TRIGGER_IPM_MIN_WIDTH_HEIGHT_RATIO
+#define BW_RECOG_TRIGGER_IPM_MIN_WIDTH_HEIGHT_RATIO 1.30f
+#endif
+
 // 识别结果动作链默认开关：
 // 使用位置：recognition_chain.cc / recognition_action_enabled。
 // 作用：允许“只识别、不改跟线策略”。

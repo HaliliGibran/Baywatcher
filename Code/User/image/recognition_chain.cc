@@ -3,9 +3,11 @@
 #include "common.h"
 #include "element.h"
 #include "image_switch_utils.h"
+#include "transform_table.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -18,6 +20,8 @@ namespace {
 
 constexpr uint64_t kRecognitionCooldownMs = 3000;
 constexpr uint64_t kRecognitionTriggerRejectLogIntervalMs = 300;
+constexpr int kRecognitionTriggerFrameWidth = 160;
+constexpr int kRecognitionTriggerFrameHeight = 120;
 
 static bool recognition_action_enabled()
 {
@@ -35,6 +39,94 @@ static bool red_rect_center_y_in_trigger_band(const cv::Rect& rect, int* center_
     const int min_y = BW_RECOG_TRIGGER_CENTER_Y - BW_RECOG_TRIGGER_CENTER_Y_TOL;
     const int max_y = BW_RECOG_TRIGGER_CENTER_Y + BW_RECOG_TRIGGER_CENTER_Y_TOL;
     return center_y >= min_y && center_y <= max_y;
+}
+
+static int clamp_recognition_trigger_coord(int v, int hi)
+{
+    if (v < 0)
+    {
+        return 0;
+    }
+    if (v > hi)
+    {
+        return hi;
+    }
+    return v;
+}
+
+static void map_trigger_rect_point_to_ipm(int x, int y, float* out_ipm_x, float* out_ipm_y)
+{
+    const int px = clamp_recognition_trigger_coord(x, kRecognitionTriggerFrameWidth - 1);
+    const int py = clamp_recognition_trigger_coord(y, kRecognitionTriggerFrameHeight - 1);
+    if (out_ipm_x != nullptr)
+    {
+        *out_ipm_x = UndistInverseMapW[py][px];
+    }
+    if (out_ipm_y != nullptr)
+    {
+        *out_ipm_y = UndistInverseMapH[py][px];
+    }
+}
+
+static float ipm_segment_length(float x0, float y0, float x1, float y1)
+{
+    const float dx = x1 - x0;
+    const float dy = y1 - y0;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+static bool red_rect_is_horizontal_ipm_rect(const cv::Rect& rect,
+                                            float* top_width_out = nullptr,
+                                            float* bottom_width_out = nullptr,
+                                            float* left_height_out = nullptr,
+                                            float* right_height_out = nullptr)
+{
+    if (BW_RECOG_TRIGGER_IPM_RECT_ENABLE == 0)
+    {
+        return true;
+    }
+
+    if (rect.width <= 1 || rect.height <= 1)
+    {
+        return false;
+    }
+
+    float tl_x = 0.0f, tl_y = 0.0f;
+    float tr_x = 0.0f, tr_y = 0.0f;
+    float br_x = 0.0f, br_y = 0.0f;
+    float bl_x = 0.0f, bl_y = 0.0f;
+    map_trigger_rect_point_to_ipm(rect.x, rect.y, &tl_x, &tl_y);
+    map_trigger_rect_point_to_ipm(rect.x + rect.width - 1, rect.y, &tr_x, &tr_y);
+    map_trigger_rect_point_to_ipm(rect.x + rect.width - 1, rect.y + rect.height - 1, &br_x, &br_y);
+    map_trigger_rect_point_to_ipm(rect.x, rect.y + rect.height - 1, &bl_x, &bl_y);
+
+    const float top_width = ipm_segment_length(tl_x, tl_y, tr_x, tr_y);
+    const float bottom_width = ipm_segment_length(bl_x, bl_y, br_x, br_y);
+    const float left_height = ipm_segment_length(tl_x, tl_y, bl_x, bl_y);
+    const float right_height = ipm_segment_length(tr_x, tr_y, br_x, br_y);
+
+    if (top_width_out != nullptr)
+    {
+        *top_width_out = top_width;
+    }
+    if (bottom_width_out != nullptr)
+    {
+        *bottom_width_out = bottom_width;
+    }
+    if (left_height_out != nullptr)
+    {
+        *left_height_out = left_height;
+    }
+    if (right_height_out != nullptr)
+    {
+        *right_height_out = right_height;
+    }
+
+    const float ratio = BW_RECOG_TRIGGER_IPM_MIN_WIDTH_HEIGHT_RATIO;
+    return top_width >= left_height * ratio &&
+           top_width >= right_height * ratio &&
+           bottom_width >= left_height * ratio &&
+           bottom_width >= right_height * ratio;
 }
 
 // [Recognition Chain] 文件存在性检查。
@@ -562,6 +654,28 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
             std::cout << "[RECOG] trigger rejected: center_y=" << center_y
                       << ", expect=" << BW_RECOG_TRIGGER_CENTER_Y
                       << "+/-" << BW_RECOG_TRIGGER_CENTER_Y_TOL << std::endl;
+        }
+        return false;
+    }
+
+    float top_width = 0.0f;
+    float bottom_width = 0.0f;
+    float left_height = 0.0f;
+    float right_height = 0.0f;
+    if (!red_rect_is_horizontal_ipm_rect(trigger_rect,
+                                         &top_width,
+                                         &bottom_width,
+                                         &left_height,
+                                         &right_height))
+    {
+        static uint64_t last_ipm_reject_log_ms = 0;
+        if (t_ms >= last_ipm_reject_log_ms + kRecognitionTriggerRejectLogIntervalMs)
+        {
+            last_ipm_reject_log_ms = t_ms;
+            std::cout << "[RECOG] trigger rejected: ipm_rect top=" << std::fixed << std::setprecision(2)
+                      << top_width << ", bottom=" << bottom_width
+                      << ", left=" << left_height << ", right=" << right_height
+                      << ", min_ratio=" << BW_RECOG_TRIGGER_IPM_MIN_WIDTH_HEIGHT_RATIO << std::endl;
         }
         return false;
     }

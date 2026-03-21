@@ -61,9 +61,7 @@ QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 #include "LQ_YOLO.hpp"
 #include "LQ_AB_ENCODER.hpp"
 
-// [Legacy Model Chain Disabled] 旧 NCNN 模型链路已停用。
-// 当前工程统一使用 model/cls.onnx + model/class_names.json 的 OpenCV DNN 识别链路。
-// #include "lq_ncnn.hpp"
+#include "lq_ncnn.hpp"
 
 ////////////// 龙邱库文件（新）//////////////////////////
 #include "lq_app_inc.hpp"
@@ -71,7 +69,7 @@ QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 //////////////// WUWU库文件 /////////////////////////////
 #include "WW_CAMERA.h"
 #include "WW_transmission.h"
-// #include "WW_TimerThread.h"
+#include "WW_TimerThread.h"
 
 ///////////////////用户文件/////////////////////////////////
 #include "TimerThread.h"
@@ -89,6 +87,7 @@ QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 #include "ESC.h"
 #include "IMU.h"
 #include "StateMachine.h"
+// #include "Communication.h"
 
 //////////////////全局变量声明//////////////////////
 extern BayWatcher_Encoder  encoder_sys;
@@ -97,6 +96,7 @@ extern BayWatcher_Menu&    menu;
 extern BayWatcher_Motor    motor_sys;
 extern BayWatcher_Key      key_sys;
 extern BayWatcher_VOFA     VOFA;
+
 extern Bay_PID_t           PID; 
 extern Bay_IncPID_t        PID_Speed_L;
 extern Bay_IncPID_t        PID_Speed_R;
@@ -104,6 +104,7 @@ extern Bay_PosPID_t        PID_Speed_F_L;   // 前进环左轮
 extern Bay_PosPID_t        PID_Speed_F_R;   // 前进环右轮
 extern Bay_PosPID_t        PID_Angle;    
 extern Bay_PosPID_t        PID_YawSpeed;
+extern Bay_CubePID_t       PID_Cube;        // 三次拟位置环
 // extern BayWatcher_TargetHandler   handler_sys;
 extern Camera              camera;
 extern TransmissionStreamServer server;

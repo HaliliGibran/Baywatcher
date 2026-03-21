@@ -22,13 +22,23 @@ typedef struct {
     float integral_limit;
 } Bay_PosPID_t;
 
-// typedef struct {
-//     float Kp, Ki, Kd;
-//     float error, integral, last_error;
-//     float output;       
-//     float output_limit; // 差速限幅 
-//     float integral_limit;
-// } Bay_FforwardPID_t;
+// 三次曲线拟位置式PID
+typedef struct {
+    float Kp_a, Kp_b, Ki, Kd_a , Kd_b;
+    float error, integral, last_error;
+    float gyro;
+    float output;       
+    float output_limit; // 差速限幅 
+    float integral_limit;
+} Bay_CubePID_t;
+
+typedef struct {
+    float Kp, Ki, Kd, Kff;
+    float error, integral, last_error;
+    float output;       
+    float output_limit; // 差速限幅 
+    float integral_limit;
+} Bay_FforwardPID_t;
 
 // 运动状态
 typedef struct {
@@ -53,6 +63,9 @@ typedef struct {
     // --- 执行器输出 ---
     int32_t  pwm_out_L;         
     int32_t  pwm_out_R;
+
+    // --- 运行时派生量 ---
+    float    yaw_control_base_speed ; // 经弯道减速等控制逻辑修正后的实际生效基准速度
 } Bay_PID_t;
 
 void BayWatcher_Control_Init(void);  
@@ -61,6 +74,7 @@ void BayWatcher_Control_Loop(void* arg);
 void BayWatcher_Inner_Loop(void* arg);
 void BayWatcher_Middle_Loop(void* arg);
 void BayWatcher_Outter_Loop(void* arg);
+void BayWatcher_Cube_Loop(void* arg);
 
 void BayWatcher_Set_BaseSpeed(float speed);
 void BayWatcher_Set_TargetAngle(float angle);
