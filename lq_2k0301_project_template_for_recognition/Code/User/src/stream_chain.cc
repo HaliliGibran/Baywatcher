@@ -124,10 +124,25 @@ void StreamChain::PublishFrame(const cv::Mat& frame)
         return;
     }
 
-    // [Stream Chain Step 2] 按 1/2 帧率推送图传。
-    // 作用：降低图传占用，避免对识别板触发与分类链造成额外压力。
-    if (((frame_seq_++) & 1u) != 0u)
+    // [Stream Chain Step 2] 按配置决定图传推送频率。
+    // 作用：默认改成每帧都推；如果后面需要继续降压，只改 common.h 即可。
+    const uint32_t interval = (BW_STREAM_PUBLISH_INTERVAL_FRAMES <= 0)
+        ? 1u
+        : static_cast<uint32_t>(BW_STREAM_PUBLISH_INTERVAL_FRAMES);
+    if ((frame_seq_++ % interval) != 0u)
     {
+        return;
+    }
+
+    // [Stream Chain Step 3] 图传前按最大宽度等比缩放。
+    // 作用：识别板主要靠图传做调试，适当降分辨率能明显减轻 JPEG 编码和网络压力。
+    if (BW_STREAM_MAX_WIDTH > 0 && frame.cols > BW_STREAM_MAX_WIDTH)
+    {
+        const int target_width = BW_STREAM_MAX_WIDTH;
+        const int target_height = std::max(1, frame.rows * target_width / std::max(frame.cols, 1));
+        cv::Mat resized;
+        cv::resize(frame, resized, cv::Size(target_width, target_height), 0, 0, cv::INTER_AREA);
+        server_->update_frame_mat(resized);
         return;
     }
 

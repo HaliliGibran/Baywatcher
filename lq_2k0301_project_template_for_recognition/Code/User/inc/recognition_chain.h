@@ -1,7 +1,7 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
-#include <deque>
 #include <string>
 #include <vector>
 #include <opencv2/dnn.hpp>
@@ -29,15 +29,14 @@ public:
 
     bool IsEnabled() const;
     bool IsInRecognitionMode() const;
+    BoardVisionCode GetCurrentVisionCode() const;
+    double GetCurrentBlobArea() const;
     // [Recognition Chain Step 2-3] 在普通态里检测红色触发器并切入识别态。
-    // 作用：识别链自己管理 NORMAL -> RECOGNITION 的切换。
-    bool TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view);
-    // [Recognition Chain Step 4-5A] 识别态逐帧推理并在投票收敛后给出结果。
-    // 作用：处理 ROI 分类、投票、类别映射和退出识别态。
-    void ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view);
-    // [Recognition Chain UART] 取出一帧待发送事件。
-    // 作用：稳定识别结果只在边沿产生一次事件，然后重复发送固定帧数。
-    bool TryGetNextTxEvent(BoardActionEvent* action, uint8_t* seq);
+    // 作用：识别链自己管理 NORMAL -> RECOGNITION 的切换，并开始概率累积。
+    bool TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
+    // [Recognition Chain Step 4-5A] 识别态逐帧推理并在概率累积收敛后给出结果。
+    // 作用：处理 ROI 分类、概率累积、类别映射和退出识别态。
+    void ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
 
 private:
     enum class TargetClass : uint8_t {
@@ -56,14 +55,21 @@ private:
     bool enabled_;
     cv::dnn::Net net_;
     std::vector<std::string> class_names_;
-    std::deque<int> votes_;
-    int required_votes_;
+    std::array<float, 3> prob_sum_;
+    std::array<float, 3> logit_bias_;
+    int valid_frame_count_;
+    int min_valid_frames_;
+    int max_valid_frames_;
+    float calibration_temperature_;
+    float decision_top1_threshold_;
+    float decision_margin_threshold_;
     Mode mode_;
     uint64_t recognition_timeout_ms_;
-    uint64_t trigger_cooldown_until_ms_;
-    bool event_armed_;
-    uint8_t next_event_seq_;
-    BoardActionEvent pending_tx_action_;
-    uint8_t pending_tx_seq_;
-    uint8_t pending_tx_repeat_remain_;
+    BoardVisionCode current_vision_code_;
+    BoardVisionCode latched_symbol_code_;
+    uint64_t latched_release_deadline_ms_;
+    bool latched_release_pending_;
+    uint64_t normal_precheck_next_ms_;
+    bool normal_precheck_positive_;
+    double current_blob_area_;
 };

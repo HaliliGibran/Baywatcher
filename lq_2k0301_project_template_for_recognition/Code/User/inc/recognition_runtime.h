@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common.h"
+
 // ==================== 识别板视觉运行时接口 ====================
 namespace recognition_runtime {
 
@@ -7,7 +9,7 @@ namespace recognition_runtime {
 // 说明：触发与识别都直接围绕同一份 640x480 原图展开。
 constexpr int kRecognitionFrameWidth = 640;
 constexpr int kRecognitionFrameHeight = 480;
-constexpr int kRecognitionFrameFps = 180;
+constexpr int kRecognitionFrameFps = BW_RECOG_CAMERA_FPS;
 
 } // namespace recognition_runtime
 
