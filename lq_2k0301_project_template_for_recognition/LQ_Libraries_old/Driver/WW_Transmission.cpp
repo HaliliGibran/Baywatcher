@@ -33,6 +33,7 @@
  ********************************************************************************************************************/
 
 #include "WW_transmission.h"
+#include "common.h"
 
 // HTML查看器内容
 const char* viewer_html = R"HTML(
@@ -790,7 +791,7 @@ void TransmissionStreamServer::update_frame_mat(const cv::Mat& frame)
     std::vector<unsigned char> jpeg_buffer;
     std::vector<int> params;
     params.push_back(cv::IMWRITE_JPEG_QUALITY);
-    params.push_back(90); // 质量90
+    params.push_back(BW_STREAM_JPEG_QUALITY);
     
     if (cv::imencode(".jpg", frame, jpeg_buffer, params)) {
         latest_capture_ts_ms = capture_ts_ms;

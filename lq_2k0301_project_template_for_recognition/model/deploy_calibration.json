@@ -1,0 +1,12 @@
+{
+  "temperature": 0.597864,
+  "logit_bias": [
+    -1.696609,
+    0.503691,
+    1.192918
+  ],
+  "decision_top1_threshold": 0.679874,
+  "decision_margin_threshold": 0.3,
+  "source_split": "real_val",
+  "num_samples": 17
+}
