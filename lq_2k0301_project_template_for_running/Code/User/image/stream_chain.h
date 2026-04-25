@@ -4,11 +4,6 @@
 #include <opencv2/opencv.hpp>
 #include "main.hpp"
 
-// 功能: 图传链轻量封装
-// 类型: 图像侧辅助类
-// 说明：
-// - 对 main/vision_runtime 暴露统一的“初始化 + 发布帧”接口。
-// - 运行板当前只保留图传，不再把图传链与本地识别链绑在一起调度。
 class StreamChain
 {
 public:
@@ -29,8 +24,8 @@ public:
     void PublishFrame(const cv::Mat& frame);
 
 private:
-    TransmissionStreamServer* server_; // 外部注入的图传服务实例，owner 仍在 main
-    bool enabled_;                     // 当前运行时是否允许图传
-    bool started_;                     // 图传服务是否已成功启动
-    uint32_t frame_seq_;               // 当前发布帧序号，用于简单降频
+    TransmissionStreamServer* server_;
+    bool enabled_;
+    bool started_;
+    uint32_t frame_seq_;
 };

@@ -8,11 +8,6 @@ static std::atomic<bool> g_track_force_reset{false};
 
 namespace {
 
-// 功能: 把公开元素运行态收回到普通赛道
-// 类型: 局部功能函数
-// 关键参数:
-// - reset_follow_mode-是否同步把 follow_mode 收回 MIXED
-// - clear_far_line-是否清空十字远端线缓存
 static void set_runtime_normal_state(bool reset_follow_mode, bool clear_far_line)
 {
     element_type = ElementType::NORMAL;
@@ -29,10 +24,6 @@ static void set_runtime_normal_state(bool reset_follow_mode, bool clear_far_line
     }
 }
 
-// 功能: 把公开元素运行态切到十字
-// 类型: 局部功能函数
-// 关键参数: 无
-// 说明：这里只负责 owner 切换，不处理十字内部计数和补线细节。
 static void enter_crossing_runtime_state()
 {
     element_type = ElementType::CROSSING;
@@ -44,10 +35,6 @@ static void enter_crossing_runtime_state()
     circle_direction = CircleDirection::CIRCLE_DIR_NONE;
 }
 
-// 功能: 把公开元素运行态切到环岛
-// 类型: 局部功能函数
-// 关键参数: direction-当前判定到的环岛方向
-// 说明：circle_state 只在首次进入时推进到 BEGIN，避免重复覆盖环岛内部阶段。
 static void enter_circle_runtime_state(CircleDirection direction)
 {
     element_type = ElementType::CIRCLE;
@@ -61,9 +48,6 @@ static void enter_circle_runtime_state(CircleDirection direction)
 
 } // namespace
 
-// 功能: 清空元素公开运行态
-// 类型: 全局功能函数
-// 关键参数: reset_follow_mode-是否同步重置跟线模式
 void track_reset_element_runtime_state(bool reset_follow_mode)
 {
     set_runtime_normal_state(reset_follow_mode, true);

@@ -63,6 +63,7 @@ public:
     uint8_t highlight_num;       // 当前高亮的是哪一行
     uint8_t write_ena;           // 写使能：1=正在调参，0=只是浏览
     float* write_pointer;       // 指向当前正在修改的变量
+    bool*  write_pointer_b;     // 指向当前正在修改的布尔变量
     float   write_step;          // 加减的步长
     float   data_max;            // 最大值
     float   data_min;            // 最小值

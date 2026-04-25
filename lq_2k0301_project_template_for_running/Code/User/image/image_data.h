@@ -2,8 +2,8 @@
 #define SMARTCAR_IMAGE_DATA_H
 
 #include <cstdint>
-#include "Communication.h"
 #include "common.h"
+#include "Communication.h"
 
 // 作用域: 全局变量，斑马线停车请求标志（视觉侧置位，控制层处理）
 extern bool zebra_stop;
@@ -126,37 +126,6 @@ enum class FollowLine:uint8_t
 // 作用域: 全局变量，跟线模式（MIXED/MIDLEFT/MIDRIGHT）
 extern FollowLine follow_mode;
 
-// -------------------- 远端识别事件接口层 --------------------
-// 运行板不再把远端识别解释成“强制左/右跟线”，
-// 而是把识别板事件收口成“vehicle 保持航向”或“触发本地绕行动作 owner”。
-// 功能: 清空远端识别动作缓存
-// 类型: 全局状态辅助函数
-// 关键参数: 无
-// 说明：用于上电初始化、手动复位，以及需要丢弃历史动作记忆的场景。
-void image_remote_recognition_reset();
-// 功能: 把一帧串口事件解释成运行板本地动作
-// 类型: 全局状态更新函数
-// 关键参数:
-// - action: 识别板事件类型
-// - seq: 识别板事件序号（用于去重）
-// - current_pure_angle: 收到事件当下的纯跟踪角，用于 vehicle 锁存
-// - t_ms: 当前时间戳（毫秒）
-// 说明：
-// - 重复 seq 只消费一次
-// - 动作执行态到达的新事件直接丢弃，不排队
-// - weapon/supply 直接交给 TargetHandler，vehicle 走保持航向窗口
-void image_remote_recognition_apply_event(BoardActionEvent action,
-                                          uint8_t seq,
-                                          float current_pure_angle,
-                                          uint64_t t_ms);
-// 功能: 查询当前是否处于远端 vehicle 的保持航向窗口
-// 类型: 全局状态查询函数
-// 关键参数:
-// - t_ms: 当前时间戳（毫秒）
-// - hold_yaw: 输出锁存的目标航向角
-// 返回值: true 表示当前帧应进入“保持航向”分支
-bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw);
-
 // -------------------- 元素状态机 --------------------
 // 元素类型（作用域: 全局枚举类型）
 enum class ElementType:uint8_t
@@ -220,17 +189,68 @@ extern float pure_angle;
 // 作用域: 全局变量，环岛 RUNNING 阶段纯跟踪角的平均值
 extern float circle_average_angle;
 
-// 作用域: 全局变量，MidLineSuggestPureAnglePreviewImageY 当前帧的平均曲率观测量
-extern float average_curvature;
+// 作用域: 全局变量，MidLineSuggestPureAnglePreviewImageY 当前帧的稳健局部转角观测量（单位：deg）
+extern float preview_curve_angle_deg;
 
-// 作用域: 全局变量，MidLineSuggestPureAnglePreviewImageY 当前帧输出的预瞄图像行
+// 作用域: 全局变量，CalculatePureAngleFromPath 当前帧实际参与 pure_angle 计算的预瞄图像行
 extern float preview_img_y;
 
 // 功能: 清空图像主链输出观测量
 // 类型: 全局状态辅助函数
 // 关键参数: 无
-// 说明：统一管理 pure_angle / average_curvature / preview_img_y 的复位语义。
+// 说明：统一管理 pure_angle / preview_curve_angle_deg / preview_img_y 的复位语义。
 void image_reset_tracking_observation_state();
+
+// -------------------- 双板远端识别动作接口层 --------------------
+// 功能: 清空运行板远端事件缓存
+// 类型: 全局状态辅助函数
+// 关键参数: 无
+void image_remote_recognition_reset();
+
+// 功能: 把识别板串口状态解释成运行板本地动作
+// 类型: 全局状态更新函数
+// 关键参数:
+// - code/seq: 识别板发送的状态码与序号
+// - current_pure_angle: 收到 vehicle 事件当下的 pure_angle
+// - t_ms: 当前时间戳（毫秒）
+void image_remote_recognition_apply_state(BoardVisionCode code,
+                                          uint8_t seq,
+                                          float current_pure_angle,
+                                          uint64_t t_ms);
+
+// 功能: 查询当前是否处于远端 vehicle 的保持航向窗口
+// 类型: 全局状态查询函数
+// 关键参数:
+// - t_ms: 当前时间戳（毫秒）
+bool image_remote_recognition_is_vehicle_active(uint64_t t_ms);
+
+// 功能: 查询当前是否处于远端 vehicle 的保持航向窗口，并返回锁存航向角
+// 类型: 全局状态查询函数
+// 关键参数:
+// - t_ms: 当前时间戳（毫秒）
+// - hold_yaw: 输出锁存航向角
+bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw);
+
+// 功能: 查询当前是否锁定到单边边线跟线
+// 类型: 全局状态查询函数
+// 关键参数:
+// - out_mode: 输出 MIDLEFT / MIDRIGHT
+bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode);
+
+// 功能: 查询当前是否启用远端 w/s 激进转角接管
+// 类型: 全局状态查询函数
+// 关键参数:
+// - raw_pure_angle: 当帧未接管前的原始几何 pure_angle
+// - out_override: 输出接管角
+// 说明:
+// - w: 输出 +BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE，直到 raw_pure_angle < 0
+// - s: 输出 -BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE，直到 raw_pure_angle > 0
+bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle, float* out_override);
+
+// 功能: 查询当前是否因砖块观测而持续压制环岛状态机
+// 类型: 全局状态查询函数
+// 关键参数: 无
+bool image_remote_recognition_should_block_circle();
 
 
 #endif

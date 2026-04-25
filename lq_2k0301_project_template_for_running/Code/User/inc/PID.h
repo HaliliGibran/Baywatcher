@@ -42,7 +42,18 @@ typedef struct {
 
 // 运动状态
 typedef struct {
-    uint8_t  is_running;        // 运行标志        
+    uint8_t  is_running;        // 运行标志   
+    
+    // --- 多级发车控制 ---
+    uint8_t  startup_state;       // 0=未启动, 1=初始延时中, 2=等负压软起, 3=底盘软起中, 4=发车完成(巡航)
+    uint32_t startup_delay_cnt;   // 延时计数器
+    uint32_t startup_delay_target;// 延时目标(次数)
+    
+    // --- 发车过程需要暂存的参数
+    float    startup_esc_target;
+    float    startup_esc_step;
+    float    startup_speed_target;
+    float    startup_speed_step;
     
     // --- 设定值 (Setpoints) ---
     float    base_target_speed; // 基础直行速度
@@ -97,6 +108,6 @@ void BayWatcher_Start_Car(uint8_t mode, float target_speed, uint32_t esc_wait_ms
 void BayWatcher_Stop_Car(void);
 
 void BayWatcher_Set_Start_Mode(uint8_t mode); // 0:带负压，1:无负压
-void BayWatcher_Start_Car_Sequence(float target_speed, uint32_t esc_wait_ms, float ramp_step);
 void BayWatcher_Set_BaseEscPwm(float percentage);
+void BayWatcher_Sequence_Start(uint32_t delay_ms, float esc_target, float esc_step, float speed_target, float speed_step);
 #endif

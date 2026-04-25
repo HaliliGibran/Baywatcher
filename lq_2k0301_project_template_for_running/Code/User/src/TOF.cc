@@ -56,6 +56,7 @@ void BayWatcher_TOF::Update() {
     filtered_distance = Moving_Average_Filter(raw_distance);
     distance_derivative = Calculate_Derivative();
     last_filtered_distance = filtered_distance;
+    // printf("%.2f\n",last_filtered_distance);
 }
 
 uint16_t BayWatcher_TOF::Get_Filtered_Distance() { return filtered_distance; }

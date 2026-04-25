@@ -55,17 +55,28 @@ QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 #include "LQ_TCP_Client.hpp"
 #include "LQ_UDP_Client.hpp"
 #include "LQ_TFT18_dri.hpp"
-#include "LQ_HW_ADC.hpp"
+// #include "LQ_HW_ADC.hpp"
 #include "LQ_ATIM_PWM.hpp"
 #include "LQ_module_loader.hpp"
-#include "LQ_YOLO.hpp"
 #include "LQ_AB_ENCODER.hpp"
 
-#include "lq_ncnn.hpp"
-
+#undef PAGE_SIZE
+#undef BIT
+#undef LS_ADC_BASE_ADDR
+#undef ADC_SR_OFFSET
+#undef ADC_CR1_OFFSET
+#undef ADC_CR2_OFFSET
+#undef ADC_SMPR2_OFFSET
+#undef ADC_SQR3_OFFSET
+#undef ADC_DR_OFFSET
+#undef ADC_SAMPLE_TIME
+#undef ADC_RESOLUTION
+#undef ADC_REF_VOLTAGE
+#undef ADC_CONV_TIMEOUT
 ////////////// 龙邱库文件（新）//////////////////////////
 #include "lq_app_inc.hpp"
 #include "lq_module_load.hpp"
+// #include "lq_uart.hpp"
 //////////////// WUWU库文件 /////////////////////////////
 #include "WW_CAMERA.h"
 #include "WW_transmission.h"
@@ -88,6 +99,7 @@ QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 #include "IMU.h"
 #include "StateMachine.h"
 #include "Communication.h"
+#include "Buzzer.h"
 
 //////////////////全局变量声明//////////////////////
 extern BayWatcher_Encoder  encoder_sys;

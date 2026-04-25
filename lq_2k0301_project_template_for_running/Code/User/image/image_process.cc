@@ -213,18 +213,106 @@ static void reset_image_processing_outputs()
     ResetPureAnglePreviewTransitionState();
 }
 
+// 作用域: 文件内局部枚举，边线搜索结果
+// 说明：
+// - 普通巡线或 vehicle 特殊起点寻线成功，都返回 OK
+// - 仅 vehicle 特殊起点无法建立时，才回退到“保持识别瞬间偏航角”兜底
+enum track_search_result_t
+{
+    TRACK_SEARCH_OK = 0,
+    TRACK_SEARCH_VEHICLE_FALLBACK_HOLD,
+};
+
+// 功能: vehicle 窗口内，从中心列向上找到更适合的寻线起始行
+// 类型: 局部功能函数
+// 关键参数:
+// - img: 当前帧二值图
+// - out_start_y: 输出最终寻线起始行
+// 说明：
+// - 先从 SET_IMAGE_CORE_Y 往上找离开黑区的位置
+// - 再检查上方 5 行是否仍有黑点；若有，则按“最远黑点优先”继续跳过
+// - 如果一路退到上半区边界附近仍找不到可靠起点，则放弃本帧 vehicle 寻线
+static bool try_find_vehicle_search_start_y(const uint8_t (&img)[IMAGE_H][IMAGE_W], int* out_start_y)
+{
+    if (out_start_y == nullptr)
+    {
+        return false;
+    }
+
+    const int kMinSearchY = IMAGE_H / 2;
+    int temp_y = SET_IMAGE_CORE_Y;
+    if (temp_y >= IMAGE_H)
+    {
+        temp_y = IMAGE_H - 1;
+    }
+
+    while (temp_y > kMinSearchY && img[temp_y][SET_IMAGE_CORE_X] == 0)
+    {
+        --temp_y;
+    }
+
+    while (temp_y > (kMinSearchY + 5))
+    {
+        if (img[temp_y - 5][SET_IMAGE_CORE_X] == 0)
+        {
+            temp_y -= 6;
+            continue;
+        }
+        if (img[temp_y - 4][SET_IMAGE_CORE_X] == 0)
+        {
+            temp_y -= 5;
+            continue;
+        }
+        if (img[temp_y - 3][SET_IMAGE_CORE_X] == 0)
+        {
+            temp_y -= 4;
+            continue;
+        }
+        if (img[temp_y - 2][SET_IMAGE_CORE_X] == 0)
+        {
+            temp_y -= 3;
+            continue;
+        }
+        if (img[temp_y - 1][SET_IMAGE_CORE_X] == 0)
+        {
+            temp_y -= 2;
+            continue;
+        }
+        break;
+    }
+
+    if (temp_y <= kMinSearchY)
+    {
+        return false;
+    }
+
+    *out_start_y = temp_y;
+    return true;
+}
+
 // 功能: 常规巡线前的左右边线搜索与处理
 // 类型: 局部功能函数
-static void process_track_edges(const uint8_t (&img)[IMAGE_H][IMAGE_W])
+static track_search_result_t process_track_edges(const uint8_t (&img)[IMAGE_H][IMAGE_W],
+                                                 bool vehicle_active)
 {
     reset_pts(pts_left);
     reset_pts(pts_right);
 
-    SearchLine_Lpt(img, SET_IMAGE_CORE_X, SET_IMAGE_CORE_Y, pts_left.pts, &pts_left.pts_count);
-    SearchLine_Rpt(img, SET_IMAGE_CORE_X, SET_IMAGE_CORE_Y, pts_right.pts, &pts_right.pts_count);
+    int search_y = SET_IMAGE_CORE_Y;
+    if (vehicle_active)
+    {
+        if (!try_find_vehicle_search_start_y(img, &search_y))
+        {
+            return TRACK_SEARCH_VEHICLE_FALLBACK_HOLD;
+        }
+    }
+
+    SearchLine_Lpt(img, SET_IMAGE_CORE_X, search_y, pts_left.pts, &pts_left.pts_count);
+    SearchLine_Rpt(img, SET_IMAGE_CORE_X, search_y, pts_right.pts, &pts_right.pts_count);
 
     process_line(true, pts_left);
     process_line(false, pts_right);
+    return TRACK_SEARCH_OK;
 }
 
 // 功能: 处理斑马线锁停、解锁和延时停车的生命周期
@@ -275,9 +363,7 @@ static bool try_trigger_zebra_pending_stop(const uint8_t (&img)[IMAGE_H][IMAGE_W
 {
     const bool zebra_can_check =
         (t_ms >= g_zebra_gate.cooldown_until_ms &&
-         element_type == ElementType::NORMAL &&
-         pts_left.is_straight &&
-         pts_right.is_straight);
+         element_type == ElementType::NORMAL);
 
     if (!zebra_can_check || !zebra_detection(img))
     {
@@ -313,6 +399,89 @@ static void update_track_state_machine(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     {
         if_find_far_line = false;
     }
+}
+
+// 功能: 把当前逆透视边线直接写成对应侧的候选中线
+// 类型: 局部功能函数
+// 关键参数: p-待同步的边线处理上下文
+static void copy_resampled_edge_to_candidate_mid(pts_well_processed* p)
+{
+    if (p == nullptr)
+    {
+        return;
+    }
+
+    int32_t n = p->pts_resample_count;
+    if (n < 0)
+    {
+        n = 0;
+    }
+    if (n > PT_MAXLEN)
+    {
+        n = PT_MAXLEN;
+    }
+
+    p->mid_count = n;
+    for (int32_t i = 0; i < n; ++i)
+    {
+        p->mid[i][0] = p->pts_resample[i][0];
+        p->mid[i][1] = p->pts_resample[i][1];
+    }
+}
+
+// 功能: 远端 w/s 锁边时，直接把逆透视边线作为最终中线输出
+// 类型: 局部功能函数
+// 关键参数: forced_mode-锁定到左/右边线
+static bool build_midline_from_remote_follow_override(FollowLine forced_mode)
+{
+    copy_resampled_edge_to_candidate_mid(&pts_left);
+    copy_resampled_edge_to_candidate_mid(&pts_right);
+
+    follow_mode = forced_mode;
+
+    const pts_well_processed* src = nullptr;
+    if (forced_mode == FollowLine::MIDLEFT)
+    {
+        src = &pts_left;
+    }
+    else if (forced_mode == FollowLine::MIDRIGHT)
+    {
+        src = &pts_right;
+    }
+    else
+    {
+        return false;
+    }
+
+    int32_t n = src->mid_count;
+    if (n < 0)
+    {
+        n = 0;
+    }
+    if (n > PT_MAXLEN)
+    {
+        n = PT_MAXLEN;
+    }
+
+    midline.mid_count = n;
+    for (int32_t i = 0; i < n; ++i)
+    {
+        midline.mid[i][0] = src->mid[i][0];
+        midline.mid[i][1] = src->mid[i][1];
+    }
+    return true;
+}
+
+// 功能: 砖块压制期间，只清空环岛运行态，不让环岛状态机继续推进
+// 类型: 局部功能函数
+static void clear_circle_runtime_for_brick()
+{
+    roundabout_reset();
+    if (element_type == ElementType::CIRCLE)
+    {
+        element_type = ElementType::NORMAL;
+    }
+    image_reset_far_line_state();
 }
 
 // 功能: 根据当前识别覆盖/元素状态选择最终中线来源
@@ -429,8 +598,31 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
         return;
     }
 
+    const bool vehicle_active = image_remote_recognition_is_vehicle_active(t_ms);
+    FollowLine forced_follow_mode = FollowLine::MIXED;
+    const bool remote_follow_locked =
+        image_remote_recognition_get_forced_follow_mode(&forced_follow_mode);
+    const bool remote_circle_block = image_remote_recognition_should_block_circle();
+    const bool remote_route_active = vehicle_active || remote_follow_locked;
+
     // follow_mode 由上层策略决定，这里只消费，不在主链入口硬重置。
-    process_track_edges(img);
+    const track_search_result_t track_search = process_track_edges(img, vehicle_active);
+    if (track_search == TRACK_SEARCH_VEHICLE_FALLBACK_HOLD)
+    {
+        float hold_yaw = 0.0f;
+        track_reset_element_runtime_state(false);
+        image_reset_far_line_state();
+
+        if (image_remote_recognition_try_get_hold_yaw(t_ms, &hold_yaw))
+        {
+            reset_image_processing_outputs();
+            pure_angle = hold_yaw;
+            return;
+        }
+
+        reset_image_processing_outputs();
+        return;
+    }
 
     // //测试赛道宽度矫正PIXPERMETER
     // float roadwidth_pix_sqr = (100.0f) * (100.0f);
@@ -478,14 +670,39 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     // );
     // return;
 
-
-    if (try_trigger_zebra_pending_stop(img, t_ms))
+    if (remote_route_active)
     {
-        return;
+        // 远端接管期间临时屏蔽元素状态机，不在这里重置 follow_mode owner。
+        track_reset_element_runtime_state(false);
+        image_reset_far_line_state();
+    }
+    else if (remote_circle_block)
+    {
+        clear_circle_runtime_for_brick();
+
+        if (try_trigger_zebra_pending_stop(img, t_ms))
+        {
+            return;
+        }
+    }
+    else
+    {
+        if (try_trigger_zebra_pending_stop(img, t_ms))
+        {
+            return;
+        }
+
+        update_track_state_machine(img);
     }
 
-    update_track_state_machine(img);
-    build_midline_from_current_state();
+    if (remote_follow_locked)
+    {
+        build_midline_from_remote_follow_override(forced_follow_mode);
+    }
+    else
+    {
+        build_midline_from_current_state();
+    }
     build_path_and_measure_pure_angle();
 
     const bool has_valid_measure = (midline.mid_count > 0 && midline.path_count > 0);
@@ -493,6 +710,13 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 
     // 趋势前馈只在存在有效测量时启用，避免把纯外推/纯保护输出继续放大。
     pure_angle = pure_angle_apply_pre_control(pure_angle, has_valid_measure);
+
+    const float raw_pure_angle = pure_angle;
+    float aggressive_override_angle = 0.0f;
+    if (image_remote_recognition_get_aggressive_turn_override(raw_pure_angle, &aggressive_override_angle))
+    {
+        pure_angle = aggressive_override_angle;
+    }
 
 }
 

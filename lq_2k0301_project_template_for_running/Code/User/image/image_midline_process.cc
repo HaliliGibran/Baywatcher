@@ -4,6 +4,7 @@
 #include "image_math.h"
 #include "image_midline_process.h"
 #include "transform_table.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -468,11 +469,11 @@ static bool fit_circle_kasa(const float (&pts)[PT_MAXLEN][2], int start, int end
     }
 
     const float A0 = sol[0];
-    const float B0 = sol[1];
+    const float B_fit = sol[1];
     const float C0 = sol[2];
 
     const float ccx = 0.5f * A0;
-    const float ccy = 0.5f * B0;
+    const float ccy = 0.5f * B_fit;
     const float rr2 = ccx * ccx + ccy * ccy + C0;
     if (rr2 <= 1e-6f)
     {
@@ -1304,7 +1305,15 @@ static __attribute__((unused)) MidTrackState MidLineClassifyTrack(const MidTrack
 // 说明:
 // - 普通直道/缓弯：尽量保持在 base_img_y 附近，避免过分激进
 // - 前方存在明显弯道：把预瞄行往更小的 y 推，让控制更早感知转向趋势
-// - 当前版本使用“整条 mid -> curvature -> nms -> 非零峰值均值”作为连续几何量
+// - 当前版本使用“整条 mid -> local_curvature_points -> 还原成局部转角 -> 取最大值”作为连续几何量
+static inline float curvature_to_angle_deg(float curvature)
+{
+    float cosv = 1.0f - curvature;
+    if (cosv > 1.0f) cosv = 1.0f;
+    else if (cosv < -1.0f) cosv = -1.0f;
+    return acosf(cosv) * (180.0f / PI32);
+}
+
 int MidLineSuggestPureAnglePreviewImageY(const float (&mid)[PT_MAXLEN][2], int32_t mid_count,
                                          int base_img_y)
 {
@@ -1314,58 +1323,120 @@ int MidLineSuggestPureAnglePreviewImageY(const float (&mid)[PT_MAXLEN][2], int32
     int preview_img_y_out = base_img_y;
     if (mid_count < 3)
     {
-        average_curvature = 0.0f;
-        preview_img_y = (float)preview_img_y_out;
+        preview_curve_angle_deg = 0.0f;
         return preview_img_y_out;
     }
 
-    // 1) 整条中线的曲率链：
-    //    先算 curvature(1-cos)，再做 NMS，只对非零峰值做平均。
+    // 1) 整条中线的局部转角链：
+    //    先算 curvature(1-cos)，再还原成角度值。
+    //    这里不再直接取“单点最大角度”，而是：
+    //    - 先对每个局部转角做合理限幅
+    //    - 再在原始顺序上做短窗统计
+    //    - 每个窗口直接取中位数，避免单个离群尖峰把整窗抬高
+    //    不再对小角度做额外归零；小角度虽然不会推动预瞄点，但保留它的连续量更利于调试和观察。
     float curvature[PT_MAXLEN] = {0.0f};
-    float curvature_nms[PT_MAXLEN] = {0.0f};
     int curvature_count = (mid_count > PT_MAXLEN) ? PT_MAXLEN : (int)mid_count;
-    int curvature_nms_count = 0;
     local_curvature_points(mid, &curvature_count,
                            curvature, &curvature_count,
                            PUREANGLE_PREVIEW_CURV_DIST);
-    nms_curvature(curvature, &curvature_count,
-                  curvature_nms, &curvature_nms_count,
-                  PUREANGLE_PREVIEW_CURV_NMS_KERNEL);
 
-    float curvature_sum = 0.0f;
-    int nonzero_peak_count = 0;
-    for (int i = 0; i < curvature_nms_count; ++i)
+    float angle_deg_chain[PT_MAXLEN] = {0.0f};
+    for (int i = 0; i < curvature_count; ++i)
     {
-        if (curvature_nms[i] > 0.0f)
+        if (curvature[i] <= 0.0f)
         {
-            curvature_sum += curvature_nms[i];
-            ++nonzero_peak_count;
+            continue;
+        }
+
+        float angle_deg = curvature_to_angle_deg(curvature[i]);
+        if (angle_deg > PUREANGLE_PREVIEW_ANGLE_CLAMP_MAX)
+        {
+            angle_deg = PUREANGLE_PREVIEW_ANGLE_CLAMP_MAX;
+        }
+        angle_deg_chain[i] = angle_deg;
+    }
+
+    float robust_angle_deg = 0.0f;
+    int robust_window = PUREANGLE_PREVIEW_ROBUST_WINDOW;
+    if (robust_window < 1)
+    {
+        robust_window = 1;
+    }
+    if ((robust_window & 1) == 0)
+    {
+        robust_window += 1;
+    }
+    const int half_window = robust_window >> 1;
+
+    for (int i = 0; i < curvature_count; ++i)
+    {
+        float window_angles[PT_MAXLEN];
+        int window_count = 0;
+
+        int j0 = i - half_window;
+        if (j0 < 0)
+        {
+            j0 = 0;
+        }
+        int j1 = i + half_window;
+        if (j1 > curvature_count - 1)
+        {
+            j1 = curvature_count - 1;
+        }
+
+        for (int j = j0; j <= j1; ++j)
+        {
+            window_angles[window_count] = angle_deg_chain[j];
+            window_count++;
+        }
+
+        if (window_count <= 0)
+        {
+            continue;
+        }
+
+        std::sort(window_angles, window_angles + window_count);
+
+        float window_angle_deg = 0.0f;
+        if ((window_count & 1) != 0)
+        {
+            window_angle_deg = window_angles[window_count >> 1];
+        }
+        else
+        {
+            const int idx1 = (window_count >> 1) - 1;
+            const int idx2 = (window_count >> 1);
+            window_angle_deg = 0.5f * (window_angles[idx1] + window_angles[idx2]);
+        }
+
+        if (window_angle_deg > robust_angle_deg)
+        {
+            robust_angle_deg = window_angle_deg;
         }
     }
-    average_curvature = (nonzero_peak_count > 0)
-        ? (curvature_sum / (float)nonzero_peak_count)
-        : 0.0f;
+
+    preview_curve_angle_deg = robust_angle_deg;
 
     int shift = 0;
-    const float curve_low = PUREANGLE_PREVIEW_CURVE_LOW;
-    float curve_high = PUREANGLE_PREVIEW_CURVE_HIGH;
-    if (curve_high < curve_low)
+    const float curve_low_deg = PUREANGLE_PREVIEW_CURVE_LOW;
+    float curve_high_deg = PUREANGLE_PREVIEW_CURVE_HIGH;
+    if (curve_high_deg < curve_low_deg)
     {
-        curve_high = curve_low;
+        curve_high_deg = curve_low_deg;
     }
-    if (curve_high > curve_low)
+    if (curve_high_deg > curve_low_deg)
     {
-        float t = (average_curvature - curve_low) / (curve_high - curve_low);
+        float t = (preview_curve_angle_deg - curve_low_deg) / (curve_high_deg - curve_low_deg);
         t = fclip(t, 0.0f, 1.0f);
         shift = (int)std::lroundf((float)PUREANGLE_PREVIEW_SHIFT_MAX * t);
     }
-    else if (average_curvature >= curve_high)
+    else if (preview_curve_angle_deg >= curve_high_deg)
     {
         shift = PUREANGLE_PREVIEW_SHIFT_MAX;
     }
 
     // 2) “粗粒度状态补偿”暂时停用：
-    //    当前阶段只保留“average_curvature -> shift”的连续量控制，
+    //    当前阶段只保留“最大局部转角 -> shift”的连续量控制，
     //    不再叠加直角弯/S弯/环岛等粗粒度状态对 shift 的最小覆盖。
     // MidTrackPrimitive prim[16];
     // int prim_count = 0;
@@ -1414,7 +1485,6 @@ int MidLineSuggestPureAnglePreviewImageY(const float (&mid)[PT_MAXLEN][2], int32
     {
         preview_img_y_out = IMAGE_H - 1;
     }
-    preview_img_y = (float)preview_img_y_out;
     return preview_img_y_out;
 }
 

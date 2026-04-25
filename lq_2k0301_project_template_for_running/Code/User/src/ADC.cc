@@ -1,78 +1,55 @@
 #include "ADC.h"
 
 BayWatcher_ADC::BayWatcher_ADC() {
-    _scale = 0.0;
-    _base_path = "/sys/bus/iio/devices/iio:device0/"; // Linux IIO 默认的 ADC 设备路径
+    bat_adc = nullptr;
 }
 
-BayWatcher_ADC::~BayWatcher_ADC() {}
+BayWatcher_ADC::~BayWatcher_ADC() {
+    if (bat_adc != nullptr) {
+        delete bat_adc;
+    }
+}
 
 bool BayWatcher_ADC::init() {
-    // 初始化时读取一次 scale
-    _scale = getScale();
-    if (_scale <= 0.0) {
-        printf("[ADC Error] Failed to initialize ADC. Scale is invalid.\n");
-        return false;
-    }
-    printf("[ADC] Initialized successfully. Scale = %f\n", _scale);
+    // 实例化 AD6 通道，内部会自动触发单例硬件的 mmap 映射和寄存器初始化
+    bat_adc = new ls_adc(ADC_CH_BATTERY);
+    
+    printf("[ADC] Initialized successfully using hardware registers.\n");
     return true;
 }
 
-// 读取并返回 Scale
-double BayWatcher_ADC::getScale() {
-    std::string scale_path = _base_path + "in_voltage_scale";
-    int fd_scale = open(scale_path.c_str(), O_RDONLY);
-    
-    if(fd_scale < 0) {
-        perror("[ADC Error] open scale failed");
-        return 0.0;
+// 读取并返回原始数据 (0-4095)
+int BayWatcher_ADC::getRaw(ls_adc_channel_t channel) {
+    if (channel == ADC_CH_BATTERY && bat_adc != nullptr) {
+        return bat_adc->read_raw();
     }
-    
-    char buf[16] = {0};
-    if (read(fd_scale, buf, sizeof(buf) - 1) <= 0) {
-        perror("[ADC Error] read scale failed");
-        close(fd_scale);
-        return 0.0;
-    }
-    close(fd_scale);
-    
-    double scaleNum = strtod(buf, nullptr);//字符串转为浮点数
-    _scale = scaleNum; // 更新内部缓存
-    
-    return scaleNum;
+    // 若后续有其他通道，在此扩展
+    return -1;
 }
 
-// 读取并返回原始数据
-double BayWatcher_ADC::getRaw(int channel) {
-    if (channel < 0 || channel > 7) {
-        printf("[ADC Error] Invalid channel %d\n", channel);
-        return 0.0;
+// 读取引脚真实测量电压
+float BayWatcher_ADC::getPinVoltage(ls_adc_channel_t channel) {
+    if (channel == ADC_CH_BATTERY && bat_adc != nullptr) {
+        // 新库的 read_voltage() 直接返回 V
+        return bat_adc->read_voltage(); 
     }
-    
-    // 动态拼接路径，eg: /sys/bus/iio/devices/iio:device0/in_voltage0_raw
-    std::string raw_path = _base_path + "in_voltage" + std::to_string(channel) + "_raw";
-    int fd_adc = open(raw_path.c_str(), O_RDONLY);
-    
-    if (fd_adc < 0) {
-        perror("[ADC Error] open raw failed");
-        return 0.0;
-    }
-    
-    char buf[16] = {0};
-    if (read(fd_adc, buf, sizeof(buf) - 1) <= 0) {
-        close(fd_adc);
-        return 0.0;
-    }
-    close(fd_adc);
-    
-    return strtod(buf, nullptr);
+    return -1.0f;
 }
 
-// 读取实际电压
-double BayWatcher_ADC::getVoltage(int channel) {
-    double raw = getRaw(channel);
-    double voltage = (_scale * raw) / 1000.0;//mV转V
-    // 终端打印显示
-    printf("CH: %d | Raw = %4.0f | Voltage = %.3f V\n", channel, raw, voltage);
-    return voltage;
+// 获取最终的电池电压
+float BayWatcher_ADC::getBatteryVoltage() {
+    float pin_voltage = getPinVoltage(ADC_CH_BATTERY);
+    
+    if (pin_voltage < 0) {
+        printf("[ADC Error] Failed to read pin voltage.\n");
+        return -1.0f; 
+    }
+
+    // 根据硬件原理图，分压比为 1:11
+    float battery_voltage = pin_voltage * 11.0f;
+    
+    // 终端打印显示 (如果需要高频调用，建议注释掉这句打印，防止终端刷屏卡顿)
+    // printf("CH: 6 | Pin = %.3f V | Battery = %.3f V\n", pin_voltage, battery_voltage);
+    
+    return battery_voltage;
 }

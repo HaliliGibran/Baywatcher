@@ -29,7 +29,7 @@ public:
     void Send_Data(float target_L, float speed_L, int pwm_L, 
                    float target_R, float speed_R, int pwm_R, 
                    float yaw, float base_speed,
-                   float average_curvature, float preview_img_y);
+                   float preview_curve_angle_deg, float preview_img_y);
 
     // void Send_Data(float base_speed, float speed_L, int pwm_L, 
     //                             float speed_R, int pwm_R, float speed_average,

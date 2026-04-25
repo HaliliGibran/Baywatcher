@@ -80,7 +80,7 @@ void BayWatcher_VOFA::init_UART(const std::string& dev, speed_t baudrate) {
 void BayWatcher_VOFA::Send_Data(float target_L, float speed_L, int pwm_L, 
                                 float target_R, float speed_R, int pwm_R, 
                                 float yaw, float base_speed,
-                                float average_curvature, float preview_img_y) {
+                                float preview_curve_angle_deg, float preview_img_y) {
 // void BayWatcher_VOFA::Send_Data(float base_speed, float speed_L, int pwm_L, 
 //                                 float speed_R, int pwm_R, float speed_average,
 //                                 float yaw, float current_yawspeed) {
@@ -90,7 +90,7 @@ void BayWatcher_VOFA::Send_Data(float target_L, float speed_L, int pwm_L,
     memset(buf, 0, sizeof(buf)); 
     int len = sprintf(buf, "%.2f,%.2f,%d,%.2f,%.2f,%d,%.2f,%.2f,%.4f,%.2f\n", 
                       target_L, speed_L, pwm_L, target_R, speed_R, pwm_R,
-                      yaw, base_speed, average_curvature, preview_img_y);
+                      yaw, base_speed, preview_curve_angle_deg, preview_img_y);
     // int len = sprintf(buf, "%.2f,%.2f,%d,%.2f,%d,%.2f,%.2f,%.2f\n", 
     //                   base_speed, speed_L, pwm_L, speed_R, pwm_R, speed_average, yaw,current_yawspeed);
     
@@ -218,16 +218,19 @@ switch (current_mode) {
         // else if (strncmp(buf, "rkp:", 4) == 0) PID_Speed_F_R.Kp = atof(buf + 4);
         // else if (strncmp(buf, "rki:", 4) == 0) PID_Speed_F_R.Ki = atof(buf + 4);
         // else if (strncmp(buf, "rkd:", 4) == 0) PID_Speed_F_R.Kd = atof(buf + 4);
-        else if (strncmp(buf, "ckpa:", 4) == 0) PID_Cube.Kp_a = atof(buf + 4);
-        else if (strncmp(buf, "ckdb:", 4) == 0) PID_Cube.Kp_b = atof(buf + 4);
-        else if (strncmp(buf, "cki:", 4) == 0) PID_Cube.Ki = atof(buf + 4);
-        else if (strncmp(buf, "ckda:", 4) == 0) PID_Cube.Kd_a = atof(buf + 4);
-        else if (strncmp(buf, "ckdb:", 4) == 0) PID_Cube.Kd_b = atof(buf + 4);
+        else if (strncmp(buf, "ckpa:", 5) == 0) PID_Cube.Kp_a = atof(buf + 5);
+        else if (strncmp(buf, "ckpb:", 5) == 0) PID_Cube.Kp_b = atof(buf + 5);
+        else if (strncmp(buf, "cki:", 4) == 0)  PID_Cube.Ki   = atof(buf + 4);
+        else if (strncmp(buf, "ckda:", 5) == 0) PID_Cube.Kd_a = atof(buf + 5);
+        else if (strncmp(buf, "ckdb:", 5) == 0) PID_Cube.Kd_b = atof(buf + 5);
         else if (strncmp(buf, "lkp:", 4) == 0) PID_Speed_L.Kp = atof(buf + 4);
         else if (strncmp(buf, "lki:", 4) == 0) PID_Speed_L.Ki = atof(buf + 4);
         else if (strncmp(buf, "lkd:", 4) == 0) PID_Speed_L.Kd = atof(buf + 4);
         else if (strncmp(buf, "rkp:", 4) == 0) PID_Speed_R.Kp = atof(buf + 4);
         else if (strncmp(buf, "rki:", 4) == 0) PID_Speed_R.Ki = atof(buf + 4);
         else if (strncmp(buf, "rkd:", 4) == 0) PID_Speed_R.Kd = atof(buf + 4);
+        // else if (strncmp(buf, "escm:", 5) == 0) global_start_mode = (StartMode)((int)atof(buf + 5));
+        else if (strncmp(buf, "escd:", 5) == 0) esc_sys.enable_esc_diff = (bool)atof(buf + 5);
+        else if (strncmp(buf, "edrt:", 5) == 0) esc_sys.esc_diff_ratio = atof(buf + 5);
     }
 }

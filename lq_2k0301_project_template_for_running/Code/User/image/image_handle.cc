@@ -23,8 +23,8 @@ static pure_angle_preview_state_t g_pure_angle_preview = {0};
 // 关键参数: target_img_y-几何链给出的目标预瞄图像行
 static int pure_angle_apply_preview_transition(int target_img_y)
 {
-    if (target_img_y < 0) target_img_y = 0;
-    if (target_img_y > IMAGE_H - 1) target_img_y = IMAGE_H - 1;
+    if (target_img_y < PUREANGLE_PREVIEW_MIN_IMAGE_Y) target_img_y = PUREANGLE_PREVIEW_MIN_IMAGE_Y;
+    if (target_img_y > PUREANGLE_PREVIEW_BASE_IMAGE_Y) target_img_y = PUREANGLE_PREVIEW_BASE_IMAGE_Y;
 
     if (!g_pure_angle_preview.had_last)
     {
@@ -53,11 +53,41 @@ static int pure_angle_apply_preview_transition(int target_img_y)
         blended = (float)target_img_y;
     }
 
-    if (blended < 0.0f) blended = 0.0f;
-    if (blended > (float)(IMAGE_H - 1)) blended = (float)(IMAGE_H - 1);
+    if (blended < (float)PUREANGLE_PREVIEW_MIN_IMAGE_Y) blended = (float)PUREANGLE_PREVIEW_MIN_IMAGE_Y;
+    if (blended > (float)PUREANGLE_PREVIEW_BASE_IMAGE_Y) blended = (float)PUREANGLE_PREVIEW_BASE_IMAGE_Y;
 
     g_pure_angle_preview.last_preview_img_y = blended;
     return (int)std::lroundf(blended);
+}
+
+static float pure_angle_apply_progressive_limit(float raw_angle_deg)
+{
+    const float threshold = PUREANGLE_RAW_LIMIT_THRESHOLD_DEG;
+    const float progressive_max = PUREANGLE_PROGRESSIVE_MAX_ABS_DEG;
+    if (progressive_max <= threshold)
+    {
+        return fclip(raw_angle_deg, -threshold, threshold);
+    }
+
+    const float sign = (raw_angle_deg >= 0.0f) ? 1.0f : -1.0f;
+    const float abs_angle = std::fabs(raw_angle_deg);
+    if (abs_angle <= threshold)
+    {
+        return raw_angle_deg;
+    }
+
+    const float span = progressive_max - threshold;
+    const float extra = abs_angle - threshold;
+    float limited_abs = threshold + span * (1.0f - std::exp(-extra / span));
+
+    // 数值保护：允许无限逼近上限，但不允许达到或超过。
+    const float upper_bound = progressive_max - 1e-3f;
+    if (limited_abs > upper_bound)
+    {
+        limited_abs = upper_bound;
+    }
+
+    return sign * limited_abs;
 }
 
 void ResetPureAnglePreviewTransitionState()
@@ -1301,6 +1331,7 @@ void CalculatePureAngleFromPath(const float (&path)[PT_MAXLEN][2], int32_t path_
     if (path_count <= 0)
     {
         g_pure_angle_preview.had_last = 0;
+        preview_img_y = (float)PUREANGLE_PREVIEW_BASE_IMAGE_Y;
         *out_pure_angle = 0.0f;
         return;
     }
@@ -1316,8 +1347,9 @@ void CalculatePureAngleFromPath(const float (&path)[PT_MAXLEN][2], int32_t path_
     const int preview_img_y_target = MidLineSuggestPureAnglePreviewImageY(midline.mid,
                                                                           midline.mid_count,
                                                                           PUREANGLE_PREVIEW_BASE_IMAGE_Y);
-    const int preview_img_y = pure_angle_apply_preview_transition(preview_img_y_target);
-    const float preview_y = UndistInverseMapH[preview_img_y][SET_IMAGE_CORE_X];
+    const int preview_img_y_used = pure_angle_apply_preview_transition(preview_img_y_target);
+    preview_img_y = (float)preview_img_y_used;
+    const float preview_y = UndistInverseMapH[preview_img_y_used][SET_IMAGE_CORE_X];
 
     int target_idx = -1;
     float best_abs = 1e30f;
@@ -1365,5 +1397,5 @@ void CalculatePureAngleFromPath(const float (&path)[PT_MAXLEN][2], int32_t path_
 
     float angle = -atan2f(dx, forward) * 180.0f / PI32;
     angle = fclip(angle, -80.0f, 80.0f);
-    *out_pure_angle = angle;
+    *out_pure_angle = pure_angle_apply_progressive_limit(angle);
 }

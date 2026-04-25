@@ -45,19 +45,30 @@
 #pragma region pure_angle预瞄与路径参数
 // -------------------- pure_angle 预瞄与路径 --------------------
 // 正常状态默认看 y=90 附近；前方弯越急，会动态把该值往更小处推，形成更强前瞻。
+// 当前动态预瞄行的有效工作区间固定收口为 90~70，避免前推过远导致行为过激。
 #define PUREANGLE_PREVIEW_BASE_IMAGE_Y   (90)
 // pure_angle 预瞄图像行允许推到的最远位置（越小越看远，也越激进）。
-#define PUREANGLE_PREVIEW_MIN_IMAGE_Y    (60)
+// 这里固定到 y=70，不再允许继续推到更远处。
+#define PUREANGLE_PREVIEW_MIN_IMAGE_Y    (70)
 // 预瞄曲率链的局部曲率计算跨度（点数）。
-#define PUREANGLE_PREVIEW_CURV_DIST      (3)
-// 预瞄曲率链的曲率 NMS 窗口大小（点数）。
+#define PUREANGLE_PREVIEW_CURV_DIST      (10)
+// 预瞄曲率链历史 NMS 窗口大小（点数）：
+// 当前 MidLineSuggestPureAnglePreviewImageY 已不再使用 NMS，保留该宏仅为兼容旧调参记录。
 #define PUREANGLE_PREVIEW_CURV_NMS_KERNEL (5)
-// 曲率阈值下限（1-cos(theta) 域）：
-// 约等于 theta≈10deg，对应较轻微弯道，不触发明显前推。
-#define PUREANGLE_PREVIEW_CURVE_LOW      (0.0152f)
-// 曲率阈值上限（1-cos(theta) 域）：
-// 约等于 theta≈35deg，对应明显弯道，前推到最大。
-#define PUREANGLE_PREVIEW_CURVE_HIGH     (0.1809f)
+// 预瞄局部转角阈值下限（角度域，单位：deg）：
+// 使用 local_curvature_points 得到 1-cos(theta) 后，会先还原成 theta 再参与后续判断。
+// 小于该角度时，视为普通直道/缓弯，不触发明显前推。
+#define PUREANGLE_PREVIEW_CURVE_LOW      (10.0f)
+// 预瞄局部转角阈值上限（角度域，单位：deg）：
+// 达到该角度后，认为前方已有明显弯道，预瞄前推到最大。
+#define PUREANGLE_PREVIEW_CURVE_HIGH     (25.0f)
+// 局部转角单点的物理合理上限（角度域，单位：deg）：
+// 预瞄判断只关心“是否已经明显弯起来”，超过该值时对预瞄前推已无额外意义；
+// 先做限幅，可压掉边线/中线抖动带来的离谱尖峰。
+#define PUREANGLE_PREVIEW_ANGLE_CLAMP_MAX (60.0f)
+// 预瞄局部转角链的稳健窗口大小（点数，建议奇数）：
+// 不再直接取单点最大值，而是对角度链做短窗平均，只保留“连续一小段都在转”的几何证据。
+#define PUREANGLE_PREVIEW_ROBUST_WINDOW   (5)
 // 纯局部几何连续映射所允许的最大前推量（图像行）。
 #define PUREANGLE_PREVIEW_SHIFT_MAX      (20)
 // 特殊几何形态下的附加前推量：连续弯通常比普通弯更需要提前切入。
@@ -102,6 +113,22 @@
 // 推荐：先固定 MAX_STEP，再微调该项。
 #ifndef PUREANGLE_PREVIEW_TRANSITION_ALPHA
 #define PUREANGLE_PREVIEW_TRANSITION_ALPHA 0.70f
+#endif
+
+// pure_angle 大角度抑制启动阈值（deg）：
+// 使用位置：image_handle.cc / CalculatePureAngleFromPath。
+// 作用：小于等于该阈值时，pure_angle 直接输出原始几何角。
+// 大于该阈值时，进入平滑饱和区，逐步逼近 PUREANGLE_PROGRESSIVE_MAX_ABS_DEG。
+#ifndef PUREANGLE_RAW_LIMIT_THRESHOLD_DEG
+#define PUREANGLE_RAW_LIMIT_THRESHOLD_DEG 35.0f
+#endif
+
+// pure_angle 渐进饱和上限（deg）：
+// 使用位置：image_handle.cc / CalculatePureAngleFromPath。
+// 作用：作为大角度抑制后的理论极限值，只允许逼近，不允许达到或超过。
+// 要求：必须严格大于 PUREANGLE_RAW_LIMIT_THRESHOLD_DEG。
+#ifndef PUREANGLE_PROGRESSIVE_MAX_ABS_DEG
+#define PUREANGLE_PROGRESSIVE_MAX_ABS_DEG 45.0f
 #endif
 #pragma endregion
 
@@ -206,21 +233,6 @@
 
 #pragma region 斑马线检测与停车参数
 // -------------------- 斑马线检测与停车 --------------------
-// 斑马线横向搜索步长（像素）：
-// 使用位置：element/zebra.cc。
-// 作用：决定 run-length 检测沿横向的采样跨度。
-// 调大：计算更快，但细节更少。
-// 调小：更细致，但更易受局部噪声影响。
-#ifndef ZEBRA_STEP
-#define ZEBRA_STEP 50
-#endif
-
-// 历史保留阈值：连续黑点判定下限。
-// 使用位置：旧斑马线逻辑兼容；当前主逻辑已不依赖它做最终判定。
-#ifndef ZEBRA_CONSECUTIVE
-#define ZEBRA_CONSECUTIVE 3
-#endif
-
 // 近距离检测长度（点数）：
 // 使用位置：element/zebra.cc。
 // 作用：限制斑马线在近车区域内的检测窗口。
@@ -228,40 +240,47 @@
 #define NEAR_DETECT_MAX (30)
 #endif
 
-// 至少需要这么多段黑白色块，才认为有“斑马线形态”。
+// 单行扫描时，忽略首尾色块后，黑色块和白色块各自至少需要这么多个。
 // 使用位置：element/zebra.cc。
-// 调大：更严格，误检减少。
-// 调小：更灵敏，但更容易把普通纹理误判为斑马线。
-#ifndef ZEBRA_MIN_RUNS
-#define ZEBRA_MIN_RUNS (6)
+// 设计口径：赛道 45cm、斑马线 2.5cm 黑白交替，理论上黑白各约 9 个；
+// 实战中放宽到各 >=6 即可认定有明显斑马线结构。
+#ifndef ZEBRA_MIN_COLOR_RUNS
+#define ZEBRA_MIN_COLOR_RUNS (6)
 #endif
 
-// 斑马线等距离判定开关：
+// 单行扫描时，忽略首尾色块后，至少需要这么多次黑白切换。
 // 使用位置：element/zebra.cc。
-// 作用：控制是否启用“白块/黑块长度接近且内部离散较小”这一层规则性筛选。
-// 1：启用等距离判定，误检更少，但对破损/透视畸变更敏感。
-// 0：关闭等距离判定，只保留基本的黑白色块数量判定，检测更宽松。
-// 推荐：赛道斑马线规则、拍摄稳定时保持开启；若现场纹理或透视导致经常漏检可临时关闭。
-#ifndef BW_ENABLE_ZEBRA_RUN_LENGTH_CHECK
-#define BW_ENABLE_ZEBRA_RUN_LENGTH_CHECK 0
+// 等价于要求赛道横向上出现足够密集的黑白交替。
+#ifndef ZEBRA_MIN_SWITCHES
+#define ZEBRA_MIN_SWITCHES (11)
 #endif
 
-// 白块均值与黑块均值的允许相对差值：
+// 一帧内至少需要命中这么多条扫描线，才最终判定为斑马线。
 // 使用位置：element/zebra.cc。
-// 作用：约束白黑色块的平均长度要接近。
-// 调大：更宽松。
-// 调小：更严格。
-#ifndef ZEBRA_RUN_DIFF_RATIO
-#define ZEBRA_RUN_DIFF_RATIO (0.35f)
+// 调大：更稳，误检更少。
+// 调小：更灵敏。
+#ifndef ZEBRA_MIN_HIT_ROWS
+#define ZEBRA_MIN_HIT_ROWS (2)
 #endif
 
-// 单个色块相对同色均值的允许离散比例：
+// 从近处边线点列里按多大步长抽取一条扫描线。
 // 使用位置：element/zebra.cc。
-// 作用：要求色块长度内部也要比较整齐。
-// 调大：更宽松。
-// 调小：更严格，抗误检更强。
-#ifndef ZEBRA_RUN_SPREAD_RATIO
-#define ZEBRA_RUN_SPREAD_RATIO (0.45f)
+// 调大：计算更省，但覆盖更稀。
+// 调小：覆盖更密，但更敏感。
+#ifndef ZEBRA_ROW_SAMPLE_STEP
+#define ZEBRA_ROW_SAMPLE_STEP (2)
+#endif
+
+// 扫描时离左右边线各裁掉多少像素，避免边线附近噪声影响。
+// 使用位置：element/zebra.cc。
+#ifndef ZEBRA_EDGE_MARGIN
+#define ZEBRA_EDGE_MARGIN (2)
+#endif
+
+// 当另一侧边线没有同 y 点时，允许用最近点兜底的最大 y 偏差。
+// 使用位置：element/zebra.cc。
+#ifndef ZEBRA_EDGE_MATCH_Y_TOL
+#define ZEBRA_EDGE_MATCH_Y_TOL (2)
 #endif
 
 // 斑马线解锁冷却时间（毫秒）：
@@ -289,6 +308,20 @@
 // 运行板收到 vehicle 事件后，保持事件当下 pure_angle 的持续时间（毫秒）。
 #ifndef BW_REMOTE_VEHICLE_HOLD_MS
 #define BW_REMOTE_VEHICLE_HOLD_MS 1000
+#endif
+
+// 运行板收到 w/s 后，是否启用激进固定转角接管。
+// 1：启用；0：关闭，保持当前仅锁边不锁角的行为。
+#ifndef BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE
+#define BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE 1
+#endif
+
+// 运行板收到 w/s 后，固定接管的 pure_angle 绝对值（度）。
+// 口径：
+// - w -> +ABS（左转）
+// - s -> -ABS（右转）
+#ifndef BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE
+#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 30.0f
 #endif
 
 // 双板绕行动作改成 pure_angle 接管后，各阶段目标角统一收口在这里。
@@ -329,55 +362,13 @@
 #endif
 #pragma endregion
 
-#pragma region 历史保留: 本地识别链与图传默认参数
-// -------------------- 历史保留: 本地识别链 / 图传链默认开关 --------------------
-// 说明：
-// - 运行板当前主流程已经改成“固定灰度巡线 + 串口接收识别板动作包”。
-// - 下面这组本地识别链宏仅保留给历史文件参考，不参与当前运行板主入口。
-// 模型识别链默认开关：
-// 使用位置：recognition_chain.cc / DefaultEnabled。
-// 作用：控制整条识别链默认是否可用；运行时仍可被命令行覆盖。
-#ifndef BW_ENABLE_RECOGNITION
-// #define BW_ENABLE_RECOGNITION 1
-#define BW_ENABLE_RECOGNITION 0
-#endif
-
-// 识别触发带中心 y：
-// 使用位置：recognition_chain.cc / TryEnterRecognition。
-// 坐标系：普通态触发帧 160x120。
-// 作用：只有红框中心 y 落在该位置附近时，才允许进入识别态。
-// 调大：要求目标更靠近画面下方才触发。
-// 调小：目标更靠近画面上方也可触发。
-#ifndef BW_RECOG_TRIGGER_CENTER_Y
-#define BW_RECOG_TRIGGER_CENTER_Y 80
-#endif
-
-// 识别触发带 y 容差：
-// 使用位置：recognition_chain.cc / TryEnterRecognition。
-// 作用：定义“y≈BW_RECOG_TRIGGER_CENTER_Y”的允许范围。
-// 例如中心 y=80、容差 10，对应允许区间 [70, 90]。
-// 调大：更宽松，更容易触发。
-// 调小：更严格，更依赖目标刚好经过指定横带。
-#ifndef BW_RECOG_TRIGGER_CENTER_Y_TOL
-#define BW_RECOG_TRIGGER_CENTER_Y_TOL 10
-#endif
-
-// 识别结果动作链默认开关：
-// 使用位置：recognition_chain.cc / recognition_action_enabled。
-// 作用：允许“只识别、不改跟线策略”。
-#ifndef BW_ENABLE_RECOGNITION_ACTION
-// #define BW_ENABLE_RECOGNITION_ACTION 1
-#define BW_ENABLE_RECOGNITION_ACTION 0
-#endif
-#pragma endregion
-
 #pragma region 图传开关与图传模式切换
 // 图传链默认开关：
 // 使用位置：stream_chain.cc / DefaultEnabled。
 // 作用：控制图传服务器默认是否启动；运行时仍可被命令行覆盖。
 #ifndef BW_ENABLE_STREAM
-// #define BW_ENABLE_STREAM 1
-#define BW_ENABLE_STREAM 0
+#define BW_ENABLE_STREAM 1
+// #define BW_ENABLE_STREAM 0
 #endif
 
 // 普通巡线分支图传底图模式：
@@ -386,8 +377,32 @@
 // 0：图传显示“低分辨率彩图叠加轨迹”，更利于看现场原始画面。
 // 说明：该开关只影响普通巡线分支；识别态和绕行态仍保持彩图显示。
 #ifndef BW_STREAM_LINE_USE_BINARY_VIEW
-// #define BW_STREAM_LINE_USE_BINARY_VIEW 1
-#define BW_STREAM_LINE_USE_BINARY_VIEW 0
+#define BW_STREAM_LINE_USE_BINARY_VIEW 1
+// #define BW_STREAM_LINE_USE_BINARY_VIEW 0
+#endif
+#pragma endregion
+
+#pragma region 灰度二值化诊断参数
+// 灰度二值化诊断总开关：
+// 使用位置：vision_runtime.cc。
+// 作用：输出整图/中心/四角灰度均值以及 Otsu 阈值，辅助判断灰度相机是否存在局部暗场。
+// 说明：只做可观测性，不改变实际二值化与巡线行为。
+#ifndef BW_GRAY_BIN_DIAG_ENABLE
+#define BW_GRAY_BIN_DIAG_ENABLE 0
+#endif
+
+// 灰度诊断采样块边长（像素）：
+// 使用位置：vision_runtime.cc。
+// 作用：中心和四角都用同样大小的小块统计均值。
+#ifndef BW_GRAY_BIN_DIAG_PATCH_SIZE
+#define BW_GRAY_BIN_DIAG_PATCH_SIZE 16
+#endif
+
+// 灰度诊断日志最小输出间隔（毫秒）：
+// 使用位置：vision_runtime.cc。
+// 作用：避免每帧都刷屏；图传开启时仍会每帧叠加当前统计值。
+#ifndef BW_GRAY_BIN_DIAG_LOG_INTERVAL_MS
+#define BW_GRAY_BIN_DIAG_LOG_INTERVAL_MS 400
 #endif
 #pragma endregion
 

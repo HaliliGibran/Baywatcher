@@ -1,7 +1,7 @@
 #ifndef __BAYWATCHER_COMMUNICATION_H_
 #define __BAYWATCHER_COMMUNICATION_H_
 
-#include "lq_uart.hpp"
+#include "LQ_Uart.hpp"
 #include <stddef.h>
 #include <stdint.h>
 #include <string>
@@ -12,32 +12,35 @@
 #define HEADING_FORWARD  1
 #define TURNING_RIGHT    2
 
-// 双板识别事件枚举：
-// - NONE 只在本地状态机里表示“当前没有事件”，不上串口。
-// - 识别板只发一次性事件；运行板收到后按事件 owner 执行动作。
-enum class BoardActionEvent : uint8_t {
-    NONE    = 0,
-    WEAPON  = 1,
-    SUPPLY  = 2,
-    VEHICLE = 3,
+// 双板视觉状态码：
+// - 识别板持续发送当前状态
+// - 运行板只对 w/s/v 的状态上升沿触发原动作
+enum class BoardVisionCode : uint8_t {
+    INVALID = 0,
+    VEHICLE = 'v',
+    WEAPON  = 'w',
+    SUPPLY  = 's',
+    BRICK   = 'b',
+    // u: 已命中识别标识型红块，但当前没有 v/w/s 结果输出
+    NO_RESULT = 'u',
+    // n: 检测区间内没有红色色块，或只有小的非标识红色色块
+    UNKNOWN = 'n',
 };
 
-// 双板事件协议固定常量。
 static constexpr uint8_t kBoardEventHeader1 = 0x5A;
 static constexpr uint8_t kBoardEventHeader2 = 0xA5;
 static constexpr uint8_t kBoardEventVersion = 0x01;
 static constexpr uint8_t kBoardEventTail    = 0xED;
 
-// 1字节对齐，防止编译器自动填充导致数据包大小不一致。
 #pragma pack(push, 1)
-struct BoardEventPacket {
-    uint8_t header1;  // 帧头1
-    uint8_t header2;  // 帧头2
-    uint8_t version;  // 协议版本
-    uint8_t seq;      // 事件序号，识别板每产生一个新事件就递增一次
-    uint8_t action;   // BoardActionEvent
-    uint8_t crc8;     // 对 version/seq/action 做 CRC8
-    uint8_t tail;     // 帧尾
+struct BoardStatePacket {
+    uint8_t header1;
+    uint8_t header2;
+    uint8_t version;
+    uint8_t seq;
+    uint8_t code;
+    uint8_t crc8;
+    uint8_t tail;
 };
 #pragma pack(pop)
 
@@ -48,19 +51,15 @@ public:
 
     // 双板通信统一走 UART1@115200。
     bool init(const std::string& port = UART1, uint32_t baud = B115200);
-
-    // 识别板发送一次动作事件。
-    bool send_event(BoardActionEvent action, uint8_t seq);
-
-    // 运行板从串口字节流中解析出一帧完整事件。
-    bool try_receive_event(BoardActionEvent* out_action, uint8_t* out_seq);
+    bool send_state(BoardVisionCode code, uint8_t seq);
+    bool try_receive_state(BoardVisionCode* out_code, uint8_t* out_seq);
 
 private:
-    ls_uart* uart_dev;
+    LS_UART* uart_dev;
     std::vector<uint8_t> rx_cache_;
 
     uint8_t calculate_crc8(const uint8_t* data, size_t len) const;
-    bool try_parse_cached_packet(BoardActionEvent* out_action, uint8_t* out_seq);
+    bool try_parse_cached_packet(BoardVisionCode* out_code, uint8_t* out_seq);
 };
 
 extern BoardComm comm;

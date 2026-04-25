@@ -25,6 +25,28 @@ enum class JudgeMethod {
     Vision_Method   // 上位机切线
 };
 
+// class BayWatcher_TargetHandler {
+// public:
+//     BayWatcher_TargetHandler();
+//     ~BayWatcher_TargetHandler();
+//     void init();
+//     void setMethod(JudgeMethod method);             
+//     void Start_Action(TargetBoardType target);
+//     void Update_Tick();
+
+//     float Get_Differential_Override();     
+
+//     bool Is_Executing();
+//     void Stop_Action();
+//     bool is_initialized = false; 
+// private:
+//     JudgeMethod _method;
+//     TargetBoardType current_target;
+//     ActionStage     current_stage;
+//     uint32_t stage_timer;             
+//     float    diff_override_value; 
+// };
+
 class BayWatcher_TargetHandler {
 public:
     BayWatcher_TargetHandler();
