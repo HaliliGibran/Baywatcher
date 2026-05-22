@@ -97,7 +97,8 @@ function(lq_try_use_opencv_root CANDIDATE_ROOT OUT_OK OUT_MODE OUT_INCLUDE OUT_L
             EXISTS "${CANDIDATE_ROOT}/lib/libopencv_core.so" AND
             EXISTS "${CANDIDATE_ROOT}/lib/libopencv_imgproc.so" AND
             EXISTS "${CANDIDATE_ROOT}/lib/libopencv_imgcodecs.so" AND
-            EXISTS "${CANDIDATE_ROOT}/lib/libopencv_dnn.so")
+            EXISTS "${CANDIDATE_ROOT}/lib/libopencv_dnn.so" AND
+            (NOT LQ_USE_CAMERA_EX_COMPAT OR EXISTS "${CANDIDATE_ROOT}/lib/libopencv_videoio.so"))
         set(_ok TRUE)
         set(_mode "MANUAL")
         set(_include "${CANDIDATE_ROOT}/include/opencv4")
@@ -116,6 +117,10 @@ set(LQ_OPENCV_MODE "")
 set(LQ_OPENCV_INCLUDE_DIR "")
 set(LQ_OPENCV_LIB_DIR "")
 set(LQ_OPENCV_CONFIG_DIR "")
+set(LQ_OPENCV_COMPONENTS core imgcodecs imgproc dnn)
+if (LQ_USE_CAMERA_EX_COMPAT)
+    list(APPEND LQ_OPENCV_COMPONENTS videoio)
+endif()
 
 if (LQ_OPENCV_ROOT)
     lq_try_use_opencv_root("${LQ_OPENCV_ROOT}" LQ_OPENCV_OK LQ_OPENCV_MODE LQ_OPENCV_INCLUDE_DIR LQ_OPENCV_LIB_DIR LQ_OPENCV_CONFIG_DIR)
@@ -127,12 +132,12 @@ endif()
 
 if (LQ_OPENCV_OK AND LQ_OPENCV_MODE STREQUAL "CONFIG")
     set(OpenCV_DIR "${LQ_OPENCV_CONFIG_DIR}" CACHE PATH "Bundled OpenCV config directory" FORCE)
-    find_package(OpenCV REQUIRED CONFIG COMPONENTS core imgcodecs imgproc dnn)
+    find_package(OpenCV REQUIRED CONFIG COMPONENTS ${LQ_OPENCV_COMPONENTS})
     include_directories(${OpenCV_INCLUDE_DIRS})
 elseif (LQ_OPENCV_OK AND LQ_OPENCV_MODE STREQUAL "MANUAL")
     include_directories(${LQ_OPENCV_INCLUDE_DIR})
 else()
-    find_package(OpenCV QUIET CONFIG COMPONENTS core imgcodecs imgproc dnn)
+    find_package(OpenCV QUIET CONFIG COMPONENTS ${LQ_OPENCV_COMPONENTS})
     if (OpenCV_FOUND)
         include_directories(${OpenCV_INCLUDE_DIRS})
     else()
@@ -148,6 +153,7 @@ else()
             "  lib/libopencv_imgproc.so\n"
             "  lib/libopencv_imgcodecs.so\n"
             "  lib/libopencv_dnn.so\n"
+            "  lib/libopencv_videoio.so （当启用 lq_camera_ex 兼容实现时）\n"
             "或者包含 OpenCVConfig.cmake / opencv-config.cmake。")
     endif()
 endif()
@@ -185,6 +191,9 @@ configure_file(${PROJECT_MODEL_DIR}/class_names.json ${OUTPUT_MODEL_DIR}/class_n
 #Opencv_lib
 if (LQ_OPENCV_OK AND LQ_OPENCV_MODE STREQUAL "MANUAL")
     set(OpenCV_LIBS opencv_core opencv_imgcodecs opencv_imgproc opencv_dnn)
+    if (LQ_USE_CAMERA_EX_COMPAT)
+        list(APPEND OpenCV_LIBS opencv_videoio)
+    endif()
 else()
     set(OpenCV_LIBS ${OpenCV_LIBS})
 endif()
