@@ -23,7 +23,19 @@ set(PROJECT_MODEL_DIR ${PROJECT_SOURCE_DIR}/model)
 set(OUTPUT_MODEL_DIR ${PROJECT_BINARY_DIR}/model)
 set(LQ_LOCAL_OPENCV_ROOT ${PROJECT_SOURCE_DIR}/cross_lib/opencv)
 set(LQ_LOCAL_NEWLIB_DIR ${PROJECT_SOURCE_DIR}/libraries)
-set(LQ_CAMERA_EX_LIB ${LQ_LOCAL_NEWLIB_DIR}/drv/src/liblq_camera_ex.a)
+set(LQ_CAMERA_EX_LIB "")
+set(LQ_CAMERA_EX_LIB_CANDIDATES
+    ${LQ_LOCAL_NEWLIB_DIR}/drv/src/liblq_camera_ex.a
+    ${PROJECT_SOURCE_DIR}/LQ_Libraries_new/drv/src/liblq_camera_ex.a
+    ${PROJECT_SOURCE_DIR}/../lq_2k0301_project_template_for_running/LQ_Libraries_new/drv/src/liblq_camera_ex.a
+)
+
+foreach(_camera_lib_candidate IN LISTS LQ_CAMERA_EX_LIB_CANDIDATES)
+    if (EXISTS "${_camera_lib_candidate}")
+        set(LQ_CAMERA_EX_LIB "${_camera_lib_candidate}")
+        break()
+    endif()
+endforeach()
 
 # 识别板当前只保留“彩色采集 + 图传 + 识别链 + UART”这一圈真实依赖。
 # 旧单板控制/菜单/IMU/ncnn 相关路径不再进入默认构建。
@@ -134,8 +146,10 @@ add_executable(${BIN} ${PLATFORM_SRC} ${RECOGNITION_BOARD_SRC})
 
 if (NOT EXISTS "${LQ_CAMERA_EX_LIB}")
     message(FATAL_ERROR
-        "未找到 lq_camera_ex 静态库：${LQ_CAMERA_EX_LIB}\n"
-        "请确认运行板新库 libraries/drv/src/liblq_camera_ex.a 已同步。")
+        "未找到 lq_camera_ex 静态库。\n"
+        "已检查以下路径：\n"
+        "  ${LQ_CAMERA_EX_LIB_CANDIDATES}\n"
+        "请确认识别板或运行板目录中至少有一份 liblq_camera_ex.a 可用。")
 endif()
 
 file(MAKE_DIRECTORY ${OUTPUT_MODEL_DIR})

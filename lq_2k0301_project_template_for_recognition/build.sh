@@ -5,7 +5,7 @@ set -e
 
 # # 默认开启图传
 # CMAKE_STREAM_OPT="-DBW_ENABLE_STREAM=ON"
-
+#
 # # 如果运行脚本时带有 "off" 参数，则关闭图传
 # if [ "$1" == "off" ]; then
 #     echo -e "\n[配置] 检测到参数 'off' -> 图传功能已关闭"
@@ -14,26 +14,48 @@ set -e
 #     echo -e "\n[配置] 默认编译 -> 图传功能已开启"
 # fi
 
-echo -e "\n=== 构建 build目录 ==="
-cmake -B output
-# cmake -B output $CMAKE_STREAM_OPT
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+build_dir="$script_dir/output"
+cache_file="$build_dir/CMakeCache.txt"
 
-pushd output
-make -j$(nproc)
+echo -e "\n=== 构建 build目录 ==="
+
+if [ -f "$cache_file" ]; then
+    cached_home="$(sed -n 's#^CMAKE_HOME_DIRECTORY:INTERNAL=##p' "$cache_file" | tr -d '\r')"
+    if [ -n "$cached_home" ] && [ "$cached_home" != "$script_dir" ]; then
+        echo "[清理] 检测到旧的 CMake 缓存来自: $cached_home"
+        echo "[清理] 当前源码目录为: $script_dir"
+        rm -rf "$build_dir"
+    fi
+fi
+
+cmake -S "$script_dir" -B "$build_dir"
+# cmake -S "$script_dir" -B "$build_dir" $CMAKE_STREAM_OPT
+
+if command -v nproc >/dev/null 2>&1; then
+    JOBS="$(nproc)"
+elif command -v getconf >/dev/null 2>&1; then
+    JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+else
+    JOBS=4
+fi
+
+pushd "$build_dir"
+make -j"${JOBS}"
 
 if [ -f main ]; then
-	echo -e "\n===== 编译成功 ====="
-	mkdir -p model
-	cp -f ../model/cls.onnx model/cls.onnx
-	cp -f ../model/class_names.json model/class_names.json
-	#这里可以改成scp传输到我们的板卡上
-	# scp main root@172.20.10.9:/home/root/workspace
-	# ssh root@172.20.10.9 "mkdir -p /home/root/workspace/model"
-	# scp model/cls.onnx root@172.20.10.9:/home/root/workspace/model/cls.onnx
-	# scp model/class_names.json root@172.20.10.9:/home/root/workspace/model/class_names.json
-	scp main root@192.168.1.201:/home/root/workspace
-	ssh root@192.168.1.201 "mkdir -p /home/root/workspace/model"
-# 	scp model/cls.onnx root@192.168.1.201:/home/root/workspace/model/cls.onnx
-# 	scp model/class_names.json root@192.168.1.201:/home/root/workspace/model/class_names.json
+    echo -e "\n===== 编译成功 ====="
+    mkdir -p model
+    cp -f ../model/cls.onnx model/cls.onnx
+    cp -f ../model/class_names.json model/class_names.json
+    #这里可以改成scp传输到我们的板卡上
+    # scp main root@172.20.10.9:/home/root/workspace
+    # ssh root@172.20.10.9 "mkdir -p /home/root/workspace/model"
+    # scp model/cls.onnx root@172.20.10.9:/home/root/workspace/model/cls.onnx
+    # scp model/class_names.json root@172.20.10.9:/home/root/workspace/model/class_names.json
+    scp main root@192.168.1.201:/home/root/workspace
+    ssh root@192.168.1.201 "mkdir -p /home/root/workspace/model"
+#   scp model/cls.onnx root@192.168.1.201:/home/root/workspace/model/cls.onnx
+#   scp model/class_names.json root@192.168.1.201:/home/root/workspace/model/class_names.json
 fi
 popd
