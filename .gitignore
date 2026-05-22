@@ -1,0 +1,47 @@
+# IDE and local workspace files
+.vscode/
+.idea/
+.vs/
+*.code-workspace
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Root-level scratch build output
+/build/
+
+# Per-project generated output
+**/output/
+
+# Common CMake/generated files if they appear outside output/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/CTestTestfile.cmake
+**/install_manifest.txt
+**/compile_commands.json
+
+# Native build intermediates and debug artifacts
+*.o
+*.obj
+*.lo
+*.a
+*.lib
+*.so
+*.dll
+*.exe
+*.out
+*.pdb
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Local model backup snapshots
+**/model_backup_*/
