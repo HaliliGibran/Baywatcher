@@ -575,11 +575,11 @@ void BayWatcher_Control_Init(void) {
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 7000.0f;
 
     // 无负压1
-    // // 左轮速度环PID
-    // // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
+    // 左轮速度环PID
     // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
-    // // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
-    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
+    PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
+    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
+    PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
 
     // 右轮速度环PID
@@ -590,11 +590,11 @@ void BayWatcher_Control_Init(void) {
 
 
 
-    // 右轮速度环PID
-    // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
-    PID_Speed_R.Kp = 45.00f; PID_Speed_R.Ki = 16.00f; PID_Speed_R.Kd = 0.00f;
-    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
-    PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
+    // // 右轮速度环PID
+    // // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
+    // PID_Speed_R.Kp = 45.00f; PID_Speed_R.Ki = 16.00f; PID_Speed_R.Kd = 0.00f;
+    // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
+    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
     // // 有负压 19-21.20
     // // 左轮速度环PID
