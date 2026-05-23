@@ -596,17 +596,31 @@ void BayWatcher_Control_Init(void) {
     // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
-    // 有负压
+    // // 有负压 19-21.20
+    // // 左轮速度环PID
+    // // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
+    // PID_Speed_L.Kp = 111.32f; PID_Speed_L.Ki = 25.60f; PID_Speed_L.Kd = 0.00f;
+    // // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
+    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
+
+
+    // // 右轮速度环PID
+    // // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
+    // PID_Speed_R.Kp = 111.00f; PID_Speed_R.Ki = 25.50f; PID_Speed_R.Kd = 0.00f;
+    // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
+    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
+
+    // 有负压 19-21.20
     // 左轮速度环PID
     // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
-    PID_Speed_L.Kp = 111.32f; PID_Speed_L.Ki = 25.60f; PID_Speed_L.Kd = 0.00f;
+    PID_Speed_L.Kp = 113.32f; PID_Speed_L.Ki = 26.00f; PID_Speed_L.Kd = 0.00f;
     // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
     PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
 
     // 右轮速度环PID
     // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
-    PID_Speed_R.Kp = 111.00f; PID_Speed_R.Ki = 25.50f; PID_Speed_R.Kd = 0.00f;
+    PID_Speed_R.Kp = 113.00f; PID_Speed_R.Ki = 26.00f; PID_Speed_R.Kd = 0.00f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
     PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
@@ -675,8 +689,23 @@ void BayWatcher_Control_Init(void) {
     // // 有负压 17.52 0.4 30-40%
     // PID_Cube.Kp_a = 6.55f ;  PID_Cube.Kp_b = 0.488f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 836.10f ; PID_Cube.Kd_b = 0.00100f;
 
-    // 有负压 18 0.4 60%
-    PID_Cube.Kp_a = 6.55f ;  PID_Cube.Kp_b = 0.485f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 850.10f ; PID_Cube.Kd_b = 0.00200f;
+    // // 有负压 18 0.4 60%
+    // PID_Cube.Kp_a = 6.55f ;  PID_Cube.Kp_b = 0.485f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 850.10f ; PID_Cube.Kd_b = 0.00200f;
+
+    // // 有负压 19 0.4 60%
+    // PID_Cube.Kp_a = 6.545f ;  PID_Cube.Kp_b = 0.485f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 620.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // // 有负压 19.05 0.4 60%
+    // PID_Cube.Kp_a = 6.545f ;  PID_Cube.Kp_b = 0.485f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 618.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // // 有负压 20.60 0.4 60%
+    // PID_Cube.Kp_a = 6.556f ;  PID_Cube.Kp_b = 0.4845f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 595.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // // 有负压 21.00 0.4 60%
+    // PID_Cube.Kp_a = 6.56f ;  PID_Cube.Kp_b = 0.4845f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 400.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // 有负压 21.20 0.4 60%
+    PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4845f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 400.10f ; PID_Cube.Kd_b = 0.00100f;
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
     reset_curve_slowdown_state(0.0f);
