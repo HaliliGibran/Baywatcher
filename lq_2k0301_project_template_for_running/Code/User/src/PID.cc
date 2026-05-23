@@ -799,7 +799,10 @@ void BayWatcher_Inner_Loop(void* arg){
     if(vL>=-0.01 && vL<=0.01) vL =0.0f;
     if(vR>=-0.01 && vR<=0.01) vR =0.0f;
 
-    const float effective_base_speed = update_curve_slowdown_base_speed(PID.base_target_speed);
+    const float remote_speed_scale =
+        clampf_pid(image_remote_recognition_get_speed_ratio_override(), 0.0f, 1.0f);
+    const float effective_base_speed =
+        update_curve_slowdown_base_speed(PID.base_target_speed) * remote_speed_scale;
     int32_t pid_out_L = (int32_t)Calc_Pos_PID(&PID_Speed_F_L, effective_base_speed, v_avg);
     int32_t pid_out_R = (int32_t)Calc_Pos_PID(&PID_Speed_F_R, effective_base_speed, v_avg);
     // if (PID.speed_adjust > 0) {
@@ -954,7 +957,9 @@ void BayWatcher_Control_Loop(void* arg) {
 
     // 考虑到前方可能是弯道，动态应用弯道减速
     // const float effective_base_speed = update_curve_slowdown_base_speed(PID.base_target_speed);
-    const float effective_base_speed = PID.base_target_speed;
+    const float remote_speed_scale =
+        clampf_pid(image_remote_recognition_get_speed_ratio_override(), 0.0f, 1.0f);
+    const float effective_base_speed = PID.base_target_speed * remote_speed_scale;
 
     // if (PID.speed_adjust > 0) {
     //     PID.target_speed_L = effective_base_speed + (PID.speed_adjust * 0.3f);
