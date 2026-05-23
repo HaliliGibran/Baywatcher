@@ -34,6 +34,7 @@ desktop.ini
 *.exe
 *.out
 *.pdb
+!lq_2k0301_project_template_for_recognition/libraries/drv/src/liblq_camera_ex.a
 
 # Logs and temporary files
 *.log

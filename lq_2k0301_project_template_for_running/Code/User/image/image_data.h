@@ -218,6 +218,12 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
                                           float current_pure_angle,
                                           uint64_t t_ms);
 
+// 功能: 按时间推进远端状态过期/激进转向到期逻辑
+// 类型: 全局状态更新函数
+// 关键参数:
+// - t_ms: 当前时间戳（毫秒）
+void image_remote_recognition_tick(uint64_t t_ms);
+
 // 功能: 查询当前是否处于远端 vehicle 的保持航向窗口
 // 类型: 全局状态查询函数
 // 关键参数:
@@ -230,6 +236,19 @@ bool image_remote_recognition_is_vehicle_active(uint64_t t_ms);
 // - t_ms: 当前时间戳（毫秒）
 // - hold_yaw: 输出锁存航向角
 bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw);
+
+// 功能: 查询当前是否需要用激进固定转角覆盖几何 pure_angle
+// 类型: 全局状态查询函数
+// 关键参数:
+// - raw_pure_angle: 当前几何/补偿后的 pure_angle
+// - out_override: 输出覆盖角度
+bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
+                                                           float* out_override);
+
+// 功能: 查询当前远端状态对基础速度的比例覆盖
+// 类型: 全局状态查询函数
+// 关键参数: 无
+float image_remote_recognition_get_speed_ratio_override();
 
 // 功能: 查询当前是否锁定到单边边线跟线
 // 类型: 全局状态查询函数

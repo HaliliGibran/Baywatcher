@@ -2,6 +2,8 @@
 #include "image_data.h"
 #include "image_math.h"
 #include "image_midline_process.h"
+#include "Encoder.h"
+#include "PID.h"
 #include "transform_table.h"
 #include <cmath>
 
@@ -58,6 +60,40 @@ static int pure_angle_apply_preview_transition(int target_img_y)
 
     g_pure_angle_preview.last_preview_img_y = blended;
     return (int)std::lroundf(blended);
+}
+
+static int preview_shift_from_img_y(int preview_img_y_target)
+{
+    int shift = PUREANGLE_PREVIEW_BASE_IMAGE_Y - preview_img_y_target;
+    if (shift < 0) shift = 0;
+    if (shift > PUREANGLE_PREVIEW_SHIFT_MAX) shift = PUREANGLE_PREVIEW_SHIFT_MAX;
+    return shift;
+}
+
+static int preview_shift_from_speed_feedback()
+{
+    if (!PUREANGLE_PREVIEW_SPEED_FEEDBACK_ENABLE)
+    {
+        return 0;
+    }
+
+    const float target_speed = std::fabs(PID.base_target_speed);
+    if (target_speed <= 1e-3f)
+    {
+        return 0;
+    }
+
+    float actual_speed = (vL + vR) * 0.5f;
+    if (actual_speed < 0.0f)
+    {
+        actual_speed = 0.0f;
+    }
+
+    const float speed_ratio = fclip(actual_speed / target_speed, 0.0f, 1.0f);
+    int speed_shift = (int)std::lroundf((float)PUREANGLE_PREVIEW_SHIFT_MAX * speed_ratio);
+    if (speed_shift < 0) speed_shift = 0;
+    if (speed_shift > PUREANGLE_PREVIEW_SHIFT_MAX) speed_shift = PUREANGLE_PREVIEW_SHIFT_MAX;
+    return speed_shift;
 }
 
 static float pure_angle_apply_progressive_limit(float raw_angle_deg)
@@ -1170,6 +1206,41 @@ void get_corner(
     }
 }
 
+static float get_single_side_mid_offset_pixels(bool is_left)
+{
+    const float default_ratio = 0.5f;
+#if BW_CIRCLE_OFFSET_ENABLE
+    float offset_ratio = default_ratio;
+
+    if (circle_direction == CircleDirection::CIRCLE_DIR_LEFT)
+    {
+        if (circle_state == CircleState::CIRCLE_IN && is_left)
+        {
+            offset_ratio = BW_CIRCLE_IN_OFFSET_RATIO;
+        }
+        else if (circle_state == CircleState::CIRCLE_RUNNING && !is_left)
+        {
+            offset_ratio = BW_CIRCLE_RUNNING_OFFSET_RATIO;
+        }
+    }
+    else if (circle_direction == CircleDirection::CIRCLE_DIR_RIGHT)
+    {
+        if (circle_state == CircleState::CIRCLE_IN && !is_left)
+        {
+            offset_ratio = BW_CIRCLE_IN_OFFSET_RATIO;
+        }
+        else if (circle_state == CircleState::CIRCLE_RUNNING && is_left)
+        {
+            offset_ratio = BW_CIRCLE_RUNNING_OFFSET_RATIO;
+        }
+    }
+
+    return PIXPERMETER * ROADWIDTH * offset_ratio;
+#else
+    return PIXPERMETER * ROADWIDTH * default_ratio;
+#endif
+}
+
 
 // 功能: 通用边线处理流程
 // 类型: 图像处理函数
@@ -1231,10 +1302,10 @@ void process_line(
     }();
     static const int kernel = span * 2 + 1;
     static const float resample_dist_pix = RESAMPLEDIST * PIXPERMETER;
-    static const float half_width_pix = PIXPERMETER * ROADWIDTH * 0.5f;
+    const float mid_offset_pix = get_single_side_mid_offset_pixels(is_left);
 
     // 防御：异常配置直接退出（正常情况下这些宏常量应为正）
-    if (!(resample_dist_pix > 0.0f) || !(half_width_pix > 0.0f))
+    if (!(resample_dist_pix > 0.0f) || !(mid_offset_pix > 0.0f))
     {
         return;
     }
@@ -1267,11 +1338,11 @@ void process_line(
 
     if (is_left)
     {
-        GetMidLine_Left(pts_resample, resample_count, mid_line, mid_count, span, half_width_pix);
+        GetMidLine_Left(pts_resample, resample_count, mid_line, mid_count, span, mid_offset_pix);
     } 
     else 
     {
-        GetMidLine_Right(pts_resample, resample_count, mid_line, mid_count, span, half_width_pix);
+        GetMidLine_Right(pts_resample, resample_count, mid_line, mid_count, span, mid_offset_pix);
     }
 
     GetLinesResample(mid_line, mid_count, mid_line, mid_count, resample_dist_pix, nullptr);
@@ -1344,9 +1415,21 @@ void CalculatePureAngleFromPath(const float (&path)[PT_MAXLEN][2], int32_t path_
                       + DISTANCE_FROM_VIEW_TO_CAR * PIXPERMETER;
     const float car_x = UndistInverseMapW[SET_IMAGE_CORE_Y][SET_IMAGE_CORE_X];
 
-    const int preview_img_y_target = MidLineSuggestPureAnglePreviewImageY(midline.mid,
-                                                                          midline.mid_count,
-                                                                          PUREANGLE_PREVIEW_BASE_IMAGE_Y);
+    const int preview_img_y_angle_target = MidLineSuggestPureAnglePreviewImageY(midline.mid,
+                                                                                midline.mid_count,
+                                                                                PUREANGLE_PREVIEW_BASE_IMAGE_Y);
+    const int angle_shift = preview_shift_from_img_y(preview_img_y_angle_target);
+    const int speed_shift = preview_shift_from_speed_feedback();
+    const int final_shift = (speed_shift > angle_shift) ? speed_shift : angle_shift;
+    int preview_img_y_target = PUREANGLE_PREVIEW_BASE_IMAGE_Y - final_shift;
+    if (preview_img_y_target < PUREANGLE_PREVIEW_MIN_IMAGE_Y)
+    {
+        preview_img_y_target = PUREANGLE_PREVIEW_MIN_IMAGE_Y;
+    }
+    if (preview_img_y_target > PUREANGLE_PREVIEW_BASE_IMAGE_Y)
+    {
+        preview_img_y_target = PUREANGLE_PREVIEW_BASE_IMAGE_Y;
+    }
     const int preview_img_y_used = pure_angle_apply_preview_transition(preview_img_y_target);
     preview_img_y = (float)preview_img_y_used;
     const float preview_y = UndistInverseMapH[preview_img_y_used][SET_IMAGE_CORE_X];

@@ -7,6 +7,7 @@
 #include "element/circle.h"
 #include "element/crossing.h"
 #include "element/zebra.h"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -223,6 +224,54 @@ enum track_search_result_t
     TRACK_SEARCH_VEHICLE_FALLBACK_HOLD,
 };
 
+static bool row_has_black_near_core(const uint8_t (&img)[IMAGE_H][IMAGE_W],
+                                    int y,
+                                    int cx,
+                                    int half_width)
+{
+    if (y < 0 || y >= IMAGE_H)
+    {
+        return false;
+    }
+
+    if (half_width < 0)
+    {
+        half_width = 0;
+    }
+
+    int x0 = cx - half_width;
+    int x1 = cx + half_width;
+    if (x0 < 0) x0 = 0;
+    if (x1 >= IMAGE_W) x1 = IMAGE_W - 1;
+
+    for (int x = x0; x <= x1; ++x)
+    {
+        if (img[y][x] == BLACK_IN_GRAY)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool vehicle_window_all_white(const uint8_t (&img)[IMAGE_H][IMAGE_W], int y)
+{
+    const int half_width = BW_REMOTE_VEHICLE_SKIP_HALF_WIDTH;
+    for (int dy = 0; dy < 5; ++dy)
+    {
+        const int row = y - dy;
+        if (row < 0)
+        {
+            return false;
+        }
+        if (row_has_black_near_core(img, row, SET_IMAGE_CORE_X, half_width))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 // 功能: vehicle 窗口内，从中心列向上找到更适合的寻线起始行
 // 类型: 局部功能函数
 // 关键参数:
@@ -240,54 +289,18 @@ static bool try_find_vehicle_search_start_y(const uint8_t (&img)[IMAGE_H][IMAGE_
     }
 
     const int kMinSearchY = IMAGE_H / 2;
-    int temp_y = SET_IMAGE_CORE_Y;
-    if (temp_y >= IMAGE_H)
+    int temp_y = std::min(SET_IMAGE_CORE_Y, IMAGE_H - 1);
+    while (temp_y > (kMinSearchY + 4))
     {
-        temp_y = IMAGE_H - 1;
-    }
-
-    while (temp_y > kMinSearchY && img[temp_y][SET_IMAGE_CORE_X] == 0)
-    {
+        if (vehicle_window_all_white(img, temp_y))
+        {
+            *out_start_y = temp_y;
+            return true;
+        }
         --temp_y;
     }
 
-    while (temp_y > (kMinSearchY + 5))
-    {
-        if (img[temp_y - 5][SET_IMAGE_CORE_X] == 0)
-        {
-            temp_y -= 6;
-            continue;
-        }
-        if (img[temp_y - 4][SET_IMAGE_CORE_X] == 0)
-        {
-            temp_y -= 5;
-            continue;
-        }
-        if (img[temp_y - 3][SET_IMAGE_CORE_X] == 0)
-        {
-            temp_y -= 4;
-            continue;
-        }
-        if (img[temp_y - 2][SET_IMAGE_CORE_X] == 0)
-        {
-            temp_y -= 3;
-            continue;
-        }
-        if (img[temp_y - 1][SET_IMAGE_CORE_X] == 0)
-        {
-            temp_y -= 2;
-            continue;
-        }
-        break;
-    }
-
-    if (temp_y <= kMinSearchY)
-    {
-        return false;
-    }
-
-    *out_start_y = temp_y;
-    return true;
+    return false;
 }
 
 // 功能: 常规巡线前的左右边线搜索与处理
@@ -593,6 +606,7 @@ static float finalize_pure_angle_output(float measured_angle, bool has_valid_mea
 void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 {
     const uint64_t t_ms = image_now_ms();
+    image_remote_recognition_tick(t_ms);
     if (handle_zebra_stop_lifecycle(t_ms))
     {
         return;
@@ -710,6 +724,14 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 
     // 趋势前馈只在存在有效测量时启用，避免把纯外推/纯保护输出继续放大。
     pure_angle = pure_angle_apply_pre_control(pure_angle, has_valid_measure);
+
+    const float raw_pure_angle = pure_angle;
+    float aggressive_override_angle = 0.0f;
+    if (image_remote_recognition_get_aggressive_turn_override(raw_pure_angle,
+                                                              &aggressive_override_angle))
+    {
+        pure_angle = aggressive_override_angle;
+    }
 
 }
 

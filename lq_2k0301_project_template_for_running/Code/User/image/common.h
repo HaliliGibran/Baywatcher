@@ -5,6 +5,20 @@
 // - 所有图像算法阈值、编译期开关、默认值尽量集中在本文件。
 // - 业务 .cc 文件应优先消费这里的语义化常量，避免继续散落局部宏。
 
+#pragma region 图像策略与模式开关
+#ifndef BW_CIRCLE_OFFSET_ENABLE
+#define BW_CIRCLE_OFFSET_ENABLE 1
+#endif
+
+#ifndef PUREANGLE_PREVIEW_SPEED_FEEDBACK_ENABLE
+#define PUREANGLE_PREVIEW_SPEED_FEEDBACK_ENABLE 1
+#endif
+
+#ifndef BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE
+#define BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE 1
+#endif
+#pragma endregion
+
 #pragma region 图像基础参数
 // 图像尺寸（全局宏，所有图像处理函数共享）
 #define IMAGE_H               (120)   // 图像高度（像素）
@@ -85,6 +99,16 @@
 #define MID_TRACK_S_CURVE_MIN_ARC_LEN_PIX  (14.0f)
 // 用于“路径并轨到中线”的参考图像行（越小越看远，越大越看近）
 #define PATH_BLEND_REF_IMAGE_Y           (80)
+#pragma endregion
+
+#pragma region 环岛单边中线偏移参数
+#ifndef BW_CIRCLE_IN_OFFSET_RATIO
+#define BW_CIRCLE_IN_OFFSET_RATIO 0.3f
+#endif
+
+#ifndef BW_CIRCLE_RUNNING_OFFSET_RATIO
+#define BW_CIRCLE_RUNNING_OFFSET_RATIO 0.7f
+#endif
 #pragma endregion
 
 #pragma region pure_angle预瞄过渡参数
@@ -305,9 +329,34 @@
 #pragma endregion
 
 #pragma region 双板通信与绕行动作参数
+// 运行板收到 w/s 后，激进固定转角的绝对值（度）。
+#ifndef BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE
+#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 30.0f
+#endif
+
+// 运行板收到 w/s 后，激进固定转角的最长持续时间（毫秒）。
+#ifndef BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS
+#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 500
+#endif
+
+// 运行板远端识别状态的总过期时间（毫秒）。
+#ifndef BW_REMOTE_STATE_STALE_MS
+#define BW_REMOTE_STATE_STALE_MS 300
+#endif
+
 // 运行板收到 vehicle 事件后，保持事件当下 pure_angle 的持续时间（毫秒）。
 #ifndef BW_REMOTE_VEHICLE_HOLD_MS
 #define BW_REMOTE_VEHICLE_HOLD_MS 1000
+#endif
+
+// vehicle 特殊巡线跳黑块时，core 左右参与判定的半宽。
+#ifndef BW_REMOTE_VEHICLE_SKIP_HALF_WIDTH
+#define BW_REMOTE_VEHICLE_SKIP_HALF_WIDTH 2
+#endif
+
+// 运行板收到 u 后，基础速度比例立即下调到的比例。
+#ifndef BW_REMOTE_U_SLOWDOWN_RATIO
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.10f
 #endif
 
 // 双板绕行动作改成 pure_angle 接管后，各阶段目标角统一收口在这里。

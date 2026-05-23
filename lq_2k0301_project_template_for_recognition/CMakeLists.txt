@@ -1,5 +1,20 @@
 cmake_minimum_required(VERSION 3.16)    # 限制最低CMake版本
 
+# 设置交叉编译工具路径 --> (需根据自己实际路径进行修改)
+set(CROSS_COMPILER_DIR /opt/loongson-gnu-toolchain-8.3-x86_64-loongarch64-linux-gnu-rc1.3-1)
+if (NOT DEFINED CMAKE_SYSTEM_NAME)
+    set(CMAKE_SYSTEM_NAME Linux)
+endif()
+if (NOT DEFINED CMAKE_SYSTEM_PROCESSOR)
+    set(CMAKE_SYSTEM_PROCESSOR loongarch64)
+endif()
+if (NOT DEFINED CMAKE_C_COMPILER)
+    set(CMAKE_C_COMPILER ${CROSS_COMPILER_DIR}/bin/loongarch64-linux-gnu-gcc)
+endif()
+if (NOT DEFINED CMAKE_CXX_COMPILER)
+    set(CMAKE_CXX_COMPILER ${CROSS_COMPILER_DIR}/bin/loongarch64-linux-gnu-g++)
+endif()
+
 # 项目名称
 project(LQ_2K0301_Project)
 
@@ -11,11 +26,6 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 设置交叉编译工具路径 --> (需根据自己实际路径进行修改)
-set(CROSS_COMPILER_DIR /opt/loongson-gnu-toolchain-8.3-x86_64-loongarch64-linux-gnu-rc1.3-1)
-set(CMAKE_C_COMPILER ${CROSS_COMPILER_DIR}/bin/loongarch64-linux-gnu-gcc)
-set(CMAKE_CXX_COMPILER ${CROSS_COMPILER_DIR}/bin/loongarch64-linux-gnu-g++)
-
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
@@ -23,7 +33,39 @@ set(PROJECT_MODEL_DIR ${PROJECT_SOURCE_DIR}/model)
 set(OUTPUT_MODEL_DIR ${PROJECT_BINARY_DIR}/model)
 set(LQ_LOCAL_OPENCV_ROOT ${PROJECT_SOURCE_DIR}/cross_lib/opencv)
 set(LQ_LOCAL_NEWLIB_DIR ${PROJECT_SOURCE_DIR}/libraries)
-set(LQ_CAMERA_EX_LIB ${LQ_LOCAL_NEWLIB_DIR}/drv/src/liblq_camera_ex.a)
+set(LQ_CAMERA_EX_LIB "")
+set(LQ_CAMERA_EX_COMPAT_SRC ${PROJECT_SOURCE_DIR}/Code/User/src/lq_camera_ex_compat.cc)
+set(LQ_CAMERA_EX_LIB_CANDIDATES
+    ${LQ_LOCAL_NEWLIB_DIR}/drv/src/liblq_camera_ex.a
+    ${PROJECT_SOURCE_DIR}/LQ_Libraries_new/drv/src/liblq_camera_ex.a
+    ${PROJECT_SOURCE_DIR}/../lq_2k0301_project_template_for_running/LQ_Libraries_new/drv/src/liblq_camera_ex.a
+)
+
+foreach(_camera_lib_candidate IN LISTS LQ_CAMERA_EX_LIB_CANDIDATES)
+    if (EXISTS "${_camera_lib_candidate}")
+        set(LQ_CAMERA_EX_LIB "${_camera_lib_candidate}")
+        break()
+    endif()
+endforeach()
+
+set(LQ_USE_CAMERA_EX_COMPAT OFF)
+if (NOT EXISTS "${LQ_CAMERA_EX_LIB}")
+    if (EXISTS "${LQ_CAMERA_EX_COMPAT_SRC}")
+        set(LQ_USE_CAMERA_EX_COMPAT ON)
+        message(WARNING
+            "未找到 lq_camera_ex 静态库，改用源码兼容实现：\n"
+            "  ${LQ_CAMERA_EX_COMPAT_SRC}\n"
+            "已检查路径：\n"
+            "  ${LQ_CAMERA_EX_LIB_CANDIDATES}")
+    else()
+        message(FATAL_ERROR
+            "未找到 lq_camera_ex 静态库，且兼容源码不存在。\n"
+            "已检查以下路径：\n"
+            "  ${LQ_CAMERA_EX_LIB_CANDIDATES}\n"
+            "请确认识别板或运行板目录中至少有一份 liblq_camera_ex.a 可用，"
+            "或者补齐 ${LQ_CAMERA_EX_COMPAT_SRC}。")
+    endif()
+endif()
 
 # 识别板当前只保留“彩色采集 + 图传 + 识别链 + UART”这一圈真实依赖。
 # 旧单板控制/菜单/IMU/ncnn 相关路径不再进入默认构建。
@@ -55,7 +97,8 @@ function(lq_try_use_opencv_root CANDIDATE_ROOT OUT_OK OUT_MODE OUT_INCLUDE OUT_L
             EXISTS "${CANDIDATE_ROOT}/lib/libopencv_core.so" AND
             EXISTS "${CANDIDATE_ROOT}/lib/libopencv_imgproc.so" AND
             EXISTS "${CANDIDATE_ROOT}/lib/libopencv_imgcodecs.so" AND
-            EXISTS "${CANDIDATE_ROOT}/lib/libopencv_dnn.so")
+            EXISTS "${CANDIDATE_ROOT}/lib/libopencv_dnn.so" AND
+            (NOT LQ_USE_CAMERA_EX_COMPAT OR EXISTS "${CANDIDATE_ROOT}/lib/libopencv_videoio.so"))
         set(_ok TRUE)
         set(_mode "MANUAL")
         set(_include "${CANDIDATE_ROOT}/include/opencv4")
@@ -74,6 +117,10 @@ set(LQ_OPENCV_MODE "")
 set(LQ_OPENCV_INCLUDE_DIR "")
 set(LQ_OPENCV_LIB_DIR "")
 set(LQ_OPENCV_CONFIG_DIR "")
+set(LQ_OPENCV_COMPONENTS core imgcodecs imgproc dnn)
+if (LQ_USE_CAMERA_EX_COMPAT)
+    list(APPEND LQ_OPENCV_COMPONENTS videoio)
+endif()
 
 if (LQ_OPENCV_ROOT)
     lq_try_use_opencv_root("${LQ_OPENCV_ROOT}" LQ_OPENCV_OK LQ_OPENCV_MODE LQ_OPENCV_INCLUDE_DIR LQ_OPENCV_LIB_DIR LQ_OPENCV_CONFIG_DIR)
@@ -85,12 +132,12 @@ endif()
 
 if (LQ_OPENCV_OK AND LQ_OPENCV_MODE STREQUAL "CONFIG")
     set(OpenCV_DIR "${LQ_OPENCV_CONFIG_DIR}" CACHE PATH "Bundled OpenCV config directory" FORCE)
-    find_package(OpenCV REQUIRED CONFIG COMPONENTS core imgcodecs imgproc dnn)
+    find_package(OpenCV REQUIRED CONFIG COMPONENTS ${LQ_OPENCV_COMPONENTS})
     include_directories(${OpenCV_INCLUDE_DIRS})
 elseif (LQ_OPENCV_OK AND LQ_OPENCV_MODE STREQUAL "MANUAL")
     include_directories(${LQ_OPENCV_INCLUDE_DIR})
 else()
-    find_package(OpenCV QUIET CONFIG COMPONENTS core imgcodecs imgproc dnn)
+    find_package(OpenCV QUIET CONFIG COMPONENTS ${LQ_OPENCV_COMPONENTS})
     if (OpenCV_FOUND)
         include_directories(${OpenCV_INCLUDE_DIRS})
     else()
@@ -106,6 +153,7 @@ else()
             "  lib/libopencv_imgproc.so\n"
             "  lib/libopencv_imgcodecs.so\n"
             "  lib/libopencv_dnn.so\n"
+            "  lib/libopencv_videoio.so （当启用 lq_camera_ex 兼容实现时）\n"
             "或者包含 OpenCVConfig.cmake / opencv-config.cmake。")
     endif()
 endif()
@@ -125,18 +173,16 @@ set(RECOGNITION_BOARD_SRC
     ${PROJECT_SOURCE_DIR}/Code/User/src/transform_table.cc
 )
 
+if (LQ_USE_CAMERA_EX_COMPAT)
+    list(APPEND RECOGNITION_BOARD_SRC ${LQ_CAMERA_EX_COMPAT_SRC})
+endif()
+
 if (LQ_OPENCV_OK AND LQ_OPENCV_MODE STREQUAL "MANUAL")
     link_directories(${LQ_OPENCV_LIB_DIR})
 endif()
 
 # 由源文件生成一个可执行程序
 add_executable(${BIN} ${PLATFORM_SRC} ${RECOGNITION_BOARD_SRC})
-
-if (NOT EXISTS "${LQ_CAMERA_EX_LIB}")
-    message(FATAL_ERROR
-        "未找到 lq_camera_ex 静态库：${LQ_CAMERA_EX_LIB}\n"
-        "请确认运行板新库 libraries/drv/src/liblq_camera_ex.a 已同步。")
-endif()
 
 file(MAKE_DIRECTORY ${OUTPUT_MODEL_DIR})
 configure_file(${PROJECT_MODEL_DIR}/cls.onnx ${OUTPUT_MODEL_DIR}/cls.onnx COPYONLY)
@@ -145,12 +191,18 @@ configure_file(${PROJECT_MODEL_DIR}/class_names.json ${OUTPUT_MODEL_DIR}/class_n
 #Opencv_lib
 if (LQ_OPENCV_OK AND LQ_OPENCV_MODE STREQUAL "MANUAL")
     set(OpenCV_LIBS opencv_core opencv_imgcodecs opencv_imgproc opencv_dnn)
+    if (LQ_USE_CAMERA_EX_COMPAT)
+        list(APPEND OpenCV_LIBS opencv_videoio)
+    endif()
 else()
     set(OpenCV_LIBS ${OpenCV_LIBS})
 endif()
 
 #System_lib
-set(SYSTEM_LIBS pthread gomp ${LQ_CAMERA_EX_LIB})
+set(SYSTEM_LIBS pthread gomp)
+if (NOT LQ_USE_CAMERA_EX_COMPAT)
+    list(APPEND SYSTEM_LIBS ${LQ_CAMERA_EX_LIB})
+endif()
 
 set(ALL_LIBS ${OpenCV_LIBS} ${SYSTEM_LIBS})
 

@@ -12,14 +12,25 @@ enum class remote_follow_state_t : uint8_t
     RIGHT_EDGE_ROUTE,
 };
 
+enum class remote_aggressive_turn_state_t : uint8_t
+{
+    NONE = 0,
+    FORCE_LEFT_30,
+    FORCE_RIGHT_30,
+};
+
 struct remote_recognition_runtime_t
 {
     bool last_seq_valid;
     uint8_t last_seq;
     BoardVisionCode current_code;
+    uint64_t last_rx_ms;
     uint64_t vehicle_hold_until_ms;
     float vehicle_hold_yaw;
     remote_follow_state_t follow_state;
+    remote_aggressive_turn_state_t aggressive_turn_state;
+    uint64_t aggressive_turn_until_ms;
+    bool hold_u_slowdown_until_aggressive_end;
     bool block_circle_until_n;
 };
 
@@ -28,8 +39,12 @@ remote_recognition_runtime_t g_remote_recognition = {
     0,
     BoardVisionCode::UNKNOWN,
     0,
+    0,
     0.0f,
     remote_follow_state_t::NONE,
+    remote_aggressive_turn_state_t::NONE,
+    0,
+    false,
     false,
 };
 
@@ -85,9 +100,13 @@ void image_remote_recognition_reset()
     g_remote_recognition.last_seq_valid = false;
     g_remote_recognition.last_seq = 0;
     g_remote_recognition.current_code = BoardVisionCode::UNKNOWN;
+    g_remote_recognition.last_rx_ms = 0;
     g_remote_recognition.vehicle_hold_until_ms = 0;
     g_remote_recognition.vehicle_hold_yaw = 0.0f;
     g_remote_recognition.follow_state = remote_follow_state_t::NONE;
+    g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::NONE;
+    g_remote_recognition.aggressive_turn_until_ms = 0;
+    g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
     g_remote_recognition.block_circle_until_n = false;
     follow_mode = FollowLine::MIXED;
 }
@@ -101,6 +120,8 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
     {
         return;
     }
+
+    g_remote_recognition.last_rx_ms = t_ms;
 
     if (g_remote_recognition.last_seq_valid && g_remote_recognition.last_seq == seq)
     {
@@ -117,6 +138,9 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.follow_state = remote_follow_state_t::NONE;
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
+        g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::NONE;
+        g_remote_recognition.aggressive_turn_until_ms = 0;
+        g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
         g_remote_recognition.block_circle_until_n = false;
         follow_mode = FollowLine::MIXED;
         return;
@@ -127,6 +151,9 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.follow_state = remote_follow_state_t::NONE;
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
+        g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::NONE;
+        g_remote_recognition.aggressive_turn_until_ms = 0;
+        g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
         if (circle_state == CircleState::CIRCLE_BEGIN ||
             circle_state == CircleState::CIRCLE_IN)
         {
@@ -140,6 +167,10 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.follow_state = remote_follow_state_t::LEFT_EDGE_ROUTE;
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
+        g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::FORCE_LEFT_30;
+        g_remote_recognition.aggressive_turn_until_ms =
+            t_ms + static_cast<uint64_t>(BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS);
+        g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
         return;
     }
 
@@ -148,6 +179,10 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.follow_state = remote_follow_state_t::RIGHT_EDGE_ROUTE;
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
+        g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::FORCE_RIGHT_30;
+        g_remote_recognition.aggressive_turn_until_ms =
+            t_ms + static_cast<uint64_t>(BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS);
+        g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
         return;
     }
 
@@ -155,14 +190,40 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         code == BoardVisionCode::NO_RESULT)
     {
         g_remote_recognition.follow_state = remote_follow_state_t::VEHICLE_ROUTE;
+        g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::NONE;
+        g_remote_recognition.aggressive_turn_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = current_pure_angle;
         g_remote_recognition.vehicle_hold_until_ms = t_ms + kRemoteVehicleHoldMs;
+        g_remote_recognition.hold_u_slowdown_until_aggressive_end =
+            (code == BoardVisionCode::NO_RESULT);
         return;
     }
 
     g_remote_recognition.follow_state = remote_follow_state_t::NONE;
     g_remote_recognition.vehicle_hold_until_ms = 0;
     g_remote_recognition.vehicle_hold_yaw = 0.0f;
+    g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::NONE;
+    g_remote_recognition.aggressive_turn_until_ms = 0;
+    g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
+}
+
+void image_remote_recognition_tick(uint64_t t_ms)
+{
+    if (g_remote_recognition.last_rx_ms > 0 &&
+        t_ms >= g_remote_recognition.last_rx_ms + static_cast<uint64_t>(BW_REMOTE_STATE_STALE_MS))
+    {
+        image_remote_recognition_reset();
+        return;
+    }
+
+    if (g_remote_recognition.aggressive_turn_state != remote_aggressive_turn_state_t::NONE &&
+        g_remote_recognition.aggressive_turn_until_ms > 0 &&
+        t_ms >= g_remote_recognition.aggressive_turn_until_ms)
+    {
+        g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::NONE;
+        g_remote_recognition.aggressive_turn_until_ms = 0;
+        g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
+    }
 }
 
 bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw)
@@ -174,6 +235,63 @@ bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw)
 
     *hold_yaw = g_remote_recognition.vehicle_hold_yaw;
     return true;
+}
+
+bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
+                                                           float* out_override)
+{
+    if (out_override == nullptr ||
+        BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE == 0 ||
+        BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE <= 0.0f)
+    {
+        return false;
+    }
+
+    if (g_remote_recognition.aggressive_turn_state ==
+        remote_aggressive_turn_state_t::FORCE_LEFT_30)
+    {
+        if (raw_pure_angle < 0.0f)
+        {
+            g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::NONE;
+            g_remote_recognition.aggressive_turn_until_ms = 0;
+            g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
+            return false;
+        }
+        *out_override = BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE;
+        return true;
+    }
+
+    if (g_remote_recognition.aggressive_turn_state ==
+        remote_aggressive_turn_state_t::FORCE_RIGHT_30)
+    {
+        if (raw_pure_angle > 0.0f)
+        {
+            g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::NONE;
+            g_remote_recognition.aggressive_turn_until_ms = 0;
+            g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
+            return false;
+        }
+        *out_override = -BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE;
+        return true;
+    }
+
+    return false;
+}
+
+float image_remote_recognition_get_speed_ratio_override()
+{
+    if (g_remote_recognition.current_code == BoardVisionCode::VEHICLE)
+    {
+        return 1.0f;
+    }
+
+    if (g_remote_recognition.current_code == BoardVisionCode::NO_RESULT ||
+        g_remote_recognition.hold_u_slowdown_until_aggressive_end)
+    {
+        return BW_REMOTE_U_SLOWDOWN_RATIO;
+    }
+
+    return 1.0f;
 }
 
 bool image_remote_recognition_is_vehicle_active(uint64_t t_ms)
