@@ -66,7 +66,8 @@
 // 建议：
 // - 先用 20 跑通，再考虑往上加。
 #ifndef BW_RECOG_CAMERA_FPS
-#define BW_RECOG_CAMERA_FPS 20
+// #define BW_RECOG_CAMERA_FPS 20
+#define BW_RECOG_CAMERA_FPS 120
 #endif
 
 // [先调] 是否启用固定手动曝光
@@ -125,7 +126,8 @@
 // 注意：
 // - PERF 只统计“无红、无识别态”的空闲循环，不代表识别态最坏耗时。
 #ifndef BW_RECOG_ENABLE_PERF_LOG
-#define BW_RECOG_ENABLE_PERF_LOG 1
+// #define BW_RECOG_ENABLE_PERF_LOG 1
+#define BW_RECOG_ENABLE_PERF_LOG 0
 #endif
 
 // [先调] 主循环目标 fps
@@ -139,7 +141,8 @@
 // 建议：
 // - 先用 20，确认逻辑稳定后再考虑往上试。
 #ifndef BW_RECOG_LOOP_TARGET_FPS
-#define BW_RECOG_LOOP_TARGET_FPS 20
+// #define BW_RECOG_LOOP_TARGET_FPS 20
+#define BW_RECOG_LOOP_TARGET_FPS 120
 #endif
 
 // [先调] 动态频率：普通无目标态
@@ -147,7 +150,8 @@
 // - NORMAL 且最近没有红色候选时，主循环按该频率运行。
 // - 这是当前空跑 CPU 的主要调参入口。
 #ifndef BW_RECOG_LOOP_FPS_NORMAL
-#define BW_RECOG_LOOP_FPS_NORMAL 10
+// #define BW_RECOG_LOOP_FPS_NORMAL 10
+#define BW_RECOG_LOOP_FPS_NORMAL 60
 #endif
 
 // [先调] 动态频率：候选态
@@ -155,7 +159,8 @@
 // - 最近出现红色候选，或当前状态已进入 u/NO_RESULT 时使用。
 // - 兼顾“尽快拉起检测”与“不要一直全速空跑”。
 #ifndef BW_RECOG_LOOP_FPS_CANDIDATE
-#define BW_RECOG_LOOP_FPS_CANDIDATE 25
+// #define BW_RECOG_LOOP_FPS_CANDIDATE 25
+#define BW_RECOG_LOOP_FPS_CANDIDATE 120
 #endif
 
 // [先调] 动态频率：识别态
@@ -163,7 +168,8 @@
 // - mode == RECOGNITION 时使用。
 // - 目标是尽快完成当前 2 帧分类，不在识别态拖太久。
 #ifndef BW_RECOG_LOOP_FPS_RECOGNITION
-#define BW_RECOG_LOOP_FPS_RECOGNITION 30
+// #define BW_RECOG_LOOP_FPS_RECOGNITION 30
+#define BW_RECOG_LOOP_FPS_RECOGNITION 120
 #endif
 
 // [先调] 动态频率：成功结果锁存保持态
@@ -454,7 +460,8 @@
 // - 与《红带分类与ROI提取流程.md》保持一致。
 // - 当前固定流程要求基础搜索带为 y=160..320。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MIN
-#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 160
+// #define BW_RECOG_TRIGGER_SEARCH_Y_MIN 160
+#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 60
 #endif
 
 // [一般别动] 红块搜索带下边界（开区间）

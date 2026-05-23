@@ -707,7 +707,7 @@ void BayWatcher_Control_Init(void) {
     // // 有负压 21.20 0.4 60%
     // PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4845f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 400.10f ; PID_Cube.Kd_b = 0.00100f;
 
-    // PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
+    PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
     reset_curve_slowdown_state(0.0f);
 
     // // 同步全局配置给电调系统
