@@ -2,8 +2,7 @@
 #include "image_data.h"
 #include "image_math.h"
 #include "image_midline_process.h"
-#include "Encoder.h"
-#include "PID.h"
+#include "runtime_feedback.h"
 #include "transform_table.h"
 #include <cmath>
 
@@ -77,13 +76,14 @@ static int preview_shift_from_speed_feedback()
         return 0;
     }
 
-    const float target_speed = std::fabs(PID.base_target_speed);
+    const float target_speed = std::fabs(BayWatcher_GetBaseTargetSpeed());
     if (target_speed <= 1e-3f)
     {
         return 0;
     }
 
-    float actual_speed = (vL + vR) * 0.5f;
+    float actual_speed =
+        (BayWatcher_GetLeftWheelSpeed() + BayWatcher_GetRightWheelSpeed()) * 0.5f;
     if (actual_speed < 0.0f)
     {
         actual_speed = 0.0f;
