@@ -9,10 +9,19 @@
 // 3. 宏默认值面向当前 640x480、20fps、双板串口状态流方案。
 // 4. 若实车出现“空闲 CPU 高、触发慢、误触发、重复进识别”，优先看：
 //    - BW_RECOG_CAMERA_FPS
-//    - BW_RECOG_NORMAL_PRECHECK_INTERVAL_MS
-//    - BW_RECOG_FULL_ROI_MIN_INTERVAL_MS
+//    - BW_RECOG_TRIGGER_SEARCH_Y_MIN / MAX
+//    - BW_RECOG_RED_MASK_MAX_Y
+//    - BW_RECOG_WHITE_REFERENCE_ROW_Y
 //    - BW_RECOG_LOOP_TARGET_FPS
 //    - BW_RECOG_STATE_HEARTBEAT_INTERVAL_MS
+//
+// 当前主链口径：
+// - 当前 active ROI 主链不是“纯 HSV 红块提取”。
+// - 当前真正生效的是：
+//   1) 参考行包络：在 y=320 上用“白色参考带 + 行内严格红带”取白红带参考包络
+//   2) 严格红带主掩码：用 RGB 派生量 `red_score / dom` 做判定
+// - 文件里仍留有旧 HSV 红掩码/旧触发器辅助函数，但它们不属于当前 active ROI 主链。
+// - 下方 E 节旧预筛参数目前只保留为兼容配置和启动日志展示，主链不再消费。
 //
 // 调参优先级约定：
 // - [先调]：优先用于解决“CPU/时延/图传/触发快慢”问题，风险相对低。
@@ -121,13 +130,18 @@
 #pragma region C. 主循环限频、性能统计与日志
 // [先调] 是否启用主循环阶段耗时统计
 // 作用：
-// - 1：按 1s 窗口输出空闲无目标态 PERF 统计。
+// - 1：按 1s 窗口输出各阶段耗时统计。
 // - 0：完全关闭性能统计，减少一点点终端输出和字符串开销。
-// 注意：
-// - PERF 只统计“无红、无识别态”的空闲循环，不代表识别态最坏耗时。
 #ifndef BW_RECOG_ENABLE_PERF_LOG
-// #define BW_RECOG_ENABLE_PERF_LOG 1
-#define BW_RECOG_ENABLE_PERF_LOG 0
+#define BW_RECOG_ENABLE_PERF_LOG 1
+#endif
+
+// [先调] 是否启用识别板文字日志
+// 作用：
+// - 0：关闭常规识别/启动信息日志，仅保留阶段耗时和必要错误。
+// - 1：打开识别板当前信息日志。
+#ifndef BW_RECOG_TEXT_LOG_ENABLE
+#define BW_RECOG_TEXT_LOG_ENABLE 0
 #endif
 
 // [先调] 主循环目标 fps
@@ -151,7 +165,7 @@
 // - 这是当前空跑 CPU 的主要调参入口。
 #ifndef BW_RECOG_LOOP_FPS_NORMAL
 // #define BW_RECOG_LOOP_FPS_NORMAL 10
-#define BW_RECOG_LOOP_FPS_NORMAL 60
+#define BW_RECOG_LOOP_FPS_NORMAL 120
 #endif
 
 // [先调] 动态频率：候选态
@@ -177,20 +191,15 @@
 // - 已成功识别出 v/w/s，只是在等待失标释放时使用。
 // - 该阶段无需高频跑全搜索带，保持低频即可。
 #ifndef BW_RECOG_LOOP_FPS_LATCHED
-#define BW_RECOG_LOOP_FPS_LATCHED 10
+#define BW_RECOG_LOOP_FPS_LATCHED 120
 #endif
 
 // [先调] 识别链详细日志开关
 // 作用：
 // - 0：关闭逐帧/高频日志。
 // - 1：开启调试日志。
-// 关闭后仍保留关键状态变化日志：
-// - entering recognition
-// - final result
-// - state_out
-// - sign lost / release
 // 建议：
-// - 实车常态保持 0，排查具体 reject 原因时再开 1。
+// - 实车常态保持 0；只有临时排查 reject 原因时再开 1。
 #ifndef BW_RECOG_VERBOSE_LOG
 #define BW_RECOG_VERBOSE_LOG 0
 #endif
@@ -233,89 +242,53 @@
 #endif
 #pragma endregion
 
-#pragma region E. 普通态预筛与 ROI 节流
-// [先调] 普通态 HSV 预筛周期（毫秒）
-// 作用：
-// - 仅在 NORMAL 且未锁存成功结果时使用。
-// - 0 表示每帧都做 HSV 预筛。
-// 调大效果：
-// - 空跑 CPU 更低。
-// - 小红块首次出现到被发现的延迟增大。
-// 调小效果：
-// - 红块进入触发链更快。
-// - 空跑负载更高。
-// 当前默认 20ms：
-// - 对应约 50Hz 预筛，兼顾响应和负载。
+#pragma region E. 历史兼容参数：旧普通态预筛 / 局部 ROI 节流
+// 说明：
+// - 这一组宏对应的是较早版本里的“普通态 HSV 预筛 + 局部 ROI 节流”方案。
+// - 当前主链已经改成每次直接走《红带分类与ROI提取流程.md》对应的完整 ROI 几何链。
+// - 它们现在主要保留给：
+//   1) 启动日志打印
+//   2) 历史调参记录
+//   3) 若以后要恢复旧预筛链时的兼容宏名
+
+// [兼容保留] 旧普通态 HSV 预筛周期（毫秒）
+// 当前主链未消费，仅保留宏名和启动日志口径。
 #ifndef BW_RECOG_NORMAL_PRECHECK_INTERVAL_MS
 #define BW_RECOG_NORMAL_PRECHECK_INTERVAL_MS 20
 #endif
 
-// [谨慎调] 普通态 HSV 预筛最小红像素数
-// 作用：
-// - 低于该值时，不值得进入完整 ROI 提取。
-// 调大效果：
-// - 抑制小噪声和远处很小的红块，但可能推迟真正小标识板的进入。
-// 调小效果：
-// - 更敏感，但误触发和空跑 ROI 次数会上升。
+// [兼容保留] 旧普通态 HSV 预筛最小红像素数
+// 当前主链未消费，仅保留宏名和历史调参值。
 #ifndef BW_RECOG_NORMAL_PRECHECK_MIN_PIXELS
 #define BW_RECOG_NORMAL_PRECHECK_MIN_PIXELS 120
 #endif
 
-// [先调] 是否启用超轻量 BGR 采样预筛
-// 作用：
-// - 作为 HSV 预筛前的一层更便宜过滤。
-// - 只要这层阴性，就直接跳过 HSV 预筛。
-// 建议：
-// - 绝大多数情况下保持 1。
-// - 只有怀疑它误杀远处红块时才关掉做 AB 对比。
+// [兼容保留] 旧超轻量 BGR 采样预筛总开关
+// 当前主链未消费，仅保留宏名和启动日志口径。
 #ifndef BW_RECOG_ULTRA_FAST_PRECHECK_ENABLE
 #define BW_RECOG_ULTRA_FAST_PRECHECK_ENABLE 1
 #endif
 
-// [谨慎调] 超轻量红采样步长（像素）
-// 调大效果：
-// - 更省 CPU，但更容易漏掉很小的红块。
-// 调小效果：
-// - 更敏感，但会增加预筛扫描开销。
-// 建议：
-// - 4 是当前折中值；若远处小红块漏检，可降到 2。
+// [兼容保留] 旧超轻量红采样步长（像素）
+// 当前主链未消费，仅保留宏名和历史调参值。
 #ifndef BW_RECOG_ULTRA_RED_SAMPLE_STEP
 #define BW_RECOG_ULTRA_RED_SAMPLE_STEP 4
 #endif
 
-// [谨慎调] 超轻量红采样命中最小样本数
-// 调大效果：
-// - 更不容易误触发 HSV 预筛。
-// 调小效果：
-// - 更容易进入 HSV 预筛，响应更快但空跑负载增加。
+// [兼容保留] 旧超轻量红采样命中最小样本数
+// 当前主链未消费，仅保留宏名和历史调参值。
 #ifndef BW_RECOG_ULTRA_RED_MIN_SAMPLES
 #define BW_RECOG_ULTRA_RED_MIN_SAMPLES 8
 #endif
 
-// [先调] 普通态完整 ROI 提取最小周期（毫秒）
-// 作用：
-// - 即使预筛阳性，也不在 NORMAL 态每帧都做 ExtractRotatedRoi。
-// 调大效果：
-// - CPU 更低。
-// - 红块进入触发链和切到 u/进入识别的延迟变大。
-// 调小效果：
-// - 触发更快。
-// - NORMAL 态完整 ROI 开销更高。
-// 建议：
-// - 通常与 BW_RECOG_NORMAL_PRECHECK_INTERVAL_MS 取同一量级。
+// [兼容保留] 旧普通态完整 ROI 最小周期（毫秒）
+// 当前主链未消费，仅保留宏名和启动日志口径。
 #ifndef BW_RECOG_FULL_ROI_MIN_INTERVAL_MS
 #define BW_RECOG_FULL_ROI_MIN_INTERVAL_MS 20
 #endif
 
-// [一般别动] 识别态局部 ROI 跟踪搜索框扩张倍数
-// 作用：
-// - 进入 RECOGNITION 后，优先在上一帧 bbox 附近局部搜索。
-// - 该值决定局部搜索框相对上一帧 bbox 的放大程度。
-// 调大效果：
-// - 局部搜索更稳，不容易丢目标。
-// - 识别态每帧局部搜索开销变大，更接近全搜索。
-// 调小效果：
-// - 局部搜索更省，但 ROI 抖动/移动时更容易回退到全搜索。
+// [兼容保留] 旧识别态局部 ROI 跟踪搜索框扩张倍数
+// 当前主链未消费；现行识别态每帧都重新走完整 ROI 提取。
 #ifndef BW_RECOG_TRACK_ROI_EXPAND_RATIO
 #define BW_RECOG_TRACK_ROI_EXPAND_RATIO 2.0f
 #endif
@@ -339,6 +312,30 @@
 // - 若设得更大，必须同时关注识别态停留时间和重复进入的风险。
 #ifndef BW_RECOG_MAX_VALID_FRAMES
 #define BW_RECOG_MAX_VALID_FRAMES 2
+#endif
+
+// [谨慎调] 分类 top1 平均概率阈值
+// 作用：
+// - 累计概率达到该阈值后，才允许把当前 top1 类别作为最终结果输出。
+// - 当前该阈值由 common.h 直接生效，不再由 deploy_calibration.json 覆盖。
+// 调大效果：
+// - 更稳，但更慢，也更容易维持在 u。
+// 调小效果：
+// - 更快，但更容易误判。
+#ifndef BW_RECOG_DECISION_TOP1_AVG_THRESHOLD
+#define BW_RECOG_DECISION_TOP1_AVG_THRESHOLD 0.80f
+#endif
+
+// [谨慎调] 分类 margin 阈值
+// 作用：
+// - top1_avg - top2_avg 必须达到该阈值，才允许输出最终类别。
+// - 当前该阈值由 common.h 直接生效，不再由 deploy_calibration.json 覆盖。
+// 调大效果：
+// - 更稳，但更容易因为区分度不够停在 u。
+// 调小效果：
+// - 更快，但类别更容易抖动。
+#ifndef BW_RECOG_DECISION_MARGIN_THRESHOLD
+#define BW_RECOG_DECISION_MARGIN_THRESHOLD 0.15f
 #endif
 #pragma endregion
 
@@ -458,16 +455,15 @@
 // [一般别动] 红块搜索带上边界
 // 作用：
 // - 与《红带分类与ROI提取流程.md》保持一致。
-// - 当前固定流程要求基础搜索带为 y=160..320。
+// - 当前固定流程要求基础搜索带为 y=120..320。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MIN
-// #define BW_RECOG_TRIGGER_SEARCH_Y_MIN 160
-#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 60
+#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 120
 #endif
 
 // [一般别动] 红块搜索带下边界（开区间）
 // 作用：
 // - 与《红带分类与ROI提取流程.md》保持一致。
-// - 当前固定流程要求基础搜索带为 y=160..320。
+// - 当前固定流程要求基础搜索带为 y=120..320。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MAX
 #define BW_RECOG_TRIGGER_SEARCH_Y_MAX 320
 #endif
@@ -480,10 +476,10 @@
 #define BW_RECOG_RED_MASK_MAX_Y 320
 #endif
 
-// [一般别动] 白色参考行
+// [一般别动] 白红带参考行
 // 作用：
 // - 与《红带分类与ROI提取流程.md》保持一致。
-// - 当前固定流程要求 white_reference_row_y = 320。
+// - 当前固定流程要求 white_reference_row_y = 320，并在该行上求白红带参考包络。
 #ifndef BW_RECOG_WHITE_REFERENCE_ROW_Y
 #define BW_RECOG_WHITE_REFERENCE_ROW_Y 320
 #endif
@@ -520,7 +516,7 @@
 // 调小效果：
 // - 更快回到 n，但更容易因几何抖动反复重进识别。
 #ifndef BW_RECOG_SIGN_LOSS_HOLD_MS
-#define BW_RECOG_SIGN_LOSS_HOLD_MS 1500
+#define BW_RECOG_SIGN_LOSS_HOLD_MS 200
 #endif
 #pragma endregion
 

@@ -58,11 +58,11 @@ struct RoiExtractionResult
     bool has_search_rect = false;
     cv::Rect search_rect;
 
-    bool has_white_x_range = false;
-    int white_x_min = 0;
-    int white_x_max = 0;
-    int merged_white_span_count = 0;
-    std::string white_range_source = "fallback";
+    bool has_reference_x_range = false;
+    int reference_x_min = 0;
+    int reference_x_max = 0;
+    int merged_reference_span_count = 0;
+    std::string reference_range_source = "fallback";
 
     bool touches_search_top = false;
     bool touch_top_expand = false;

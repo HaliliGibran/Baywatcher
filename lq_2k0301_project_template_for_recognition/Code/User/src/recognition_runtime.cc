@@ -15,6 +15,7 @@ namespace {
 
 using steady_clock_t = std::chrono::steady_clock;
 using steady_time_point_t = std::chrono::time_point<steady_clock_t>;
+constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
 
 const char* VisionCodeText(BoardVisionCode code)
 {
@@ -101,7 +102,7 @@ struct PerfWindowStats
     PerfStageStats send_state;
     PerfStageStats publish;
     PerfStageStats loop;
-    uint64_t quiet_loop_count = 0;
+    uint64_t loop_count = 0;
 
     void Reset()
     {
@@ -166,7 +167,10 @@ void HandleManualRecognitionStart(RecognitionChain* recognition, bool* manual_st
 
     recognition->Reset();
     *manual_started = true;
-    std::cout << "[RECOG TEST] armed by key 'c', waiting red trigger..." << std::endl;
+    if (kRecognitionTextLog)
+    {
+        std::cout << "[RECOG TEST] armed by key 'c', waiting red trigger..." << std::endl;
+    }
 }
 
 // 功能: 绘制识别板空闲态画面
@@ -265,18 +269,21 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
     stream.Initialize(stream_enabled);
     recognition.Initialize(recognition_enabled_by_switch);
 
-    std::cout << "[RECOG BOARD] fixed capture "
-              << recognition_runtime::kRecognitionFrameWidth << "x"
-              << recognition_runtime::kRecognitionFrameHeight << "@"
-              << recognition_runtime::kRecognitionFrameFps
-              << " color, UART1@115200" << std::endl;
-    std::cout << "[RECOG BOARD] loop_fps normal/candidate/recognition/latched="
-              << BW_RECOG_LOOP_FPS_NORMAL << "/"
-              << BW_RECOG_LOOP_FPS_CANDIDATE << "/"
-              << BW_RECOG_LOOP_FPS_RECOGNITION << "/"
-              << BW_RECOG_LOOP_FPS_LATCHED
-              << ", fallback=" << BW_RECOG_LOOP_TARGET_FPS
-              << std::endl;
+    if (kRecognitionTextLog)
+    {
+        std::cout << "[RECOG BOARD] fixed capture "
+                  << recognition_runtime::kRecognitionFrameWidth << "x"
+                  << recognition_runtime::kRecognitionFrameHeight << "@"
+                  << recognition_runtime::kRecognitionFrameFps
+                  << " color, UART1@115200" << std::endl;
+        std::cout << "[RECOG BOARD] loop_fps normal/candidate/recognition/latched="
+                  << BW_RECOG_LOOP_FPS_NORMAL << "/"
+                  << BW_RECOG_LOOP_FPS_CANDIDATE << "/"
+                  << BW_RECOG_LOOP_FPS_RECOGNITION << "/"
+                  << BW_RECOG_LOOP_FPS_LATCHED
+                  << ", fallback=" << BW_RECOG_LOOP_TARGET_FPS
+                  << std::endl;
+    }
 
     while (1)
     {
@@ -410,7 +417,10 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         {
             recognition.Reset();
             manual_test_started = false;
-            std::cout << "[RECOG TEST] one-shot cycle finished, press c to arm again." << std::endl;
+            if (kRecognitionTextLog)
+            {
+                std::cout << "[RECOG TEST] one-shot cycle finished, press c to arm again." << std::endl;
+            }
         }
 
         // 8. 固定限频仅作用于活动态；idle 模式保持原 idle sleep 口径。
@@ -449,24 +459,20 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         const double loop_ms = elapsed_ms_between(loop_begin, loop_end);
 
 #if BW_RECOG_ENABLE_PERF_LOG
-        const bool perf_idle_loop = recognition.IsIdleNoTargetState();
-        if (perf_idle_loop)
-        {
-            const RecognitionChain::PerfSample& perf_sample = recognition.GetLastPerfSample();
-            perf_window.capture.Add(capture_ms);
-            perf_window.ultra_precheck.Add(perf_sample.ultra_precheck_ms, perf_sample.ultra_precheck_called);
-            perf_window.hsv_precheck.Add(perf_sample.hsv_precheck_ms, perf_sample.hsv_precheck_called);
-            perf_window.extract_roi.Add(perf_sample.extract_roi_ms, perf_sample.extract_roi_called);
-            perf_window.onnx_infer.Add(perf_sample.onnx_infer_ms, perf_sample.onnx_infer_called);
-            perf_window.classify_total.Add(perf_sample.classify_total_ms, perf_sample.classify_total_called);
-            perf_window.try_total.Add(perf_sample.try_total_ms, perf_sample.try_total_called);
-            perf_window.process_recog_total.Add(perf_sample.process_recog_total_ms, perf_sample.process_recog_total_called);
-            perf_window.overlay.Add(overlay_ms);
-            perf_window.send_state.Add(send_state_ms, send_state_called);
-            perf_window.publish.Add(publish_ms, publish_called);
-            perf_window.loop.Add(loop_ms);
-            ++perf_window.quiet_loop_count;
-        }
+        const RecognitionChain::PerfSample& perf_sample = recognition.GetLastPerfSample();
+        perf_window.capture.Add(capture_ms);
+        perf_window.ultra_precheck.Add(perf_sample.ultra_precheck_ms, perf_sample.ultra_precheck_called);
+        perf_window.hsv_precheck.Add(perf_sample.hsv_precheck_ms, perf_sample.hsv_precheck_called);
+        perf_window.extract_roi.Add(perf_sample.extract_roi_ms, perf_sample.extract_roi_called);
+        perf_window.onnx_infer.Add(perf_sample.onnx_infer_ms, perf_sample.onnx_infer_called);
+        perf_window.classify_total.Add(perf_sample.classify_total_ms, perf_sample.classify_total_called);
+        perf_window.try_total.Add(perf_sample.try_total_ms, perf_sample.try_total_called);
+        perf_window.process_recog_total.Add(perf_sample.process_recog_total_ms, perf_sample.process_recog_total_called);
+        perf_window.overlay.Add(overlay_ms);
+        perf_window.send_state.Add(send_state_ms, send_state_called);
+        perf_window.publish.Add(publish_ms, publish_called);
+        perf_window.loop.Add(loop_ms);
+        ++perf_window.loop_count;
 
         const double perf_window_ms = elapsed_ms_between(perf_window_begin, loop_end);
         if (perf_window_ms >= 1000.0)
@@ -475,9 +481,10 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
             {
                 const double effective_fps =
                     (perf_window_ms > 0.0)
-                        ? (perf_window.quiet_loop_count * 1000.0 / perf_window_ms)
+                        ? (perf_window.loop_count * 1000.0 / perf_window_ms)
                         : 0.0;
-                std::cout << "[PERF] fps=" << std::fixed << std::setprecision(2) << effective_fps
+                std::cout << "[PERF] state=" << VisionCodeText(code)
+                          << " fps=" << std::fixed << std::setprecision(2) << effective_fps
                           << " capture=" << perf_window.capture.Format()
                           << " ultra=" << perf_window.ultra_precheck.Format()
                           << " hsv=" << perf_window.hsv_precheck.Format()

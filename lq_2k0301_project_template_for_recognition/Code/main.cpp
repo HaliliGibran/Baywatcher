@@ -41,17 +41,23 @@ static bool init_board_comm_with_retry()
 
     for (int retry = 1; retry <= BW_BOARD_COMM_INIT_RETRY_TIMES; ++retry)
     {
-        printf("[BoardComm] reconnecting... attempt %d/%d in %d ms\n",
-               retry,
-               BW_BOARD_COMM_INIT_RETRY_TIMES,
-               BW_BOARD_COMM_INIT_RETRY_INTERVAL_MS);
+        if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+        {
+            printf("[BoardComm] reconnecting... attempt %d/%d in %d ms\n",
+                   retry,
+                   BW_BOARD_COMM_INIT_RETRY_TIMES,
+                   BW_BOARD_COMM_INIT_RETRY_INTERVAL_MS);
+        }
         usleep((useconds_t)BW_BOARD_COMM_INIT_RETRY_INTERVAL_MS * 1000u);
 
         if (comm.init(UART1, B115200))
         {
-            printf("[BoardComm] reconnect success on attempt %d/%d\n",
-                   retry,
-                   BW_BOARD_COMM_INIT_RETRY_TIMES);
+            if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+            {
+                printf("[BoardComm] reconnect success on attempt %d/%d\n",
+                       retry,
+                       BW_BOARD_COMM_INIT_RETRY_TIMES);
+            }
             return true;
         }
     }
@@ -67,7 +73,10 @@ static bool init_board_comm_with_retry()
 // 说明：识别板不再承担巡线/控制职责，上电后固定进入“彩色采集 + 识别链 + UART 发包”。
 void system_init()
 {
-    printf("Initializing recognition board...\n");
+    if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+    {
+        printf("Initializing recognition board...\n");
+    }
     lq_camera_format_t requested_format = LQ_CAMERA_HIGH_MJPG;
     auto create_camera = [](lq_camera_format_t format) -> std::unique_ptr<lq_camera_ex> {
         return std::unique_ptr<lq_camera_ex>(new lq_camera_ex(
@@ -82,12 +91,18 @@ void system_init()
     camera = create_camera(LQ_CAMERA_0CPU_MJPG);
     if (camera && camera->is_cam_opened())
     {
-        printf("[Camera] using low-cpu MJPG mode.\n");
+        if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+        {
+            printf("[Camera] using low-cpu MJPG mode.\n");
+        }
     }
     else
     {
         camera.reset();
-        printf("[Camera] low-cpu MJPG unavailable, fallback to high MJPG.\n");
+        if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+        {
+            printf("[Camera] low-cpu MJPG unavailable, fallback to high MJPG.\n");
+        }
     }
 #endif
 
@@ -97,7 +112,10 @@ void system_init()
         camera = create_camera(LQ_CAMERA_HIGH_MJPG);
         if (camera && camera->is_cam_opened())
         {
-            printf("[Camera] using high MJPG mode.\n");
+            if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+            {
+                printf("[Camera] using high MJPG mode.\n");
+            }
         }
     }
     if (!camera || !camera->is_cam_opened())
@@ -111,28 +129,40 @@ void system_init()
     }
     else
     {
-        printf("[Camera] 手动曝光已设置为 %d。\n", BW_RECOG_CAMERA_MANUAL_EXPOSURE);
+        if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+        {
+            printf("[Camera] 手动曝光已设置为 %d。\n", BW_RECOG_CAMERA_MANUAL_EXPOSURE);
+        }
     }
 #else
     else
     {
-        printf("[Camera] 当前沿用摄像头默认自动曝光。\n");
+        if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+        {
+            printf("[Camera] 当前沿用摄像头默认自动曝光。\n");
+        }
     }
 #endif
     if (camera && camera->is_cam_opened())
     {
-        printf("[Camera] request=%ux%u@%u format=%s, actual_fps=%u\n",
-               (unsigned)recognition_runtime::kRecognitionFrameWidth,
-               (unsigned)recognition_runtime::kRecognitionFrameHeight,
-               (unsigned)recognition_runtime::kRecognitionFrameFps,
-               camera_format_text(requested_format),
-               (unsigned)camera->get_camera_fps());
+        if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+        {
+            printf("[Camera] request=%ux%u@%u format=%s, actual_fps=%u\n",
+                   (unsigned)recognition_runtime::kRecognitionFrameWidth,
+                   (unsigned)recognition_runtime::kRecognitionFrameHeight,
+                   (unsigned)recognition_runtime::kRecognitionFrameFps,
+                   camera_format_text(requested_format),
+                   (unsigned)camera->get_camera_fps());
+        }
     }
     if (!init_board_comm_with_retry())
     {
         printf("[BoardComm] tx uart unavailable, recognition will continue without board link\n");
     }
-    printf("Recognition board init done.\n");
+    if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+    {
+        printf("Recognition board init done.\n");
+    }
 }
 
 } // namespace
@@ -152,7 +182,10 @@ int main(int argc, char** argv)
         }
     }
 
-    std::cout << "输入 c: 启动一次红块检测与识别链" << std::endl;
+    if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+    {
+        std::cout << "输入 c: 启动一次红块检测与识别链" << std::endl;
+    }
 
     // 识别板保留图传开关和识别开关两个入口
     const bool stream_enabled =
@@ -160,24 +193,27 @@ int main(int argc, char** argv)
     const bool recognition_enabled =
         RecognitionChain::ParseSwitch(argc, argv, RecognitionChain::DefaultEnabled());
 
-    std::cout << "[BOOT] stream switch=" << (stream_enabled ? "on" : "off")
-              << " (args: --stream / --no-stream / --stream=on|off)" << std::endl;
-    std::cout << "[BOOT] recognition switch=" << (recognition_enabled ? "on" : "off")
-              << " (args: --recognition / --no-recognition / --recognition=on|off)" << std::endl;
-    std::cout << "[BOOT] recognition board camera="
-              << recognition_runtime::kRecognitionFrameWidth << "x"
-              << recognition_runtime::kRecognitionFrameHeight << "@"
-              << recognition_runtime::kRecognitionFrameFps
-              << " color, UART1@115200" << std::endl;
-    std::cout << "[BOOT] precheck interval="
-              << BW_RECOG_NORMAL_PRECHECK_INTERVAL_MS
-              << " ms, ultra_fast="
-              << (BW_RECOG_ULTRA_FAST_PRECHECK_ENABLE ? "on" : "off")
-              << ", full_roi_min_interval="
-              << BW_RECOG_FULL_ROI_MIN_INTERVAL_MS
-              << " ms, loop_target_fps="
-              << BW_RECOG_LOOP_TARGET_FPS
-              << std::endl;
+    if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+    {
+        std::cout << "[BOOT] stream switch=" << (stream_enabled ? "on" : "off")
+                  << " (args: --stream / --no-stream / --stream=on|off)" << std::endl;
+        std::cout << "[BOOT] recognition switch=" << (recognition_enabled ? "on" : "off")
+                  << " (args: --recognition / --no-recognition / --recognition=on|off)" << std::endl;
+        std::cout << "[BOOT] recognition board camera="
+                  << recognition_runtime::kRecognitionFrameWidth << "x"
+                  << recognition_runtime::kRecognitionFrameHeight << "@"
+                  << recognition_runtime::kRecognitionFrameFps
+                  << " color, UART1@115200" << std::endl;
+        std::cout << "[BOOT] precheck interval="
+                  << BW_RECOG_NORMAL_PRECHECK_INTERVAL_MS
+                  << " ms, ultra_fast="
+                  << (BW_RECOG_ULTRA_FAST_PRECHECK_ENABLE ? "on" : "off")
+                  << ", full_roi_min_interval="
+                  << BW_RECOG_FULL_ROI_MIN_INTERVAL_MS
+                  << " ms, loop_target_fps="
+                  << BW_RECOG_LOOP_TARGET_FPS
+                  << std::endl;
+    }
 
     // 启动识别板独立运行时（阻塞运行）
     RunRecognitionBoard(stream_enabled, recognition_enabled);

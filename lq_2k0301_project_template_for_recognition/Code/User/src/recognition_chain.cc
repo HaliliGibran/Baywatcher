@@ -26,11 +26,12 @@ constexpr int kRecognitionTriggerFrameHeight = 480;
 constexpr int kRecognitionMinSearchYInclusive = BW_RECOG_TRIGGER_SEARCH_Y_MIN;
 constexpr int kRecognitionMaxSearchYExclusive = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr uint64_t kRecognitionRecentCandidateHoldMs = 200;
-constexpr bool kRecognitionVerboseLog = (BW_RECOG_VERBOSE_LOG != 0);
+constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
+constexpr bool kRecognitionVerboseLog = kRecognitionTextLog && (BW_RECOG_VERBOSE_LOG != 0);
 constexpr int kRecognitionMinValidFrames = BW_RECOG_MIN_VALID_FRAMES;
 constexpr int kRecognitionMaxValidFrames = BW_RECOG_MAX_VALID_FRAMES;
-constexpr float kRecognitionDecisionTop1AvgThreshold = 0.80f;
-constexpr float kRecognitionDecisionMarginThreshold = 0.15f;
+constexpr float kRecognitionDecisionTop1AvgThreshold = BW_RECOG_DECISION_TOP1_AVG_THRESHOLD;
+constexpr float kRecognitionDecisionMarginThreshold = BW_RECOG_DECISION_MARGIN_THRESHOLD;
 
 struct RoiClassificationResult
 {
@@ -251,9 +252,9 @@ static std::string roi_reject_reason_text(const RoiExtractionResult& roi_result)
     {
         oss << ", loose_ipm_reason=" << roi_result.loose_ipm_reason;
     }
-    if (roi_result.merged_white_span_count > 0)
+    if (roi_result.merged_reference_span_count > 0)
     {
-        oss << ", white_spans=" << roi_result.merged_white_span_count;
+        oss << ", reference_spans=" << roi_result.merged_reference_span_count;
     }
     if (!roi_result.ipm_reason.empty())
     {
@@ -965,18 +966,21 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
     if (!enabled_by_switch)
     {
         enabled_ = false;
-        std::cout << "[RECOG] disabled by switch" << std::endl;
+        if (kRecognitionTextLog)
+        {
+            std::cout << "[RECOG] disabled by switch" << std::endl;
+        }
         return false;
     }
 
     if (!file_exists(model_path))
     {
         enabled_ = false;
-        std::cout << "[ONNX] model missing: configured=" << configured_model_path
+        std::cerr << "[ONNX] model missing: configured=" << configured_model_path
                   << ", resolved=" << model_path << std::endl;
-        std::cout << "[ONNX] cwd=" << get_current_working_directory()
+        std::cerr << "[ONNX] cwd=" << get_current_working_directory()
                   << ", exe_dir=" << get_executable_directory() << std::endl;
-        std::cout << "[ONNX] disabled, waiting for valid model/class files." << std::endl;
+        std::cerr << "[ONNX] disabled, waiting for valid model/class files." << std::endl;
         return false;
     }
 
@@ -989,32 +993,38 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
         const DeployCalibration calibration = load_deploy_calibration_json(calibration_path);
         calibration_temperature_ = calibration.temperature;
         logit_bias_ = calibration.logit_bias;
-        decision_top1_threshold_ = calibration.decision_top1_threshold;
-        decision_margin_threshold_ = calibration.decision_margin_threshold;
+        decision_top1_threshold_ = kRecognitionDecisionTop1AvgThreshold;
+        decision_margin_threshold_ = kRecognitionDecisionMarginThreshold;
         enabled_ = !net_.empty();
     }
     catch (const std::exception& e)
     {
         enabled_ = false;
-        std::cout << "[ONNX] disabled: " << e.what() << std::endl;
+        std::cerr << "[ONNX] disabled: " << e.what() << std::endl;
     }
 
     if (enabled_)
     {
-        std::cout << "[ONNX] enabled, model=" << model_path << std::endl;
-        std::cout << "[ONNX] classes=" << class_path << std::endl;
-        std::cout << "[RECOG] roi_method=" << RoiMethodName(DefaultRoiMethod()) << std::endl;
-        std::cout << "[RECOG] decision=fixed3_prob_accum"
-                  << ", top1_threshold=" << decision_top1_threshold_
-                  << ", margin_threshold=" << decision_margin_threshold_ << std::endl;
-        std::cout << "[RECOG] calibration=" << calibration_path
-                  << ", temperature=" << calibration_temperature_ << std::endl;
+        if (kRecognitionTextLog)
+        {
+            std::cout << "[ONNX] enabled, model=" << model_path << std::endl;
+            std::cout << "[ONNX] classes=" << class_path << std::endl;
+            std::cout << "[RECOG] roi_method=" << RoiMethodName(DefaultRoiMethod()) << std::endl;
+            std::cout << "[RECOG] decision=fixed3_prob_accum"
+                      << ", top1_threshold=" << decision_top1_threshold_
+                      << ", margin_threshold=" << decision_margin_threshold_ << std::endl;
+            std::cout << "[RECOG] calibration=" << calibration_path
+                      << ", temperature=" << calibration_temperature_ << std::endl;
             std::cout << "[RECOG] state map:"
-                    << " weapon->w, supply->s, vehicle->v, brick->b, no_result->u, unknown->n" << std::endl;
+                      << " weapon->w, supply->s, vehicle->v, brick->b, no_result->u, unknown->n" << std::endl;
+        }
     }
     else
     {
-        std::cout << "[ONNX] disabled, waiting for valid model/class files." << std::endl;
+        if (kRecognitionTextLog)
+        {
+            std::cout << "[ONNX] disabled, waiting for valid model/class files." << std::endl;
+        }
     }
     return enabled_;
 }
@@ -1130,8 +1140,11 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         {
             if (latched_release_pending_)
             {
-                std::cout << "[RECOG] sign visible again, keep latched result="
-                          << vision_code_text(latched_symbol_code_) << std::endl;
+                if (kRecognitionTextLog)
+                {
+                    std::cout << "[RECOG] sign visible again, keep latched result="
+                              << vision_code_text(latched_symbol_code_) << std::endl;
+                }
             }
             latched_release_pending_ = false;
             latched_release_deadline_ms_ = 0;
@@ -1153,9 +1166,12 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         {
             latched_release_pending_ = true;
             latched_release_deadline_ms_ = t_ms + BW_RECOG_SIGN_LOSS_HOLD_MS;
-            std::cout << "[RECOG] sign lost, hold latched result="
-                      << vision_code_text(latched_symbol_code_)
-                      << " for " << BW_RECOG_SIGN_LOSS_HOLD_MS << " ms" << std::endl;
+            if (kRecognitionTextLog)
+            {
+                std::cout << "[RECOG] sign lost, hold latched result="
+                          << vision_code_text(latched_symbol_code_)
+                          << " for " << BW_RECOG_SIGN_LOSS_HOLD_MS << " ms" << std::endl;
+            }
         }
 
         if (t_ms < latched_release_deadline_ms_)
@@ -1175,9 +1191,12 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
             return false;
         }
 
-        std::cout << "[RECOG] sign loss timeout, release latched result="
-                  << vision_code_text(latched_symbol_code_)
-                  << " -> n" << std::endl;
+        if (kRecognitionTextLog)
+        {
+            std::cout << "[RECOG] sign loss timeout, release latched result="
+                      << vision_code_text(latched_symbol_code_)
+                      << " -> n" << std::endl;
+        }
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
         latched_release_deadline_ms_ = 0;
@@ -1302,10 +1321,13 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     current_vision_code_ = BoardVisionCode::NO_RESULT;
     latched_release_pending_ = false;
     latched_release_deadline_ms_ = 0;
-    std::cout << "[RECOG] sign board accepted: entering recognition"
-              << ", side=" << roi_blob_side_lower(trigger_roi, frame_bgr.cols)
-              << ", area=" << std::fixed << std::setprecision(1) << current_blob_area_
-              << std::endl;
+    if (kRecognitionTextLog)
+    {
+        std::cout << "[RECOG] sign board accepted: entering recognition"
+                  << ", side=" << roi_blob_side_lower(trigger_roi, frame_bgr.cols)
+                  << ", area=" << std::fixed << std::setprecision(1) << current_blob_area_
+                  << std::endl;
+    }
 
     if (render_debug)
     {
@@ -1569,15 +1591,18 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         }
     }
 
-    std::cout << "[RECOG] result=" << label
-              << ", valid_frames=" << valid_frame_count_
-              << ", top1_avg=" << std::fixed << std::setprecision(4) << prob_summary.top1_avg
-              << ", margin=" << prob_summary.margin;
-    if (!has_final_decision)
+    if (kRecognitionTextLog)
     {
-        std::cout << ", reason=" << failure_reason;
+        std::cout << "[RECOG] result=" << label
+                  << ", valid_frames=" << valid_frame_count_
+                  << ", top1_avg=" << std::fixed << std::setprecision(4) << prob_summary.top1_avg
+                  << ", margin=" << prob_summary.margin;
+        if (!has_final_decision)
+        {
+            std::cout << ", reason=" << failure_reason;
+        }
+        std::cout << std::endl;
     }
-    std::cout << std::endl;
 
     current_vision_code_ = has_final_decision ? final_code : BoardVisionCode::NO_RESULT;
     latched_symbol_code_ = is_success_symbol_code(current_vision_code_)
@@ -1586,9 +1611,12 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     latched_release_pending_ = false;
     latched_release_deadline_ms_ = 0;
 
-    std::cout << "[RECOG] state_out=" << vision_code_text(current_vision_code_)
-              << ", blob_area=" << std::fixed << std::setprecision(1) << current_blob_area_
-              << std::endl;
+    if (kRecognitionTextLog)
+    {
+        std::cout << "[RECOG] state_out=" << vision_code_text(current_vision_code_)
+                  << ", blob_area=" << std::fixed << std::setprecision(1) << current_blob_area_
+                  << std::endl;
+    }
 
     mode_ = Mode::NORMAL;
     prob_sum_ = {0.0f, 0.0f, 0.0f};

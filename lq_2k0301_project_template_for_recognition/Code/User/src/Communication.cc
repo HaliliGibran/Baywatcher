@@ -1,4 +1,5 @@
 #include "Communication.h"
+#include "common.h"
 #include <stdio.h>
 
 // ==================== 双板通信实现 ====================
@@ -57,9 +58,12 @@ bool BoardComm::init(const std::string& port, uint32_t baud) {
     rx_cache_.clear();
 
     if (uart_dev->flush_buffer()) {
-        printf("[BoardComm] uart ready: %s @ %u\n",
-               port.c_str(),
-               board_comm_baud_to_hz(baud));
+        if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+        {
+            printf("[BoardComm] uart ready: %s @ %u\n",
+                    port.c_str(),
+                    board_comm_baud_to_hz(baud));
+        }
         return true;
     } else {
         printf("[BoardComm] uart init failed: check pins, device node, or permission\n");

@@ -25,8 +25,8 @@ constexpr double kMinRoiEdgeLength = 8.0;
 constexpr double kMinBackprojectedQuadArea = 24.0;
 
 
-constexpr int kTaskSearchYMin = 160;
-constexpr int kTaskSearchYMax = 320;
+constexpr int kTaskSearchYMin = BW_RECOG_TRIGGER_SEARCH_Y_MIN;
+constexpr int kTaskSearchYMax = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr int kTaskRedScoreThreshold = 140;
 constexpr int kTaskRedMinR = 90;
 constexpr int kTaskRedDomThreshold = 80;
@@ -185,10 +185,52 @@ static cv::Mat PostprocessMask(const cv::Mat& mask)
     return output;
 }
 
-static bool ComputeWhiteXRangeOnRow(const cv::Mat& frame_bgr,
-                                    int* out_x_min,
-                                    int* out_x_max,
-                                    int* out_span_count)
+static bool MergeRowSpanIntoEnvelope(int start,
+                                     int end,
+                                     int min_span_width,
+                                     int* merged_start,
+                                     int* merged_end,
+                                     int* merged_count)
+{
+    if (merged_start == nullptr || merged_end == nullptr || merged_count == nullptr)
+    {
+        return false;
+    }
+    if (start < 0 || end < start || end - start + 1 < min_span_width)
+    {
+        return false;
+    }
+
+    if (*merged_count == 0)
+    {
+        *merged_start = start;
+        *merged_end = end;
+    }
+    else
+    {
+        *merged_start = std::min(*merged_start, start);
+        *merged_end = std::max(*merged_end, end);
+    }
+    ++(*merged_count);
+    return true;
+}
+
+static bool IsTaskStrictRedPixel(const cv::Vec3b& bgr)
+{
+    const int b = static_cast<int>(bgr[0]);
+    const int g = static_cast<int>(bgr[1]);
+    const int r = static_cast<int>(bgr[2]);
+    const int red_score = 2 * r - g - b;
+    const int dom = r - std::max(g, b);
+    return red_score >= kTaskRedScoreThreshold &&
+           r >= kTaskRedMinR &&
+           dom >= kTaskRedDomThreshold;
+}
+
+static bool ComputeWhiteEnvelopeXRangeOnReferenceRow(const cv::Mat& frame_bgr,
+                                                     int* out_x_min,
+                                                     int* out_x_max,
+                                                     int* out_span_count)
 {
     if (out_x_min == nullptr || out_x_max == nullptr || frame_bgr.empty())
     {
@@ -227,41 +269,15 @@ static bool ComputeWhiteXRangeOnRow(const cv::Mat& frame_bgr,
         }
         else if (!is_white && start >= 0)
         {
-            const int end = x - 1;
-            if (end - start + 1 >= kWhiteMinSpanWidth)
-            {
-                if (merged_count == 0)
-                {
-                    merged_start = start;
-                    merged_end = end;
-                }
-                else
-                {
-                    merged_start = std::min(merged_start, start);
-                    merged_end = std::max(merged_end, end);
-                }
-                ++merged_count;
-            }
+            MergeRowSpanIntoEnvelope(
+                start, x - 1, kWhiteMinSpanWidth, &merged_start, &merged_end, &merged_count);
             start = -1;
         }
     }
     if (start >= 0)
     {
-        const int end = image_width - 1;
-        if (end - start + 1 >= kWhiteMinSpanWidth)
-        {
-            if (merged_count == 0)
-            {
-                merged_start = start;
-                merged_end = end;
-            }
-            else
-            {
-                merged_start = std::min(merged_start, start);
-                merged_end = std::max(merged_end, end);
-            }
-            ++merged_count;
-        }
+        MergeRowSpanIntoEnvelope(
+            start, image_width - 1, kWhiteMinSpanWidth, &merged_start, &merged_end, &merged_count);
     }
 
     if (merged_start < 0 || merged_end < merged_start || merged_count <= 0)
@@ -278,17 +294,154 @@ static bool ComputeWhiteXRangeOnRow(const cv::Mat& frame_bgr,
     return true;
 }
 
-static cv::Rect ApplyWhiteXRangeToRect(const cv::Rect& rect,
-                                       const cv::Mat& frame_bgr,
-                                       int* out_x_min,
-                                       int* out_x_max,
-                                       std::string* out_source,
-                                       int* out_span_count)
+static bool ComputeStrictRedEnvelopeXRangeOnReferenceRow(const cv::Mat& frame_bgr,
+                                                         int* out_x_min,
+                                                         int* out_x_max,
+                                                         int* out_span_count)
 {
+    if (out_x_min == nullptr || out_x_max == nullptr || frame_bgr.empty())
+    {
+        return false;
+    }
+    if (out_span_count != nullptr)
+    {
+        *out_span_count = 0;
+    }
+
+    const int image_height = frame_bgr.rows;
+    const int image_width = frame_bgr.cols;
+    if (image_height <= 0 || image_width <= 0)
+    {
+        return false;
+    }
+
+    const int row_y = std::max(0, std::min(kWhiteReferenceRowY, image_height - 1));
+    const cv::Mat row_bgr = frame_bgr.row(row_y);
+
+    int merged_start = -1;
+    int merged_end = -1;
+    int merged_count = 0;
+    int start = -1;
+    for (int x = 0; x < image_width; ++x)
+    {
+        const bool is_red = IsTaskStrictRedPixel(row_bgr.at<cv::Vec3b>(0, x));
+        if (is_red && start < 0)
+        {
+            start = x;
+        }
+        else if (!is_red && start >= 0)
+        {
+            MergeRowSpanIntoEnvelope(
+                start, x - 1, kTaskMinBandWidth, &merged_start, &merged_end, &merged_count);
+            start = -1;
+        }
+    }
+    if (start >= 0)
+    {
+        MergeRowSpanIntoEnvelope(
+            start, image_width - 1, kTaskMinBandWidth, &merged_start, &merged_end, &merged_count);
+    }
+
+    if (merged_start < 0 || merged_end < merged_start || merged_count <= 0)
+    {
+        return false;
+    }
+
+    *out_x_min = merged_start;
+    *out_x_max = merged_end;
+    if (out_span_count != nullptr)
+    {
+        *out_span_count = merged_count;
+    }
+    return true;
+}
+
+static bool ComputeReferenceEnvelopeXRangeOnRow(const cv::Mat& frame_bgr,
+                                                int* out_x_min,
+                                                int* out_x_max,
+                                                int* out_span_count,
+                                                std::string* out_source)
+{
+    if (out_x_min == nullptr || out_x_max == nullptr || frame_bgr.empty())
+    {
+        return false;
+    }
+    if (out_span_count != nullptr)
+    {
+        *out_span_count = 0;
+    }
+    if (out_source != nullptr)
+    {
+        *out_source = "fallback";
+    }
+
     int white_x_min = 0;
     int white_x_max = 0;
+    int white_span_count = 0;
+    const bool has_white = ComputeWhiteEnvelopeXRangeOnReferenceRow(
+        frame_bgr, &white_x_min, &white_x_max, &white_span_count);
+
+    int red_x_min = 0;
+    int red_x_max = 0;
+    int red_span_count = 0;
+    const bool has_red = ComputeStrictRedEnvelopeXRangeOnReferenceRow(
+        frame_bgr, &red_x_min, &red_x_max, &red_span_count);
+
+    if (!has_white && !has_red)
+    {
+        return false;
+    }
+
+    int x_min = std::numeric_limits<int>::max();
+    int x_max = std::numeric_limits<int>::min();
+    if (has_white)
+    {
+        x_min = std::min(x_min, white_x_min);
+        x_max = std::max(x_max, white_x_max);
+    }
+    if (has_red)
+    {
+        x_min = std::min(x_min, red_x_min);
+        x_max = std::max(x_max, red_x_max);
+    }
+
+    *out_x_min = x_min;
+    *out_x_max = x_max;
+    if (out_span_count != nullptr)
+    {
+        *out_span_count = white_span_count + red_span_count;
+    }
+    if (out_source != nullptr)
+    {
+        if (has_white && has_red)
+        {
+            *out_source = "white_red_envelope";
+        }
+        else if (has_white)
+        {
+            *out_source = "white_only";
+        }
+        else
+        {
+            *out_source = "red_only";
+        }
+    }
+    return true;
+}
+
+static cv::Rect ApplyReferenceXRangeToRect(const cv::Rect& rect,
+                                           const cv::Mat& frame_bgr,
+                                           int* out_x_min,
+                                           int* out_x_max,
+                                           std::string* out_source,
+                                           int* out_span_count)
+{
+    int reference_x_min = 0;
+    int reference_x_max = 0;
     int span_count = 0;
-    if (!ComputeWhiteXRangeOnRow(frame_bgr, &white_x_min, &white_x_max, &span_count))
+    std::string detected_source = "fallback";
+    if (!ComputeReferenceEnvelopeXRangeOnRow(
+            frame_bgr, &reference_x_min, &reference_x_max, &span_count, &detected_source))
     {
         if (out_source != nullptr)
         {
@@ -299,19 +452,19 @@ static cv::Rect ApplyWhiteXRangeToRect(const cv::Rect& rect,
 
     if (out_x_min != nullptr)
     {
-        *out_x_min = white_x_min;
+        *out_x_min = reference_x_min;
     }
     if (out_x_max != nullptr)
     {
-        *out_x_max = white_x_max;
+        *out_x_max = reference_x_max;
     }
     if (out_span_count != nullptr)
     {
         *out_span_count = span_count;
     }
 
-    const int x1 = std::max(rect.x, white_x_min);
-    const int x2 = std::min(rect.x + rect.width, white_x_max + 1);
+    const int x1 = std::max(rect.x, reference_x_min);
+    const int x2 = std::min(rect.x + rect.width, reference_x_max + 1);
     if (x2 <= x1)
     {
         if (out_source != nullptr)
@@ -323,7 +476,7 @@ static cv::Rect ApplyWhiteXRangeToRect(const cv::Rect& rect,
 
     if (out_source != nullptr)
     {
-        *out_source = "detected";
+        *out_source = detected_source;
     }
     return cv::Rect(x1, rect.y, x2 - x1, rect.height);
 }
@@ -1921,14 +2074,7 @@ static cv::Mat BuildTaskStrictRedMaskRect(const cv::Mat& frame_bgr, const cv::Re
         unsigned char* mask_ptr = full_mask.ptr<unsigned char>(y);
         for (int x = clamped.x; x < clamped.x + clamped.width; ++x)
         {
-            const int b = static_cast<int>(row_ptr[x][0]);
-            const int g = static_cast<int>(row_ptr[x][1]);
-            const int r = static_cast<int>(row_ptr[x][2]);
-            const int red_score = 2 * r - g - b;
-            const int dom = r - std::max(g, b);
-            if (red_score >= kTaskRedScoreThreshold &&
-                r >= kTaskRedMinR &&
-                dom >= kTaskRedDomThreshold)
+            if (IsTaskStrictRedPixel(row_ptr[x]))
             {
                 mask_ptr[x] = 255;
             }
@@ -1973,31 +2119,43 @@ static bool ComputeTaskRedXRange(const cv::Mat& mask, int y_min, int y_max, int*
 }
 
 static cv::Rect BuildTaskSearchRect(const cv::Mat& frame_bgr,
-                                    int* out_white_x_min,
-                                    int* out_white_x_max,
-                                    bool* out_has_white_x_range,
-                                    std::string* out_white_range_source)
+                                    int* out_reference_x_min,
+                                    int* out_reference_x_max,
+                                    bool* out_has_reference_x_range,
+                                    int* out_reference_span_count,
+                                    std::string* out_reference_range_source)
 {
     const int image_width = frame_bgr.cols;
     const int image_height = frame_bgr.rows;
     cv::Rect base_y_rect(0, kTaskSearchYMin, image_width, std::max(1, kTaskSearchYMax - kTaskSearchYMin));
     ClampRectToImage(base_y_rect, image_width, image_height, &base_y_rect);
 
-    int white_x_min = 0;
-    int white_x_max = 0;
-    const bool has_white_x_range = ComputeWhiteXRangeOnRow(frame_bgr, &white_x_min, &white_x_max, nullptr);
-    if (out_has_white_x_range != nullptr)
+    int reference_x_min = 0;
+    int reference_x_max = 0;
+    int reference_span_count = 0;
+    std::string reference_range_source = "fallback";
+    const bool has_reference_x_range = ComputeReferenceEnvelopeXRangeOnRow(
+        frame_bgr,
+        &reference_x_min,
+        &reference_x_max,
+        &reference_span_count,
+        &reference_range_source);
+    if (out_has_reference_x_range != nullptr)
     {
-        *out_has_white_x_range = has_white_x_range;
+        *out_has_reference_x_range = has_reference_x_range;
     }
-    if (out_white_range_source != nullptr)
+    if (out_reference_range_source != nullptr)
     {
-        *out_white_range_source = has_white_x_range ? "detected" : "fallback";
+        *out_reference_range_source = reference_range_source;
     }
-    if (has_white_x_range && out_white_x_min != nullptr && out_white_x_max != nullptr)
+    if (has_reference_x_range && out_reference_x_min != nullptr && out_reference_x_max != nullptr)
     {
-        *out_white_x_min = white_x_min;
-        *out_white_x_max = white_x_max;
+        *out_reference_x_min = reference_x_min;
+        *out_reference_x_max = reference_x_max;
+    }
+    if (has_reference_x_range && out_reference_span_count != nullptr)
+    {
+        *out_reference_span_count = reference_span_count;
     }
 
     const cv::Mat base_mask = BuildTaskStrictRedMaskRect(frame_bgr, base_y_rect);
@@ -2007,14 +2165,14 @@ static cv::Rect BuildTaskSearchRect(const cv::Mat& frame_bgr,
 
     int x0 = 0;
     int x1 = image_width - 1;
-    if (has_white_x_range || has_red_x_range)
+    if (has_reference_x_range || has_red_x_range)
     {
         x0 = image_width - 1;
         x1 = 0;
-        if (has_white_x_range)
+        if (has_reference_x_range)
         {
-            x0 = std::min(x0, white_x_min);
-            x1 = std::max(x1, white_x_max);
+            x0 = std::min(x0, reference_x_min);
+            x1 = std::max(x1, reference_x_max);
         }
         if (has_red_x_range)
         {
@@ -2195,23 +2353,26 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     const int image_width = frame_bgr.cols;
     const int image_height = frame_bgr.rows;
 
-    int white_x_min = 0;
-    int white_x_max = 0;
-    bool has_white_x_range = false;
-    std::string white_range_source = "fallback";
+    int reference_x_min = 0;
+    int reference_x_max = 0;
+    int reference_span_count = 0;
+    bool has_reference_x_range = false;
+    std::string reference_range_source = "fallback";
     result.search_rect = BuildTaskSearchRect(
         frame_bgr,
-        &white_x_min,
-        &white_x_max,
-        &has_white_x_range,
-        &white_range_source);
+        &reference_x_min,
+        &reference_x_max,
+        &has_reference_x_range,
+        &reference_span_count,
+        &reference_range_source);
     result.has_search_rect = true;
-    result.white_range_source = white_range_source;
-    if (has_white_x_range)
+    result.reference_range_source = reference_range_source;
+    if (has_reference_x_range)
     {
-        result.has_white_x_range = true;
-        result.white_x_min = white_x_min;
-        result.white_x_max = white_x_max;
+        result.has_reference_x_range = true;
+        result.reference_x_min = reference_x_min;
+        result.reference_x_max = reference_x_max;
+        result.merged_reference_span_count = reference_span_count;
     }
 
     cv::Mat red_mask = BuildTaskStrictRedMaskRect(frame_bgr, result.search_rect);
@@ -2380,26 +2541,26 @@ void DrawRoiDebugOverlay(cv::Mat& image_bgr, const RoiExtractionResult& result)
     {
         DrawRectIfValid(image_bgr, result.search_rect, cv::Scalar(255, 128, 0), 1);
     }
-    if (result.has_white_x_range)
+    if (result.has_reference_x_range)
     {
         cv::line(
             image_bgr,
-            cv::Point(result.white_x_min, 0),
-            cv::Point(result.white_x_min, image_bgr.rows - 1),
+            cv::Point(result.reference_x_min, 0),
+            cv::Point(result.reference_x_min, image_bgr.rows - 1),
             cv::Scalar(0, 255, 0),
             1,
             cv::LINE_AA);
         cv::line(
             image_bgr,
-            cv::Point(result.white_x_max, 0),
-            cv::Point(result.white_x_max, image_bgr.rows - 1),
+            cv::Point(result.reference_x_max, 0),
+            cv::Point(result.reference_x_max, image_bgr.rows - 1),
               cv::Scalar(0, 255, 0),
               1,
               cv::LINE_AA);
-        if (result.merged_white_span_count > 1)
+        if (result.merged_reference_span_count > 1)
         {
             std::ostringstream span_text;
-            span_text << "white_spans=" << result.merged_white_span_count;
+            span_text << "ref_spans=" << result.merged_reference_span_count;
             cv::putText(image_bgr, span_text.str(), cv::Point(16, 84),
                         cv::FONT_HERSHEY_SIMPLEX, 0.50, cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
         }

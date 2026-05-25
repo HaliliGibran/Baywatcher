@@ -87,28 +87,37 @@ bool StreamChain::Initialize(bool enabled_by_switch)
     if (!enabled_)
     {
         // 图传关闭时直接返回，不占用额外线程和网络资源。
-        std::cout << "[BOOT] Stream disabled by switch" << std::endl;
+        if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+        {
+            std::cout << "[BOOT] Stream disabled by switch" << std::endl;
+        }
         return false;
     }
 
     if (server_ == nullptr)
     {
         // 防御式保护：如果外部没有传入 server 实例，则不给图传链继续启动。
-        std::cout << "[BOOT] Stream server missing." << std::endl;
+        std::cerr << "[BOOT] Stream server missing." << std::endl;
         return false;
     }
 
     // [Stream Chain Step 1] 启动图传服务器。
     // 作用：把 HTTP/MJPEG 图传启动逻辑从 main 调度里分离出去。
-    std::cout << "[BOOT] Starting TransmissionStreamServer..." << std::endl;
+    if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+    {
+        std::cout << "[BOOT] Starting TransmissionStreamServer..." << std::endl;
+    }
     started_ = (server_->start_server() == 0);
     if (started_)
     {
-        std::cout << "[BOOT] Stream Started." << std::endl;
+        if (BW_RECOG_TEXT_LOG_ENABLE != 0)
+        {
+            std::cout << "[BOOT] Stream Started." << std::endl;
+        }
     }
     else
     {
-        std::cout << "[BOOT] Stream start failed." << std::endl;
+        std::cerr << "[BOOT] Stream start failed." << std::endl;
     }
     return started_;
 }
