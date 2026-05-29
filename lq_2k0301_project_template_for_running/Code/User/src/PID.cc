@@ -862,9 +862,9 @@ float g_startup_speed_step = 0.05f;       // [发车阶段3]：底盘电机软�
 // ===============================================================
 
 void BayWatcher_Control_Loop(void* arg) {
-    // if (handle_zebra_stop_request()) {
-    //     return;
-    // }
+    if (handle_zebra_stop_request()) {
+        return;
+    }
 
     if (PID.is_running == 0) {
         PID_Speed_L.output = 0; PID_Speed_L.prev_error = 0;
@@ -957,9 +957,13 @@ void BayWatcher_Control_Loop(void* arg) {
 
     // 考虑到前方可能是弯道，动态应用弯道减速
     // const float effective_base_speed = update_curve_slowdown_base_speed(PID.base_target_speed);
-    const float remote_speed_scale =
-        clampf_pid(image_remote_recognition_get_speed_ratio_override(), 0.0f, 1.0f);
-    const float effective_base_speed = PID.base_target_speed * remote_speed_scale;
+    const float remote_speed_scale = zebra_rush_active
+        ? 1.0f
+        : clampf_pid(image_remote_recognition_get_speed_ratio_override(), 0.0f, 1.0f);
+    const float zebra_speed_scale =
+        clampf_pid(zebra_speed_ratio_override, 0.0f, BW_ZEBRA_RUSH_SPEED_RATIO);
+    const float effective_base_speed =
+        PID.base_target_speed * remote_speed_scale * zebra_speed_scale;
 
     // if (PID.speed_adjust > 0) {
     //     PID.target_speed_L = effective_base_speed + (PID.speed_adjust * 0.3f);
@@ -1055,9 +1059,9 @@ void BayWatcher_Control_Loop(void* arg) {
 }
 
 void BayWatcher_Cube_Loop(void* arg){
-    // if (handle_zebra_stop_request()) {
-    //     return;
-    // }
+    if (handle_zebra_stop_request()) {
+        return;
+    }
     if (PID.is_running == 0) {
         PID_Speed_L.output = 0; PID_Speed_L.prev_error = 0;
         PID_Speed_R.output = 0; PID_Speed_R.prev_error = 0;

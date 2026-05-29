@@ -173,8 +173,12 @@ struct zebra_gate_state_t
 {
     bool prev_stop;
     uint64_t cooldown_until_ms;
+    bool stripe_visible;
     bool pending_stop;
-    uint64_t pending_start_ms;
+    bool rush_active;
+    bool special_lock_active;
+    int rush_count;
+    uint64_t stop_deadline_ms;
 };
 
 // 作用域: 文件内静态，环岛阶段平均角缓存
@@ -195,6 +199,30 @@ static uint64_t image_now_ms()
     return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
+}
+
+static inline int zebra_required_rush_count()
+{
+#if BW_ZEBRA_RUSH_MODE >= 2
+    return 2;
+#else
+    return 1;
+#endif
+}
+
+static void sync_zebra_runtime_outputs()
+{
+    zebra_rush_active = g_zebra_gate.rush_active;
+    zebra_special_state_locked = g_zebra_gate.special_lock_active;
+    zebra_speed_ratio_override = g_zebra_gate.rush_active ? BW_ZEBRA_RUSH_SPEED_RATIO : 1.0f;
+}
+
+static void clear_zebra_runtime_state(bool keep_cooldown)
+{
+    const uint64_t cooldown_until_ms = keep_cooldown ? g_zebra_gate.cooldown_until_ms : 0;
+    g_zebra_gate = {0};
+    g_zebra_gate.cooldown_until_ms = cooldown_until_ms;
+    sync_zebra_runtime_outputs();
 }
 
 // 功能: 清空当前帧可见的巡线输出量
@@ -328,15 +356,16 @@ static track_search_result_t process_track_edges(const uint8_t (&img)[IMAGE_H][I
     return TRACK_SEARCH_OK;
 }
 
-// 功能: 处理斑马线锁停、解锁和延时停车的生命周期
+// 功能: 处理斑马线最终锁停/释放生命周期
 // 类型: 局部功能函数
-// 返回值: true 表示本帧已经被斑马线链路接管，应直接 return
+// 返回值: true 表示当前已进入最终停车锁停阶段，应直接 return
 static bool handle_zebra_stop_lifecycle(uint64_t t_ms)
 {
     if (g_zebra_gate.prev_stop && !zebra_stop)
     {
         g_zebra_gate.cooldown_until_ms = t_ms + (uint64_t)ZEBRA_COOLDOWN_MS;
         printf("[ZEBRA] release\r\n");
+        clear_zebra_runtime_state(true);
         reset_image_processing_outputs();
     }
 
@@ -348,47 +377,79 @@ static bool handle_zebra_stop_lifecycle(uint64_t t_ms)
             track_force_reset();
         }
 
+        clear_zebra_runtime_state(false);
         reset_image_processing_outputs();
         g_zebra_gate.prev_stop = true;
         return true;
     }
 
     g_zebra_gate.prev_stop = false;
-
-    if (g_zebra_gate.pending_stop)
-    {
-        reset_image_processing_outputs();
-        if (t_ms - g_zebra_gate.pending_start_ms >= (uint64_t)ZEBRA_STOP_DELAY_MS)
-        {
-            g_zebra_gate.pending_stop = false;
-            zebra_stop = true;
-        }
-        return true;
-    }
-
     return false;
 }
 
-// 功能: 触发斑马线延时停车
+// 功能: 斑马线冲线状态机
 // 类型: 局部功能函数
-// 返回值: true 表示本帧命中斑马线并已进入 pending 阶段
-static bool try_trigger_zebra_pending_stop(const uint8_t (&img)[IMAGE_H][IMAGE_W], uint64_t t_ms)
+// 返回值: true 表示当前应锁定普通巡线态并强制 MIXED 冲线
+static bool update_zebra_rush_state(const uint8_t (&img)[IMAGE_H][IMAGE_W], uint64_t t_ms)
 {
-    const bool zebra_can_check =
-        (t_ms >= g_zebra_gate.cooldown_until_ms &&
-         element_type == ElementType::NORMAL);
+    const bool zebra_can_check = (t_ms >= g_zebra_gate.cooldown_until_ms);
+    const bool zebra_now = zebra_can_check && zebra_detection(img);
 
-    if (!zebra_can_check || !zebra_detection(img))
+    if (zebra_now && !g_zebra_gate.stripe_visible)
     {
-        return false;
+        g_zebra_gate.stripe_visible = true;
+        g_zebra_gate.rush_active = true;
+        g_zebra_gate.special_lock_active = true;
+        g_zebra_gate.pending_stop = false;
+        g_zebra_gate.stop_deadline_ms = 0;
+        g_zebra_gate.rush_count++;
+
+        image_remote_recognition_reset();
+        track_force_reset();
+        follow_mode = FollowLine::MIXED;
+
+        if (g_zebra_gate.rush_count < zebra_required_rush_count())
+        {
+            printf("[ZEBRA] rush #%d -> lock mixed, resume after disappear\r\n",
+                   g_zebra_gate.rush_count);
+        }
+        else
+        {
+            printf("[ZEBRA] rush #%d -> lock mixed, stop after disappear\r\n",
+                   g_zebra_gate.rush_count);
+        }
     }
 
-    track_force_reset();
-    reset_image_processing_outputs();
-    g_zebra_gate.pending_stop = true;
-    g_zebra_gate.pending_start_ms = t_ms;
-    printf("[ZEBRA] detected, delay %d ms\r\n", (int)ZEBRA_STOP_DELAY_MS);
-    return true;
+    if (!zebra_now && g_zebra_gate.stripe_visible)
+    {
+        g_zebra_gate.stripe_visible = false;
+        g_zebra_gate.rush_active = false;
+        g_zebra_gate.special_lock_active = false;
+
+        if (g_zebra_gate.rush_count >= zebra_required_rush_count())
+        {
+            g_zebra_gate.pending_stop = true;
+            g_zebra_gate.stop_deadline_ms = t_ms + (uint64_t)ZEBRA_STOP_DELAY_MS;
+            printf("[ZEBRA] rush clear -> stop in %d ms\r\n", (int)ZEBRA_STOP_DELAY_MS);
+        }
+        else
+        {
+            printf("[ZEBRA] first rush clear -> resume normal track\r\n");
+        }
+    }
+
+    if (!g_zebra_gate.rush_active &&
+        g_zebra_gate.pending_stop &&
+        g_zebra_gate.stop_deadline_ms > 0 &&
+        t_ms >= g_zebra_gate.stop_deadline_ms)
+    {
+        g_zebra_gate.pending_stop = false;
+        g_zebra_gate.stop_deadline_ms = 0;
+        zebra_stop = true;
+    }
+
+    sync_zebra_runtime_outputs();
+    return g_zebra_gate.special_lock_active;
 }
 
 // 功能: 元素检测与状态机推进
@@ -494,6 +555,7 @@ static void clear_circle_runtime_for_brick()
     {
         element_type = ElementType::NORMAL;
     }
+    follow_mode = FollowLine::MIXED;
     image_reset_far_line_state();
 }
 
@@ -606,6 +668,7 @@ static float finalize_pure_angle_output(float measured_angle, bool has_valid_mea
 void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 {
     const uint64_t t_ms = image_now_ms();
+    g_force_mixed_slope_active = false;
     image_remote_recognition_tick(t_ms);
     if (handle_zebra_stop_lifecycle(t_ms))
     {
@@ -621,6 +684,7 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 
     // follow_mode 由上层策略决定，这里只消费，不在主链入口硬重置。
     const track_search_result_t track_search = process_track_edges(img, vehicle_active);
+    const bool zebra_special_lock = update_zebra_rush_state(img, t_ms);
     if (track_search == TRACK_SEARCH_VEHICLE_FALLBACK_HOLD)
     {
         float hold_yaw = 0.0f;
@@ -684,7 +748,13 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     // );
     // return;
 
-    if (remote_route_active)
+    if (zebra_special_lock)
+    {
+        track_reset_element_runtime_state(true);
+        image_reset_far_line_state();
+        follow_mode = FollowLine::MIXED;
+    }
+    else if (remote_route_active)
     {
         // 远端接管期间临时屏蔽元素状态机，不在这里重置 follow_mode owner。
         track_reset_element_runtime_state(false);
@@ -693,23 +763,13 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     else if (remote_circle_block)
     {
         clear_circle_runtime_for_brick();
-
-        if (try_trigger_zebra_pending_stop(img, t_ms))
-        {
-            return;
-        }
     }
     else
     {
-        if (try_trigger_zebra_pending_stop(img, t_ms))
-        {
-            return;
-        }
-
         update_track_state_machine(img);
     }
 
-    if (remote_follow_locked)
+    if (remote_follow_locked && !zebra_special_lock)
     {
         build_midline_from_remote_follow_override(forced_follow_mode);
     }

@@ -7,6 +7,9 @@
 
 // 作用域: 全局变量，斑马线停车请求标志（视觉侧置位，控制层处理）
 extern bool zebra_stop;
+extern bool zebra_rush_active;
+extern bool zebra_special_state_locked;
+extern float zebra_speed_ratio_override;
 
 // -------------------- 单侧边线处理上下文 --------------------
 struct pts_well_processed
@@ -125,6 +128,9 @@ enum class FollowLine:uint8_t
 
 // 作用域: 全局变量，跟线模式（MIXED/MIDLEFT/MIDRIGHT）
 extern FollowLine follow_mode;
+
+// 作用域: 全局变量，普通道路因坡道/起伏趋势而强制退回 MIXED 的帧级标志
+extern bool g_force_mixed_slope_active;
 
 // -------------------- 元素状态机 --------------------
 // 元素类型（作用域: 全局枚举类型）
