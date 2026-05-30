@@ -336,7 +336,8 @@
 
 // 斑马线冲线时的基础速度倍率。
 #ifndef BW_ZEBRA_RUSH_SPEED_RATIO
-#define BW_ZEBRA_RUSH_SPEED_RATIO 1.50f
+// #define BW_ZEBRA_RUSH_SPEED_RATIO 1.50f
+#define BW_ZEBRA_RUSH_SPEED_RATIO 1.20
 #endif
 
 // 检测到斑马线后延迟停车的时间（毫秒）：
