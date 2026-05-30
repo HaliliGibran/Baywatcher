@@ -14,7 +14,7 @@ const float ACKERMAN_CONST = 1450.0f;  // Ackerman越小,差速就越大
 // const float STEER_LIMIT = 730.0f;      // 转向输出限幅
 // const float STEER_LIMIT = 1030.0f;      // 转向输出限幅
 const float STEER_LIMIT = 530.0f;      // 转向输出限幅
-const float FACTOR_LIMIT = 1.23;        // 差速比例输出限幅
+const float FACTOR_LIMIT = 1.23f;        // 差速比例输出限幅
 
 #pragma endregion
 
@@ -26,12 +26,12 @@ bool cfg_straight_accel_enable = false;
 float cfg_straight_accel_max_add = 2.0f;    // 1. 作用上限：直道加速最大补偿速度
 
 // 2. 最小阈值：在此范围内视为绝对直道，补偿拉满 (100% max_add)
-float cfg_straight_accel_curve_min_th = 2.0f;
-float cfg_straight_accel_yaw_min_th = 2.0f;
+float cfg_straight_accel_curve_min_th = 15.0f; // 适应远瞻基准，低于15f为绝对直道
+float cfg_straight_accel_yaw_min_th = 3.0f;    // 允许一定的微小画龙修正
 
 // 3. 最大阈值：超过此值视为入弯，一票否决，加速清零
-float cfg_straight_accel_curve_max_th = 11.0f;
-float cfg_straight_accel_yaw_max_th = 6.0f;
+float cfg_straight_accel_curve_max_th = 28.0f; // 适应远瞻基准，高于28f视为弯道
+float cfg_straight_accel_yaw_max_th = 8.0f;    // 允许微小的摇摆
 
 // 4. 剧烈程度 (核心参数)
 // 范围：0.1 ~ 3.0。
@@ -45,8 +45,13 @@ float cfg_straight_accel_intensity = 0.4f;
 static float current_straight_add = 0.0f;             // 当前实际输出的直道加速加成值（经过低通滤波后的平滑值）
 static int continuous_straight_frames = 0;            // 连续被判定为满足直道条件的帧数计数器（防弯道误判）
 static float last_pure_angle = 0.0f;                  // 上一帧的纯跟踪偏角（用于计算偏角变化率 delta_yaw，防画龙）
-static float curve_history[CURVE_HISTORY_SIZE] = {0}; // 环形数组，保存最近 N 帧的绝对曲率
+static float curve_history[CURVE_HISTORY_SIZE] = {0}; // 环形数组，保存最近 N 帧经过中值滤波后的曲率
 static int curve_history_index = 0;                   // 环形数组的当前写入指针
+
+// 5帧时间中值滤波器状态
+static float curve_median_history[5] = {0.0f};
+static int curve_median_index = 0;
+static float curve_smoothed = 0.0f;                   // 经过非对称一阶低通滤波后的平滑曲率
 
 static void reset_straight_acceleration_state() {
     current_straight_add = 0.0f;
@@ -56,6 +61,11 @@ static void reset_straight_acceleration_state() {
         curve_history[i] = 0.0f;
     }
     curve_history_index = 0;
+    for (int i = 0; i < 5; i++) {
+        curve_median_history[i] = 0.0f;
+    }
+    curve_median_index = 0;
+    curve_smoothed = 0.0f;
 }
 
 static float update_straight_acceleration(float pure_angle, float preview_curve) {
@@ -71,8 +81,33 @@ static float update_straight_acceleration(float pure_angle, float preview_curve)
     float delta_yaw = std::fabs(pure_angle - last_pure_angle);
     last_pure_angle = pure_angle;
 
-    // 2. 计算 Curve 积分视野 (滑动窗口平均)
-    curve_history[curve_history_index] = abs_curve;
+    // 2. 5帧时间中值滤波器 (彻底消除孤立噪声尖峰)
+    curve_median_history[curve_median_index] = abs_curve;
+    curve_median_index = (curve_median_index + 1) % 5;
+
+    float sorted_curves[5];
+    for (int i = 0; i < 5; i++) {
+        sorted_curves[i] = curve_median_history[i];
+    }
+    // 经典起泡排序 (5个元素极速排序)
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4 - i; j++) {
+            if (sorted_curves[j] > sorted_curves[j + 1]) {
+                float temp = sorted_curves[j];
+                sorted_curves[j] = sorted_curves[j + 1];
+                sorted_curves[j + 1] = temp;
+            }
+        }
+    }
+    float curve_filtered = sorted_curves[2]; // 取中位数
+
+    // 3. 非对称一阶低通滤波
+    // 进弯（曲率上升）快响应 (beta = 0.35f)，确保安全；出弯（曲率下降）慢响应 (beta = 0.08f)，防止车身速度高频抖动
+    float beta = (curve_filtered > curve_smoothed) ? 0.35f : 0.08f;
+    curve_smoothed += beta * (curve_filtered - curve_smoothed);
+
+    // 4. 计算 Curve 积分视野 (滑动窗口平均 - 采用已剔除噪点后的 curve_filtered)
+    curve_history[curve_history_index] = curve_filtered;
     curve_history_index = (curve_history_index + 1) % CURVE_HISTORY_SIZE;
     
     float curve_sum = 0.0f;
@@ -85,52 +120,53 @@ static float update_straight_acceleration(float pure_angle, float preview_curve)
 
     // 动态限制阈值
     float max_delta_yaw_th = 2.5f; // 一帧内偏角跳变超过 2.5度，说明在晃动 (S弯/画龙)
-    float max_curve_avg_th = cfg_straight_accel_curve_max_th * 0.7f; // 历史平均曲率必须低于绝对上限的 70% 才是长直道
+    float max_curve_avg_th = cfg_straight_accel_curve_max_th * 0.8f; // 历史平均曲率低于绝对上限的80%
 
-        // 第一步：判断当前帧是否越过危险阈值（弯道/画龙/伪直道）
-        if (abs_yaw >= cfg_straight_accel_yaw_max_th || 
-            abs_curve >= cfg_straight_accel_curve_max_th ||
-            delta_yaw >= max_delta_yaw_th ||
-            curve_avg >= max_curve_avg_th) {
+    // 第一步：判断当前帧是否越过危险阈值（弯道/画龙/伪直道）
+    // 此处一票否决使用 curve_smoothed 替代瞬时 abs_curve，有效规避瞬时噪点导致的频繁断油
+    if (abs_yaw >= cfg_straight_accel_yaw_max_th || 
+        curve_smoothed >= cfg_straight_accel_curve_max_th ||
+        delta_yaw >= max_delta_yaw_th ||
+        curve_avg >= max_curve_avg_th) {
+        
+        // 只要有一项被判定为危险，直道连续计数器立刻清零
+        continuous_straight_frames = 0; 
+        target_add = 0.0f;
+    } else {
+        // 在直道阈值范围内，增加直道帧数计数
+        continuous_straight_frames++;
+        
+        // 连续 5 帧都是直道，才允许加速（防弯道偶尔一帧变直导致突然冲一下）
+        if (continuous_straight_frames > 5) { 
+            // 第二步：计算线性得分 (0.0 ~ 1.0)
+            float yaw_score = 1.0f;
+            if (abs_yaw > cfg_straight_accel_yaw_min_th) {
+                float yaw_diff = cfg_straight_accel_yaw_max_th - cfg_straight_accel_yaw_min_th;
+                if (yaw_diff < 0.001f) yaw_diff = 0.001f; // 防止除零
+                yaw_score = 1.0f - (abs_yaw - cfg_straight_accel_yaw_min_th) / yaw_diff;
+            }
+
+            // 使用平滑后的 curve_smoothed 代替原有的 curve_avg 计算得分，更贴物理实际且非常稳定
+            float curve_score = 1.0f;
+            if (curve_smoothed > cfg_straight_accel_curve_min_th) {
+                float curve_diff = cfg_straight_accel_curve_max_th - cfg_straight_accel_curve_min_th;
+                if (curve_diff < 0.001f) curve_diff = 0.001f; 
+                curve_score = 1.0f - (curve_smoothed - cfg_straight_accel_curve_min_th) / curve_diff;
+            }
             
-            // 只要有一项被判定为危险，直道连续计数器立刻清零
-            continuous_straight_frames = 0; 
-            target_add = 0.0f;
+            float final_score = (yaw_score < curve_score) ? yaw_score : curve_score;
+            if (final_score < 0.0f) final_score = 0.0f;
+            if (final_score > 1.0f) final_score = 1.0f;
+
+            float power_score = std::pow(final_score, cfg_straight_accel_intensity);
+            target_add = cfg_straight_accel_max_add * power_score;
         } else {
-            // 在直道阈值范围内，增加直道帧数计数
-            continuous_straight_frames++;
-            
-            // 连续 5 帧都是直道，才允许加速（防弯道偶尔一帧变直导致突然冲一下）
-            if (continuous_straight_frames > 5) { 
-                // 第二步：计算线性得分 (0.0 ~ 1.0)
-                float yaw_score = 1.0f;
-                if (abs_yaw > cfg_straight_accel_yaw_min_th) {
-                    float yaw_diff = cfg_straight_accel_yaw_max_th - cfg_straight_accel_yaw_min_th;
-                    if (yaw_diff < 0.001f) yaw_diff = 0.001f; // 防止除零
-                    yaw_score = 1.0f - (abs_yaw - cfg_straight_accel_yaw_min_th) / yaw_diff;
-                }
-
-                // 使用平滑后的 curve_avg 代替瞬时的 abs_curve 来计算得分，更加稳定
-                float curve_score = 1.0f;
-                if (curve_avg > cfg_straight_accel_curve_min_th) {
-                    float curve_diff = max_curve_avg_th - cfg_straight_accel_curve_min_th;
-                    if (curve_diff < 0.001f) curve_diff = 0.001f; 
-                    curve_score = 1.0f - (curve_avg - cfg_straight_accel_curve_min_th) / curve_diff;
-                }
-                
-                float final_score = (yaw_score < curve_score) ? yaw_score : curve_score;
-                if (final_score < 0.0f) final_score = 0.0f;
-                if (final_score > 1.0f) final_score = 1.0f;
-
-                float power_score = std::pow(final_score, cfg_straight_accel_intensity);
-                target_add = cfg_straight_accel_max_add * power_score;
-            } else {
-                // 刚进入直道的前几帧，先不给加速
-                target_add = 0.0f;
+            // 刚进入直道的前几帧，先不给加速
+            target_add = 0.0f;
         }
     }
 
-    // 第三步：输出低通滤波
+    // 第三步：输出低通滤波 (针对实际输出的加速额度 target_add 做二重保护平滑)
     float alpha_up = 0.08f;   // 提速时的平滑系数，越小越平缓
     float alpha_down = 0.40f; // 降速时的平滑系数，较大，保证安全入弯
 
@@ -705,7 +741,10 @@ void BayWatcher_Control_Init(void) {
     // PID_Cube.Kp_a = 6.56f ;  PID_Cube.Kp_b = 0.4845f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 400.10f ; PID_Cube.Kd_b = 0.00100f;
 
     // // 有负压 21.20 0.4 60%
-    // PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4845f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 400.10f ; PID_Cube.Kd_b = 0.00100f;
+    // PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4844f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 452.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // // 有负压 21.25 0.35 60%
+    // PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4845f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 402.10f ; PID_Cube.Kd_b = 0.00100f;
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
     reset_curve_slowdown_state(0.0f);
@@ -997,6 +1036,7 @@ void BayWatcher_Control_Loop(void* arg) {
         big_langd_add = update_straight_acceleration(pure_angle, preview_curve_angle_deg);
     }
 
+    // 0.5
     // if (PID.speed_adjust >= 0) {
     //     PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 0.5f * factor);
     //     PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 1.0f * factor);
@@ -1005,12 +1045,22 @@ void BayWatcher_Control_Loop(void* arg) {
     //     PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.5f * factor);
     // }
 
-    if (factor >= 0) {
-        PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 0.4f * factor);
+    // //0.4
+    // if (factor >= 0) {
+    //     PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 0.4f * factor);
+    //     PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 1.0f * factor);
+    // } else {
+    //     PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 1.0f * factor);
+    //     PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.4f * factor);
+    // }
+
+    //0.35
+    if (PID.speed_adjust >= 0) {
+        PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 0.35f * factor);
         PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 1.0f * factor);
     } else {
         PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 1.0f * factor);
-        PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.4f * factor);
+        PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.35f * factor);
     }
 
     // if (PID.speed_adjust >= 0) {

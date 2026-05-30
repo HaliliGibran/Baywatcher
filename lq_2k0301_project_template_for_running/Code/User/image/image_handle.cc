@@ -2,7 +2,8 @@
 #include "image_data.h"
 #include "image_math.h"
 #include "image_midline_process.h"
-#include "Encoder.h"
+// #include "Encoder.h"
+#include "main.hpp"
 #include "PID.h"
 #include "transform_table.h"
 #include <cmath>

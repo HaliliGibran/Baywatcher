@@ -331,17 +331,21 @@
 #pragma region 双板通信与绕行动作参数
 // 运行板收到 w/s 后，激进固定转角的绝对值（度）。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE
-#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 30.0f
+// #define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 30.0f
+#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 40.0f
 #endif
 
 // 运行板收到 w/s 后，激进固定转角的最长持续时间（毫秒）。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS
-#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 500
+// 10.0
+#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 50
+// 12.0
+// #define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 40
 #endif
 
 // 运行板远端识别状态的总过期时间（毫秒）。
 #ifndef BW_REMOTE_STATE_STALE_MS
-#define BW_REMOTE_STATE_STALE_MS 300
+#define BW_REMOTE_STATE_STALE_MS 200
 #endif
 
 // 运行板收到 vehicle 事件后，保持事件当下 pure_angle 的持续时间（毫秒）。
@@ -356,7 +360,8 @@
 
 // 运行板收到 u 后，基础速度比例立即下调到的比例。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 0.10f
+// #define BW_REMOTE_U_SLOWDOWN_RATIO 0.20f
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.40f
 #endif
 
 // 双板绕行动作改成 pure_angle 接管后，各阶段目标角统一收口在这里。
