@@ -54,6 +54,19 @@
 //中线（全局宏）
 #define MIXED_LINE_DIFF_THRESHOLD_PIX    (0.1f)  // 左右中线混合差异阈值（像素）
 #define MIXED_POINT_NUM_THRESHOLD       (5)      // 混合中线最少重合点数
+
+// 普通元素下，若左右候选中线之间的 x 差（x_right - x_left）
+// 沿前向出现明显“持续增大”或“持续减小”趋势，
+// 说明前方道路大概率已经偏离当前逆透视假设平面（典型如坡道/起伏）。
+// 此时单边跟线更容易带偏，优先退回 MIXED。
+#ifndef BW_NORMAL_FORCE_MIXED_BY_WIDTH_TREND_ENABLE
+#define BW_NORMAL_FORCE_MIXED_BY_WIDTH_TREND_ENABLE 1
+#endif
+
+// 参与 x 差趋势判定的最少有效配对点数。
+#ifndef BW_NORMAL_FORCE_MIXED_MIN_COMMON_POINTS
+#define BW_NORMAL_FORCE_MIXED_MIN_COMMON_POINTS 8
+#endif
 #pragma endregion
 
 #pragma region pure_angle预瞄与路径参数
@@ -312,6 +325,18 @@
 // 作用：手动解除 zebra_stop 后，短时间内不允许再次触发。
 #ifndef ZEBRA_COOLDOWN_MS
 #define ZEBRA_COOLDOWN_MS 1200
+#endif
+
+// 斑马线冲线模式：
+// 1 = 单次冲线：第一次识别到斑马线就冲线，斑马线消失后延迟停车
+// 2 = 双次冲线：第一次识别只冲线并回正常巡线；第二次识别再冲线并延迟停车
+#ifndef BW_ZEBRA_RUSH_MODE
+#define BW_ZEBRA_RUSH_MODE 2
+#endif
+
+// 斑马线冲线时的基础速度倍率。
+#ifndef BW_ZEBRA_RUSH_SPEED_RATIO
+#define BW_ZEBRA_RUSH_SPEED_RATIO 1.50f
 #endif
 
 // 检测到斑马线后延迟停车的时间（毫秒）：

@@ -88,6 +88,58 @@ static inline void copy_line(float (&dst)[PT_MAXLEN][2], const float (&src)[PT_M
     std::memcpy(&dst[0], &src[0], (size_t)count * sizeof(src[0]));
 }
 
+// 功能: 判断普通道路下左右候选中线的 x 差是否出现明显单调趋势
+// 类型: 局部判定函数
+// 关键参数: mid_left/mid_right-已对齐后的左右候选中线
+static bool should_force_mixed_by_width_trend(const float (&mid_left)[PT_MAXLEN][2],
+                                              int32_t mid_left_count,
+                                              const float (&mid_right)[PT_MAXLEN][2],
+                                              int32_t mid_right_count)
+{
+#if !BW_NORMAL_FORCE_MIXED_BY_WIDTH_TREND_ENABLE
+    (void)mid_left;
+    (void)mid_left_count;
+    (void)mid_right;
+    (void)mid_right_count;
+    return false;
+#else
+    const int32_t left_n = clamp_count_i32(mid_left_count);
+    const int32_t right_n = clamp_count_i32(mid_right_count);
+    const int32_t common_n = (left_n < right_n) ? left_n : right_n;
+    if (common_n < BW_NORMAL_FORCE_MIXED_MIN_COMMON_POINTS)
+    {
+        return false;
+    }
+
+    int trend_sign = 0;
+    for (int32_t i = 1; i < common_n; ++i)
+    {
+        const float prev_dx = mid_right[i - 1][1] - mid_left[i - 1][1];
+        const float curr_dx = mid_right[i][1] - mid_left[i][1];
+        const float delta = curr_dx - prev_dx;
+
+        if (delta > 0.0f)
+        {
+            if (trend_sign < 0)
+            {
+                return false;
+            }
+            trend_sign = 1;
+        }
+        else if (delta < 0.0f)
+        {
+            if (trend_sign > 0)
+            {
+                return false;
+            }
+            trend_sign = -1;
+        }
+    }
+
+    return trend_sign != 0;
+#endif
+}
+
 // 功能: 构造中线（基于左右候选中线）
 // 类型: 图像处理函数
 // 关键参数: mid_left/mid_right-候选中线(会原地修改), mode-跟线模式
@@ -151,6 +203,16 @@ void MID(float (&mid_left)[PT_MAXLEN][2], int32_t* mid_left_count,
         trim_to_start_y(mid_left, mid_left_count, start_y);
         trim_to_start_y(mid_right, mid_right_count, start_y);
     }
+
+    if (element_type == ElementType::NORMAL &&
+        !zebra_stop &&
+        mode != FollowLine::MIXED &&
+        should_force_mixed_by_width_trend(mid_left, *mid_left_count, mid_right, *mid_right_count))
+    {
+        g_force_mixed_slope_active = true;
+        mode = FollowLine::MIXED;
+    }
+
 
     // 防御：mode 异常时默认 MIXED
     if (mode != FollowLine::MIXED && mode != FollowLine::MIDLEFT && mode != FollowLine::MIDRIGHT)

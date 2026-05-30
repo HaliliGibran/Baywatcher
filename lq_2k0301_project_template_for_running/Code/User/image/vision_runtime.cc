@@ -4,6 +4,7 @@
 #include "main.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <iomanip>
 #include <sstream>
 
@@ -12,6 +13,20 @@
 using namespace cv;
 
 namespace {
+
+static const char* FollowModeToText(FollowLine mode)
+{
+    switch (mode)
+    {
+    case FollowLine::MIDLEFT:
+        return "MIDLEFT";
+    case FollowLine::MIDRIGHT:
+        return "MIDRIGHT";
+    case FollowLine::MIXED:
+    default:
+        return "MIXED";
+    }
+}
 
 static void ConvertGrayToBgrView(const cv::Mat& gray_frame, cv::Mat& view_bgr)
 {
@@ -95,6 +110,8 @@ static void RenderLineTrackingView(const cv::Mat& frame_img,
                                    const cv::Mat& kernel,
                                    bool render_debug_view)
 {
+    static bool s_prev_force_mixed_slope = false;
+
     cv::Mat line_img;
     if (frame_img.cols == vision_runtime::kLineFrameWidth &&
         frame_img.rows == vision_runtime::kLineFrameHeight)
@@ -132,6 +149,12 @@ static void RenderLineTrackingView(const cv::Mat& frame_img,
 
     img_processing(binimg);
 
+    if (g_force_mixed_slope_active && !s_prev_force_mixed_slope)
+    {
+        std::printf("[TRACK] SLOPE -> force %s\r\n", FollowModeToText(follow_mode));
+    }
+    s_prev_force_mixed_slope = g_force_mixed_slope_active;
+
     if (!render_debug_view)
     {
         return;
@@ -158,6 +181,12 @@ static void RenderLineTrackingView(const cv::Mat& frame_img,
     }
 
     DrawMidPoints(view, midline.path, midline.path_count, cv::Scalar(0, 0, 255));
+
+    if (g_force_mixed_slope_active)
+    {
+        cv::putText(view, "SLOPE", cv::Point(8, 24), cv::FONT_HERSHEY_SIMPLEX,
+                    0.62, cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
+    }
 }
 
 static void HandleManualVisionReset()
@@ -182,6 +211,7 @@ static bool RenderBypassBranchIfNeeded(const cv::Mat& gray_frame, bool render_de
     }
 
     track_force_reset();
+    g_force_mixed_slope_active = false;
     pure_angle = bypass_angle;
 
     if (!render_debug_view)

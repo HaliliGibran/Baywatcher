@@ -51,6 +51,9 @@ remote_recognition_runtime_t g_remote_recognition = {
 } // namespace
 
 bool zebra_stop = false;
+bool zebra_rush_active = false;
+bool zebra_special_state_locked = false;
+float zebra_speed_ratio_override = 1.0f;
 
 pts_well_processed pts_left;
 pts_well_processed pts_right;
@@ -75,6 +78,7 @@ void image_reset_midline_path_state()
 }
 
 FollowLine follow_mode = FollowLine::MIXED;
+bool g_force_mixed_slope_active = false;
 
 ElementType element_type = ElementType::NORMAL;
 CircleState circle_state = CircleState::CIRCLE_NONE;
@@ -154,6 +158,7 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::NONE;
         g_remote_recognition.aggressive_turn_until_ms = 0;
         g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
+        follow_mode = FollowLine::MIXED;
         if (circle_state == CircleState::CIRCLE_BEGIN ||
             circle_state == CircleState::CIRCLE_IN)
         {
