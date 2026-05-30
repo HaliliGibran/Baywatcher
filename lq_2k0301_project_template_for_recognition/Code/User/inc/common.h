@@ -112,7 +112,7 @@
 // 建议：
 // - 仅在确认摄像头兼容时再开 1。
 #ifndef BW_RECOG_CAMERA_TRY_0CPU_MJPG
-#define BW_RECOG_CAMERA_TRY_0CPU_MJPG 0
+#define BW_RECOG_CAMERA_TRY_0CPU_MJPG 1
 #endif
 
 // [一般别动] ROI 提取方法

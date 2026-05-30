@@ -78,10 +78,15 @@ struct PerfStageStats
         ++count;
     }
 
+    double AverageMs() const
+    {
+        return (count > 0) ? (total_ms / static_cast<double>(count)) : 0.0;
+    }
+
     std::string Format() const
     {
         std::ostringstream oss;
-        const double avg_ms = (count > 0) ? (total_ms / static_cast<double>(count)) : 0.0;
+        const double avg_ms = AverageMs();
         oss << std::fixed << std::setprecision(2)
             << avg_ms << "/" << max_ms << "(" << count << ")";
         return oss.str();
@@ -483,8 +488,13 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                     (perf_window_ms > 0.0)
                         ? (perf_window.loop_count * 1000.0 / perf_window_ms)
                         : 0.0;
+                const double measured_capture_fps =
+                    (perf_window.capture.AverageMs() > 0.0)
+                        ? (1000.0 / perf_window.capture.AverageMs())
+                        : 0.0;
                 std::cout << "[PERF] state=" << VisionCodeText(code)
                           << " fps=" << std::fixed << std::setprecision(2) << effective_fps
+                          << " capture_fps=" << std::fixed << std::setprecision(2) << measured_capture_fps
                           << " capture=" << perf_window.capture.Format()
                           << " ultra=" << perf_window.ultra_precheck.Format()
                           << " hsv=" << perf_window.hsv_precheck.Format()
