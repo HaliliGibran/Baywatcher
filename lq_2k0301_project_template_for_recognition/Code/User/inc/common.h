@@ -108,11 +108,11 @@
 // - 1：先尝试 LQ_CAMERA_0CPU_MJPG，失败再回退。
 // - 0：直接用 LQ_CAMERA_HIGH_MJPG。
 // 当前默认 0 的原因：
-// - 当前实机摄像头已知不稳定兼容该低 CPU 模式。
+// - 近期实测更关心“确认真实可达帧率”，优先固定走高帧率模式做验证。
 // 建议：
 // - 仅在确认摄像头兼容时再开 1。
 #ifndef BW_RECOG_CAMERA_TRY_0CPU_MJPG
-#define BW_RECOG_CAMERA_TRY_0CPU_MJPG 1
+#define BW_RECOG_CAMERA_TRY_0CPU_MJPG 0
 #endif
 
 // [一般别动] ROI 提取方法

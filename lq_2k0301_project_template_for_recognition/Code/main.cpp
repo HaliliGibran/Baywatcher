@@ -145,15 +145,12 @@ void system_init()
 #endif
     if (camera && camera->is_cam_opened())
     {
-        if (BW_RECOG_TEXT_LOG_ENABLE != 0)
-        {
-            printf("[Camera] request=%ux%u@%u format=%s, actual_fps=%u\n",
-                   (unsigned)recognition_runtime::kRecognitionFrameWidth,
-                   (unsigned)recognition_runtime::kRecognitionFrameHeight,
-                   (unsigned)recognition_runtime::kRecognitionFrameFps,
-                   camera_format_text(requested_format),
-                   (unsigned)camera->get_camera_fps());
-        }
+        printf("[Camera] request=%ux%u@%u format=%s, actual_fps=%u\n",
+               (unsigned)recognition_runtime::kRecognitionFrameWidth,
+               (unsigned)recognition_runtime::kRecognitionFrameHeight,
+               (unsigned)recognition_runtime::kRecognitionFrameFps,
+               camera_format_text(requested_format),
+               (unsigned)camera->get_camera_fps());
     }
     if (!init_board_comm_with_retry())
     {
