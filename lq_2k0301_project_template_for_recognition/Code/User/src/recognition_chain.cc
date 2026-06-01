@@ -21,8 +21,8 @@ namespace {
 
 constexpr uint64_t kRecognitionTriggerRejectLogIntervalMs = 300;
 constexpr uint64_t kRecognitionProbabilityTimeoutMs = 1200;
-constexpr int kRecognitionTriggerFrameWidth = 640;
-constexpr int kRecognitionTriggerFrameHeight = 480;
+constexpr int kRecognitionTriggerFrameWidth = BW_RECOG_CAMERA_FRAME_WIDTH;
+constexpr int kRecognitionTriggerFrameHeight = BW_RECOG_CAMERA_FRAME_HEIGHT;
 constexpr int kRecognitionMinSearchYInclusive = BW_RECOG_TRIGGER_SEARCH_Y_MIN;
 constexpr int kRecognitionMaxSearchYExclusive = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr uint64_t kRecognitionRecentCandidateHoldMs = 200;
@@ -688,7 +688,7 @@ static uint8_t parse_target_class_code(const std::string& name)
 }
 
 // [Recognition Chain] 红色触发物检测。
-// 作用：在 640x480 原始图上找红色近矩形目标，作为进入识别态的前置触发器。
+// 作用：在当前 320x240 原始图上找红色近矩形目标，作为进入识别态的前置触发器。
 static bool detect_red_rect_like(const cv::Mat& frame_bgr, cv::Rect* best_rect, cv::Mat* out_mask = nullptr)
 {
     if (best_rect == nullptr || frame_bgr.empty())

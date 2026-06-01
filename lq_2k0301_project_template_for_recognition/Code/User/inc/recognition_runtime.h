@@ -6,9 +6,9 @@
 namespace recognition_runtime {
 
 // 识别板固定彩色采集分辨率。
-// 说明：触发与识别都直接围绕同一份 640x480 原图展开。
-constexpr int kRecognitionFrameWidth = 640;
-constexpr int kRecognitionFrameHeight = 480;
+// 说明：触发与识别都直接围绕同一份 320x240 原图展开。
+constexpr int kRecognitionFrameWidth = BW_RECOG_CAMERA_FRAME_WIDTH;
+constexpr int kRecognitionFrameHeight = BW_RECOG_CAMERA_FRAME_HEIGHT;
 constexpr int kRecognitionFrameFps = BW_RECOG_CAMERA_FPS;
 
 } // namespace recognition_runtime

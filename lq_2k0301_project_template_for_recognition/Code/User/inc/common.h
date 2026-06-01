@@ -6,7 +6,7 @@
 // 使用建议：
 // 1. 先调“相机/曝光”，再调“预筛与 ROI 周期”，最后再碰“识别决策阈值”。
 // 2. 优先通过降低无目标空跑负载来提稳定性，不要一开始就放宽 ROI/分类阈值。
-// 3. 宏默认值面向当前 640x480、20fps、双板串口状态流方案。
+// 3. 宏默认值面向当前 320x240、双板串口状态流方案。
 // 4. 若实车出现“空闲 CPU 高、触发慢、误触发、重复进识别”，优先看：
 //    - BW_RECOG_CAMERA_FPS
 //    - BW_RECOG_TRIGGER_SEARCH_Y_MIN / MAX
@@ -18,7 +18,7 @@
 // 当前主链口径：
 // - 当前 active ROI 主链不是“纯 HSV 红块提取”。
 // - 当前真正生效的是：
-//   1) 参考行包络：在 y=320 上用“白色参考带 + 行内严格红带”取白红带参考包络
+//   1) 参考行包络：在 y=160 上用“白色参考带 + 行内严格红带”取白红带参考包络
 //   2) 严格红带主掩码：用 RGB 派生量 `red_score / dom` 做判定
 // - 文件里仍留有旧 HSV 红掩码/旧触发器辅助函数，但它们不属于当前 active ROI 主链。
 // - 下方 E 节旧预筛参数目前只保留为兼容配置和启动日志展示，主链不再消费。
@@ -62,6 +62,32 @@
 #pragma endregion
 
 #pragma region B. 相机采集与曝光
+// [一般别动] 识别板运行时采集分辨率宽度
+// 作用：
+// - 当前识别板主链固定使用 320x240 彩色采集。
+// - 识别链、图传、ROI 搜索带都以这份运行时尺寸为准。
+#ifndef BW_RECOG_CAMERA_FRAME_WIDTH
+#define BW_RECOG_CAMERA_FRAME_WIDTH 320
+#endif
+
+// [一般别动] 识别板运行时采集分辨率高度
+#ifndef BW_RECOG_CAMERA_FRAME_HEIGHT
+#define BW_RECOG_CAMERA_FRAME_HEIGHT 240
+#endif
+
+// [一般别动] 当前识别板透视表宽度
+// 说明：
+// - 当前代码直接按“320 表已导入”的最终状态收口。
+// - `transform_table.h/.cc` 也应与这里保持一致。
+#ifndef BW_RECOG_TRANSFORM_TABLE_WIDTH
+#define BW_RECOG_TRANSFORM_TABLE_WIDTH 320
+#endif
+
+// [一般别动] 当前识别板透视表高度
+#ifndef BW_RECOG_TRANSFORM_TABLE_HEIGHT
+#define BW_RECOG_TRANSFORM_TABLE_HEIGHT 240
+#endif
+
 // [先调] 相机请求帧率
 // 作用：
 // - 运行时主链向相机请求的目标 fps。
@@ -107,8 +133,8 @@
 // 作用：
 // - 1：先尝试 LQ_CAMERA_0CPU_MJPG，失败再回退。
 // - 0：直接用 LQ_CAMERA_HIGH_MJPG。
-// 当前默认 0 的原因：
-// - 近期实测更关心“确认真实可达帧率”，优先固定走高帧率模式做验证。
+// 当前默认 1 的原因：
+// - 当前实测 0CPU_MJPG 虽然 reported fps 更低，但 `get_frame_raw()` 实际吞吐更快。
 // 建议：
 // - 仅在确认摄像头兼容时再开 1。
 #ifndef BW_RECOG_CAMERA_TRY_0CPU_MJPG
@@ -245,7 +271,7 @@
 #pragma region E. 历史兼容参数：旧普通态预筛 / 局部 ROI 节流
 // 说明：
 // - 这一组宏对应的是较早版本里的“普通态 HSV 预筛 + 局部 ROI 节流”方案。
-// - 当前主链已经改成每次直接走《红带分类与ROI提取流程.md》对应的完整 ROI 几何链。
+// - 当前主链已经改成每次直接走《红带分类与ROI提取流程320.md》对应的完整 ROI 几何链。
 // - 它们现在主要保留给：
 //   1) 启动日志打印
 //   2) 历史调参记录
@@ -375,13 +401,13 @@
 
 // [谨慎调] 图传输出裁剪下边界（开区间）
 // 作用：
-// - 仅影响发布画面，不影响内部 640x480 原图、ROI 提取和分类。
+// - 仅影响发布画面，不影响内部 320x240 原图、ROI 提取和分类。
 // 调大效果：
 // - 图传看得更多，但编码开销更高。
 // 调小效果：
 // - 图传更省，但调试可视信息减少。
 #ifndef BW_STREAM_CROP_MAX_Y
-#define BW_STREAM_CROP_MAX_Y 280
+#define BW_STREAM_CROP_MAX_Y 200
 #endif
 
 // [谨慎调] 图传上叠加 ROI 预览边长（像素）
@@ -454,34 +480,34 @@
 #pragma region I. 红块搜索带与几何约束
 // [一般别动] 红块搜索带上边界
 // 作用：
-// - 与《红带分类与ROI提取流程.md》保持一致。
-// - 当前固定流程要求基础搜索带为 y=120..320。
+// - 与《红带分类与ROI提取流程320.md》保持一致。
+// - 当前固定流程要求基础搜索带为 y=80..160。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MIN
-#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 120
+#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 80
 #endif
 
 // [一般别动] 红块搜索带下边界（开区间）
 // 作用：
-// - 与《红带分类与ROI提取流程.md》保持一致。
-// - 当前固定流程要求基础搜索带为 y=120..320。
+// - 与《红带分类与ROI提取流程320.md》保持一致。
+// - 当前固定流程要求基础搜索带为 y=80..160。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MAX
-#define BW_RECOG_TRIGGER_SEARCH_Y_MAX 320
+#define BW_RECOG_TRIGGER_SEARCH_Y_MAX 160
 #endif
 
 // [一般别动] 红色掩膜允许处理到的最大 y（开区间）
 // 作用：
-// - 与《红带分类与ROI提取流程.md》保持一致。
-// - 严格红带掩码默认处理到 y=320。
+// - 与《红带分类与ROI提取流程320.md》保持一致。
+// - 严格红带掩码默认处理到 y=160。
 #ifndef BW_RECOG_RED_MASK_MAX_Y
-#define BW_RECOG_RED_MASK_MAX_Y 320
+#define BW_RECOG_RED_MASK_MAX_Y 160
 #endif
 
 // [一般别动] 白红带参考行
 // 作用：
-// - 与《红带分类与ROI提取流程.md》保持一致。
-// - 当前固定流程要求 white_reference_row_y = 320，并在该行上求白红带参考包络。
+// - 与《红带分类与ROI提取流程320.md》保持一致。
+// - 当前固定流程要求 white_reference_row_y = 160，并在该行上求白红带参考包络。
 #ifndef BW_RECOG_WHITE_REFERENCE_ROW_Y
-#define BW_RECOG_WHITE_REFERENCE_ROW_Y 320
+#define BW_RECOG_WHITE_REFERENCE_ROW_Y 160
 #endif
 
 // [一般别动] 逆透视横向长方形约束总开关
@@ -502,6 +528,16 @@
 // - 更容易通过 loose IPM，但误触发更多。
 #ifndef BW_RECOG_TRIGGER_IPM_MIN_WIDTH_HEIGHT_RATIO
 #define BW_RECOG_TRIGGER_IPM_MIN_WIDTH_HEIGHT_RATIO 1.30f
+#endif
+
+// [一般别动] ROI 低信息过滤总开关
+// 作用：
+// - 0：完全关闭低信息过滤，只保留 `reason=disabled` 的调试占位。
+// - 1：恢复灰度方差 / Canny 密度 / Laplacian 方差这套旧口径。
+// 当前默认 0：
+// - 用户要求当前 320 版先关闭这层过滤，避免 ROI 被额外拒绝。
+#ifndef BW_RECOG_ROI_LOW_INFO_FILTER_ENABLE
+#define BW_RECOG_ROI_LOW_INFO_FILTER_ENABLE 0
 #endif
 
 #pragma endregion

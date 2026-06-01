@@ -20,7 +20,7 @@
     - 右上角 ROI 截图预览
   - 修正了红块搜索带与触发目标带不一致的问题。
   - 之前识别链搜索带仍是旧的 `y=80~280`
-  - 但触发目标带已经改到 `center_y=320±40`
+  - 当前 320 版触发目标带已经改成 `y=80..160`
   - 现在搜索带、红色掩膜最大 y、白色参考行都统一收口到 `common.h`
   - 图传链改成了参数化：
     - `BW_STREAM_PUBLISH_INTERVAL_FRAMES`
@@ -66,7 +66,7 @@
 
 当前识别板职责固定为：
 
-- 固定彩色采集 `640x480@BW_RECOG_CAMERA_FPS`
+- 固定彩色采集 `320x240@BW_RECOG_CAMERA_FPS`
 - 与 `yolo/project_root/scripts/_roi_runtime_geometry.py` 对齐的红块 ROI 提取
 - ROI 分类与多帧投票
 - 稳定结果边沿转成一次性事件
@@ -118,7 +118,7 @@
 
 主入口在 `Code/main.cpp`，负责：
 
-- 初始化相机 `640x480@BW_RECOG_CAMERA_FPS`
+- 初始化相机 `320x240@BW_RECOG_CAMERA_FPS`
 - 初始化双板串口 `UART1@115200`
 - 设置终端为非阻塞
 - 解析图传开关
@@ -142,15 +142,15 @@
 
 主循环入口在 `Code/User/inc/recognition_runtime.h` 和 `Code/User/src/recognition_runtime.cc`：
 
-- `kRecognitionFrameWidth = 640`
-- `kRecognitionFrameHeight = 480`
+- `kRecognitionFrameWidth = BW_RECOG_CAMERA_FRAME_WIDTH`
+- `kRecognitionFrameHeight = BW_RECOG_CAMERA_FRAME_HEIGHT`
 - `kRecognitionFrameFps = BW_RECOG_CAMERA_FPS`
 - `void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch);`
 
 每帧顺序固定为：
 
 1. 读取非阻塞终端输入；测试门控开启时，按一次 `c` 才 armed 一轮检测
-2. 固定采彩色图 `640x480`
+2. 固定采彩色图 `320x240`
 3. 若识别链被关闭，则显示 disabled 画面
 4. 若已在识别态，执行 `ProcessRecognitionFrame(...)`
 5. 若测试门控开启且尚未 armed，则显示“等待按 c 启动”画面
@@ -453,10 +453,10 @@
 
 `Code/User/inc/transform_table.h` 和 `Code/User/src/transform_table.cc` 提供逆透视查表：
 
-- `UndistInverseMapH[480][640]`
-- `UndistInverseMapW[480][640]`
+- `UndistInverseMapH[240][320]`
+- `UndistInverseMapW[240][320]`
 
-当前识别板触发几何全部按 `640x480` 原图坐标工作，所以这张表也必须与 `480x640` 对齐。
+当前识别板触发几何全部按 `320x240` 原图坐标工作，所以这张表也必须与 `240x320` 对齐。
 
 它当前只服务于触发侧的几何约束：
 

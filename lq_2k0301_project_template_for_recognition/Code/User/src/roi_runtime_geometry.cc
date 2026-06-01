@@ -18,11 +18,11 @@ constexpr double kMinQuadRedFill = 0.95;
 constexpr double kMinQuadCoreFill = 0.85;
 constexpr int kQuadFillErodePixels = 2;
 constexpr int kMaxRedYExclusive = BW_RECOG_RED_MASK_MAX_Y;
-constexpr int kIpmFrameWidth = 640;
-constexpr int kIpmFrameHeight = 480;
+constexpr int kIpmFrameWidth = BW_RECOG_TRANSFORM_TABLE_WIDTH;
+constexpr int kIpmFrameHeight = BW_RECOG_TRANSFORM_TABLE_HEIGHT;
 constexpr double kIpmMinWidthHeightRatio = 1.15;
-constexpr double kMinRoiEdgeLength = 8.0;
-constexpr double kMinBackprojectedQuadArea = 24.0;
+constexpr double kMinRoiEdgeLength = 4.0;
+constexpr double kMinBackprojectedQuadArea = 6.0;
 
 
 constexpr int kTaskSearchYMin = BW_RECOG_TRIGGER_SEARCH_Y_MIN;
@@ -30,20 +30,20 @@ constexpr int kTaskSearchYMax = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr int kTaskRedScoreThreshold = 140;
 constexpr int kTaskRedMinR = 90;
 constexpr int kTaskRedDomThreshold = 80;
-constexpr int kTaskEdgeExpandStep = 8;
+constexpr int kTaskEdgeExpandStep = 4;
 constexpr int kTaskEdgeExpandMaxSteps = 12;
 constexpr int kTaskMinBandArea = 80;
 constexpr int kTaskMinBandWidth = 12;
 constexpr int kTaskMinBandHeight = 3;
-constexpr double kTaskMarkerCoefX = -0.178636;
-constexpr double kTaskMarkerCoefY = 13.850833;
-constexpr double kTaskMarkerCoefBias = -1926.156613;
-constexpr double kTaskRoadblockCoefX = -4.485307;
-constexpr double kTaskRoadblockCoefY = 90.209323;
-constexpr double kTaskRoadblockCoefBias = -9060.983073;
-constexpr double kTaskThresholdCoefX = -2.331971;
-constexpr double kTaskThresholdCoefY = 52.030078;
-constexpr double kTaskThresholdCoefBias = -5493.569843;
+constexpr double kTaskMarkerCoefX = 1.449967;
+constexpr double kTaskMarkerCoefY = 7.109515;
+constexpr double kTaskMarkerCoefBias = -739.671000;
+constexpr double kTaskRoadblockCoefX = 2.187043;
+constexpr double kTaskRoadblockCoefY = 55.863983;
+constexpr double kTaskRoadblockCoefBias = -4018.754549;
+constexpr double kTaskThresholdCoefX = 1.818505;
+constexpr double kTaskThresholdCoefY = 31.486749;
+constexpr double kTaskThresholdCoefBias = -2379.212775;
 
 constexpr int kStripRejectMaxHeight = 34;
 constexpr double kStripRejectMinAspectRatio = 1.55;
@@ -56,7 +56,7 @@ constexpr int kStripSupportMinBelowPixels = 8;
 constexpr int kWhiteReferenceRowY = BW_RECOG_WHITE_REFERENCE_ROW_Y;
 constexpr int kWhiteMaxSaturation = 60;
 constexpr int kWhiteMinValue = 150;
-constexpr int kWhiteMinSpanWidth = 120;
+constexpr int kWhiteMinSpanWidth = 60;
 
 constexpr int kMorphKernelSize = 5;
 constexpr int kMorphOpenIters = 1;
@@ -83,19 +83,20 @@ const cv::Scalar kCoreLowRed1(0, 90, 70);
 const cv::Scalar kCoreHighRed1(10, 255, 255);
 const cv::Scalar kCoreLowRed2(160, 90, 70);
 const cv::Scalar kCoreHighRed2(180, 255, 255);
-
 const cv::Matx33d kFinalToUndist(
-    0.654444770734335, -0.560692760554098, 109.148186992145,
-    0.0145082574708702, 0.126600103480591, -5.30231712603921,
-    8.7399141390752e-05, -0.0018172029477988, 1.0);
+    0.576841020499166, -0.564282531194324, 67.2523674241966,
+    -0.0194045231729093, 0.0244401737967942, 30.2201147504512,
+    -4.45632798574019e-05, -0.00351632130124832, 1.0);
 
-constexpr double kFx = 213.30162531947;
-constexpr double kFy = 213.264390305945;
+constexpr double kBaseCalibrationFrameWidth = 320.0;
+constexpr double kBaseCalibrationFrameHeight = 240.0;
+constexpr double kFx = 93.799205262881;
+constexpr double kFy = 93.7590442901101;
 constexpr double kSkew = 0.0;
-constexpr double kCx = 311.94214815483;
-constexpr double kCy = 201.628620112633;
-constexpr double kK1 = -0.0585577404122723;
-constexpr double kK2 = -0.00511005281610996;
+constexpr double kCx = 162.317197932494;
+constexpr double kCy = 119.745422640966;
+constexpr double kK1 = -0.0187626068381286;
+constexpr double kK2 = -0.00611272459781888;
 constexpr double kK3 = 0.0;
 constexpr double kP1 = 0.0;
 constexpr double kP2 = 0.0;
@@ -691,14 +692,28 @@ static bool RawQuadToFinalQuad(const std::vector<cv::Point2f>& quad,
     return true;
 }
 
-static bool FinalToRaw(float xf, float yf, cv::Point2f* out_point)
+static bool FinalToRaw(float xf,
+                       float yf,
+                       int image_width,
+                       int image_height,
+                       cv::Point2f* out_point)
 {
-    if (out_point == nullptr)
+    if (out_point == nullptr || image_width <= 0 || image_height <= 0)
     {
         return false;
     }
 
-    const cv::Vec3d vec = kFinalToUndist * cv::Vec3d(xf, yf, 1.0);
+    if (!std::isfinite(xf) || !std::isfinite(yf))
+    {
+        return false;
+    }
+
+    const double final_scale_x =
+        kBaseCalibrationFrameWidth / std::max(1.0, static_cast<double>(kIpmFrameWidth));
+    const double final_scale_y =
+        kBaseCalibrationFrameHeight / std::max(1.0, static_cast<double>(kIpmFrameHeight));
+    const cv::Vec3d vec =
+        kFinalToUndist * cv::Vec3d(xf * final_scale_x, yf * final_scale_y, 1.0);
     const double z = vec[2];
     if (!std::isfinite(z) || std::fabs(z) < 1e-12)
     {
@@ -725,8 +740,12 @@ static bool FinalToRaw(float xf, float yf, cv::Point2f* out_point)
         return false;
     }
 
-    out_point->x = static_cast<float>(xr);
-    out_point->y = static_cast<float>(yr);
+    const double raw_scale_x =
+        std::max(1.0, static_cast<double>(image_width)) / kBaseCalibrationFrameWidth;
+    const double raw_scale_y =
+        std::max(1.0, static_cast<double>(image_height)) / kBaseCalibrationFrameHeight;
+    out_point->x = static_cast<float>(xr * raw_scale_x);
+    out_point->y = static_cast<float>(yr * raw_scale_y);
     return true;
 }
 
@@ -1969,8 +1988,8 @@ static BuildRoiQuadResult BuildIpmSquareRoiQuadFromBlobQuad(const std::vector<cv
 
     cv::Point2f top_left_raw;
     cv::Point2f top_right_raw;
-    if (!FinalToRaw(top_left_final.x, top_left_final.y, &top_left_raw) ||
-        !FinalToRaw(top_right_final.x, top_right_final.y, &top_right_raw))
+    if (!FinalToRaw(top_left_final.x, top_left_final.y, image_width, image_height, &top_left_raw) ||
+        !FinalToRaw(top_right_final.x, top_right_final.y, image_width, image_height, &top_right_raw))
     {
         result.status = "ipm_backproject_invalid";
         return result;
@@ -2474,6 +2493,15 @@ RoiQualityMetrics ComputeLowInformationRoiMetrics(const cv::Mat& roi_bgr,
                                                   const RoiExtractionResult& roi_result)
 {
     RoiQualityMetrics metrics;
+#if BW_RECOG_ROI_LOW_INFO_FILTER_ENABLE == 0
+    (void)roi_bgr;
+    (void)roi_method;
+    (void)roi_result;
+    metrics.valid = true;
+    metrics.reason = "disabled";
+    return metrics;
+#endif
+
     if (roi_bgr.empty())
     {
         metrics.reason = "empty_roi";

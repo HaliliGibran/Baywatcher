@@ -334,7 +334,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         }
         else if (recognition.IsInRecognitionMode())
         {
-            // 3. 识别态直接消费 640x480 原图做 ROI 分类
+            // 3. 识别态直接消费当前 320x240 原图做 ROI 分类
             recognition.ProcessRecognitionFrame(img, t_ms, view, render_debug);
         }
         else if (BW_RECOG_REQUIRE_MANUAL_START != 0 && !manual_test_started)
