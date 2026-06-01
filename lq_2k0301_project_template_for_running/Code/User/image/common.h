@@ -6,13 +6,30 @@
 // - 业务 .cc 文件应优先消费这里的语义化常量，避免继续散落局部宏。
 // - 当前“绕行/远端接管”只以 image_data.cc + image_process.cc 这条活跃双板链为准。
 
-#pragma region 图像策略与模式开关
+#pragma region 图像总开关与模式切换
+// 环岛单边中线特殊推移总开关：
+// 使用位置：image_handle.cc / get_single_side_mid_offset_pixels()。
+// 作用：
+// - 0：单边中线永远使用默认“半个赛道宽”的偏移，不再区分环岛入环/环内阶段。
+// - 1：环岛时允许按 circle_state / circle_direction 使用
+//      BW_CIRCLE_IN_OFFSET_RATIO、BW_CIRCLE_RUNNING_OFFSET_RATIO 做特殊推中线。
+// 调参建议：
+// - 环岛已经很稳且不想再引入额外几何偏置时可关。
+// - 若车在入环或环内贴边不够，保留开启。
 #ifndef BW_CIRCLE_OFFSET_ENABLE
-#define BW_CIRCLE_OFFSET_ENABLE 1
+#define BW_CIRCLE_OFFSET_ENABLE 0
 #endif
 
+// pure_angle 预瞄“速度反馈前推”总开关：
+// 使用位置：image_handle.cc / preview_shift_from_speed_feedback()。
+// 作用：
+// - 0：预瞄前推只看当前中线几何，不额外参考目标速度。
+// - 1：车速越高，允许在几何前推之外再额外向远处看一点，提升高速提前量。
+// 说明：
+// - 这里只看 base_target_speed，不直接改控制输出，只改预瞄点位置。
+// - 若你想把 pure_angle 手感调得更“纯几何”，先关这个。
 #ifndef PUREANGLE_PREVIEW_SPEED_FEEDBACK_ENABLE
-#define PUREANGLE_PREVIEW_SPEED_FEEDBACK_ENABLE 1
+#define PUREANGLE_PREVIEW_SPEED_FEEDBACK_ENABLE 0
 #endif
 
 // 双板 w/s 是否允许在“锁左/锁右巡线”之外，再短时叠加激进固定 pure_angle。
@@ -24,6 +41,72 @@
 // - 车在目标板前转向不够坚决时，再打开。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE
 #define BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE 1
+#endif
+
+// 普通路段宽度趋势异常时，是否强制退回 MIXED。
+// 使用位置：image_midline_process.cc。
+// - 1：检测到左右候选中线间距沿前向持续增大/减小，就锁 MIXED。
+// - 0：保持当前单边/混合决策，不做这层保护。
+#ifndef BW_NORMAL_FORCE_MIXED_BY_WIDTH_TREND_ENABLE
+#define BW_NORMAL_FORCE_MIXED_BY_WIDTH_TREND_ENABLE 1
+#endif
+
+// pure_angle 预瞄图像行过渡总开关。
+// 使用位置：image_handle.cc / pure_angle_apply_preview_transition()。
+// - 1：限制 preview_img_y 帧间跳变。
+// - 0：预瞄点直接跟目标值，最跟手也最容易抖。
+#ifndef PUREANGLE_PREVIEW_TRANSITION_ENABLE
+#define PUREANGLE_PREVIEW_TRANSITION_ENABLE 1
+#endif
+
+// pure_angle 丢线趋势外推总开关。
+// 使用位置：image_process.cc / pure_angle_apply_lost_strategy()。
+// - 1：短时缺测时沿上一帧趋势继续推。
+// - 0：一旦缺测就更快回保守策略。
+#ifndef PUREANGLE_LOST_TREND_ENABLE
+#define PUREANGLE_LOST_TREND_ENABLE 1
+#endif
+
+// pure_angle 趋势前馈总开关。
+// 使用位置：image_process.cc / pure_angle_apply_pre_control()。
+// - 1：当转向趋势还在同向加强时，额外补一点前馈角。
+// - 0：只用原始 pure_angle。
+#ifndef PUREANGLE_PRE_CTRL_ENABLE
+#define PUREANGLE_PRE_CTRL_ENABLE 0
+#endif
+
+// 斑马线冲线模式。
+// - 1：单次冲线。第一次识别到斑马线就冲线，消失后延迟停车。
+// - 2：双次冲线。第一次只冲线并恢复正常巡线，第二次再冲线并延迟停车。
+// 说明：无论哪种模式，只要当前仍看见斑马线，都会强制冲线并锁 MIXED。
+#ifndef BW_ZEBRA_RUSH_MODE
+#define BW_ZEBRA_RUSH_MODE 2
+#endif
+
+// 图传链默认开关。
+// 使用位置：stream_chain.cc / DefaultEnabled。
+// - 1：程序默认启动图传。
+// - 0：程序默认不启动图传，仍可被命令行覆盖。
+#ifndef BW_ENABLE_STREAM
+// #define BW_ENABLE_STREAM 1
+#define BW_ENABLE_STREAM 0
+#endif
+
+// 普通巡线图传底图模式。
+// 使用位置：vision_runtime.cc / RenderLineTrackingView。
+// - 1：二值图转 BGR 后叠加轨迹，更适合看巡线处理结果。
+// - 0：低分辨率彩图叠加轨迹，更适合看原始现场画面。
+#ifndef BW_STREAM_LINE_USE_BINARY_VIEW
+#define BW_STREAM_LINE_USE_BINARY_VIEW 1
+// #define BW_STREAM_LINE_USE_BINARY_VIEW 0
+#endif
+
+// 灰度二值化诊断总开关。
+// 使用位置：vision_runtime.cc。
+// - 1：输出整图/中心/四角灰度统计与 Otsu 阈值。
+// - 0：关闭这组纯诊断日志与叠字。
+#ifndef BW_GRAY_BIN_DIAG_ENABLE
+#define BW_GRAY_BIN_DIAG_ENABLE 0
 #endif
 #pragma endregion
 
@@ -62,14 +145,6 @@
 // 中线（全局宏）
 #define MIXED_LINE_DIFF_THRESHOLD_PIX    (0.1f) // 左右中线混合差异阈值（像素）
 #define MIXED_POINT_NUM_THRESHOLD        (5)    // 混合中线最少重合点数
-
-// 普通元素下，若左右候选中线之间的 x 差（x_right - x_left）
-// 沿前向出现明显“持续增大”或“持续减小”趋势，
-// 说明前方道路大概率已经偏离当前逆透视假设平面（典型如坡道/起伏）。
-// 此时单边跟线更容易带偏，优先退回 MIXED。
-#ifndef BW_NORMAL_FORCE_MIXED_BY_WIDTH_TREND_ENABLE
-#define BW_NORMAL_FORCE_MIXED_BY_WIDTH_TREND_ENABLE 1
-#endif
 
 // 参与 x 差趋势判定的最少有效配对点数。
 #ifndef BW_NORMAL_FORCE_MIXED_MIN_COMMON_POINTS
@@ -133,15 +208,6 @@
 #pragma endregion
 
 #pragma region pure_angle预瞄过渡参数
-// pure_angle 预瞄过渡总开关：
-// 作用位置：image_handle.cc 的 preview_img_y 平滑过渡链。
-// 作用：限制动态预瞄点帧间跳变，避免 pure_angle 因预瞄目标切换而突变。
-// 调大/关闭：更跟手，但更容易抖动。
-// 调小/开启：更平滑，但前瞻切换会更慢。
-#ifndef PUREANGLE_PREVIEW_TRANSITION_ENABLE
-#define PUREANGLE_PREVIEW_TRANSITION_ENABLE 1
-#endif
-
 // 预瞄图像行单帧最大变化量（pixel/frame）：
 // 使用位置：image_handle.cc / pure_angle_apply_preview_transition。
 // 作用：限制 preview_img_y 每帧最大漂移速度。
@@ -178,14 +244,6 @@
 #pragma endregion
 
 #pragma region pure_angle丢线补偿参数
-// 丢线趋势外推总开关：
-// 使用位置：image_process.cc / pure_angle_apply_lost_strategy。
-// 作用：在短时双边丢线或元素阶段缺测时，允许沿上一时刻趋势外推 pure_angle。
-// 关闭后：丢线时更保守，但急弯/元素阶段更容易“掉头感”。
-#ifndef PUREANGLE_LOST_TREND_ENABLE
-#define PUREANGLE_LOST_TREND_ENABLE 1
-#endif
-
 // 丢线趋势外推最长持续帧数：
 // 使用位置：image_process.cc / pure_angle_apply_lost_strategy。
 // 作用：决定外推保持多久后转入衰减回零。
@@ -231,14 +289,6 @@
 #pragma endregion
 
 #pragma region pure_angle趋势前馈参数
-// pure_angle 趋势前馈总开关：
-// 使用位置：image_process.cc / pure_angle_apply_pre_control。
-// 作用：当转向角还在同方向持续增大时，额外补一点前馈量。
-// 关闭：行为更保守，更依赖原始 pure_angle。
-#ifndef PUREANGLE_PRE_CTRL_ENABLE
-#define PUREANGLE_PRE_CTRL_ENABLE 0
-#endif
-
 // 趋势前馈启动角阈值（deg）：
 // 使用位置：image_process.cc / pure_angle_apply_pre_control。
 // 作用：只有已经进入明显转弯区时才允许前馈。
@@ -335,17 +385,6 @@
 #define ZEBRA_COOLDOWN_MS 1200
 #endif
 
-// 斑马线冲线模式。
-// 1 = 单次冲线：
-//     第一次识别到斑马线就冲线，斑马线消失后进入延迟停车。
-// 2 = 双次冲线：
-//     第一次识别到斑马线时只冲线并恢复正常巡线；
-//     第二次识别到斑马线时再次冲线，斑马线消失后进入延迟停车。
-// 无论哪种模式，只要当前仍“看见斑马线”，都会保持冲线速度倍率和 MIXED 锁定。
-#ifndef BW_ZEBRA_RUSH_MODE
-#define BW_ZEBRA_RUSH_MODE 2
-#endif
-
 // 斑马线冲线时对基础速度施加的倍率。
 // 作用位置：
 // - image_process.cc 负责在冲线期间锁状态、维持 MIXED。
@@ -365,6 +404,19 @@
 // 调小：更早刹停。
 #ifndef ZEBRA_STOP_DELAY_MS
 #define ZEBRA_STOP_DELAY_MS 3000
+#endif
+
+// 双次冲线模式下，第一次命中斑马线后的“新判定休眠”时间（毫秒）。
+// 使用位置：image_process.cc / update_zebra_rush_state()。
+// 作用：
+// - 只在 BW_ZEBRA_RUSH_MODE >= 2 且刚完成第一次命中计数后生效。
+// - 休眠期内不再接受新的斑马线上升沿，避免同一条斑马线因为多帧抖动/短时漏检被误当成第二次经过。
+// 说明：
+// - 这不会打断当前这一次冲线；它只阻止“第一次结束后立刻又被重新计数”。
+// - 调大：更不容易把同一条斑马线算成两次，但第二次真实斑马线必须离第一次更远。
+// - 调小：更灵敏，但更容易被连续帧误触发第二次。
+#ifndef BW_ZEBRA_DOUBLE_FIRST_SLEEP_MS
+#define BW_ZEBRA_DOUBLE_FIRST_SLEEP_MS 5000
 #endif
 
 // 历史保留：曾用特殊 pure_angle 表达停车。
@@ -446,34 +498,9 @@
 #pragma endregion
 
 #pragma region 图传开关与图传模式切换
-// 图传链默认开关：
-// 使用位置：stream_chain.cc / DefaultEnabled。
-// 作用：控制图传服务器默认是否启动；运行时仍可被命令行覆盖。
-#ifndef BW_ENABLE_STREAM
-// #define BW_ENABLE_STREAM 1
-#define BW_ENABLE_STREAM 0
-#endif
-
-// 普通巡线分支图传底图模式：
-// 使用位置：vision_runtime.cc / RenderLineTrackingView。
-// 1：图传显示“二值图转 BGR 后叠加轨迹”，更利于看巡线处理结果。
-// 0：图传显示“低分辨率彩图叠加轨迹”，更利于看现场原始画面。
-// 说明：该开关只影响普通巡线分支；识别态和绕行态仍保持彩图显示。
-#ifndef BW_STREAM_LINE_USE_BINARY_VIEW
-#define BW_STREAM_LINE_USE_BINARY_VIEW 1
-// #define BW_STREAM_LINE_USE_BINARY_VIEW 0
-#endif
 #pragma endregion
 
 #pragma region 灰度二值化诊断参数
-// 灰度二值化诊断总开关：
-// 使用位置：vision_runtime.cc。
-// 作用：输出整图/中心/四角灰度均值以及 Otsu 阈值，辅助判断灰度相机是否存在局部暗场。
-// 说明：只做可观测性，不改变实际二值化与巡线行为。
-#ifndef BW_GRAY_BIN_DIAG_ENABLE
-#define BW_GRAY_BIN_DIAG_ENABLE 0
-#endif
-
 // 灰度诊断采样块边长（像素）：
 // 使用位置：vision_runtime.cc。
 // 作用：中心和四角都用同样大小的小块统计均值。

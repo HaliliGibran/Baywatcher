@@ -173,6 +173,7 @@ struct zebra_gate_state_t
 {
     bool prev_stop;
     uint64_t cooldown_until_ms;
+    uint64_t first_rush_sleep_until_ms;
     bool stripe_visible;
     bool pending_stop;
     bool rush_active;
@@ -393,7 +394,14 @@ static bool handle_zebra_stop_lifecycle(uint64_t t_ms)
 static bool update_zebra_rush_state(const uint8_t (&img)[IMAGE_H][IMAGE_W], uint64_t t_ms)
 {
     const bool zebra_can_check = (t_ms >= g_zebra_gate.cooldown_until_ms);
-    const bool zebra_now = zebra_can_check && zebra_detection(img);
+    const bool raw_zebra_now = zebra_can_check && zebra_detection(img);
+    const bool first_rush_sleeping =
+        (g_zebra_gate.rush_count > 0 &&
+         t_ms < g_zebra_gate.first_rush_sleep_until_ms);
+    const bool allow_new_zebra_hit =
+        (!first_rush_sleeping || g_zebra_gate.stripe_visible);
+    const bool zebra_now =
+        g_zebra_gate.stripe_visible ? raw_zebra_now : (raw_zebra_now && allow_new_zebra_hit);
 
     if (zebra_now && !g_zebra_gate.stripe_visible)
     {
@@ -404,6 +412,12 @@ static bool update_zebra_rush_state(const uint8_t (&img)[IMAGE_H][IMAGE_W], uint
         g_zebra_gate.stop_deadline_ms = 0;
         g_zebra_gate.rush_count++;
 
+        if (g_zebra_gate.rush_count == 1 && zebra_required_rush_count() >= 2)
+        {
+            g_zebra_gate.first_rush_sleep_until_ms =
+                t_ms + static_cast<uint64_t>(BW_ZEBRA_DOUBLE_FIRST_SLEEP_MS);
+        }
+
         image_remote_recognition_reset();
         track_force_reset();
         follow_mode = FollowLine::MIXED;
@@ -412,6 +426,10 @@ static bool update_zebra_rush_state(const uint8_t (&img)[IMAGE_H][IMAGE_W], uint
         {
             printf("[ZEBRA] rush #%d -> lock mixed, resume after disappear\r\n",
                    g_zebra_gate.rush_count);
+            if (g_zebra_gate.rush_count == 1 && zebra_required_rush_count() >= 2)
+            {
+                printf("[ZEBRA] first rush sleep %d ms\r\n", (int)BW_ZEBRA_DOUBLE_FIRST_SLEEP_MS);
+            }
         }
         else
         {
