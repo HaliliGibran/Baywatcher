@@ -706,8 +706,6 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     if (track_search == TRACK_SEARCH_VEHICLE_FALLBACK_HOLD)
     {
         float hold_yaw = 0.0f;
-        track_reset_element_runtime_state(false);
-        image_reset_far_line_state();
 
         if (image_remote_recognition_try_get_hold_yaw(t_ms, &hold_yaw))
         {
@@ -774,9 +772,9 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     }
     else if (remote_route_active)
     {
-        // 远端接管期间临时屏蔽元素状态机，不在这里重置 follow_mode owner。
-        track_reset_element_runtime_state(false);
-        image_reset_far_line_state();
+        // 远端 w/s/v/u 期间只“冻结”当前元素状态机，不再推进；
+        // 不清 element_type/circle_state/crossing_state，便于退出远端接管后继续沿原上下文恢复。
+        // 只有 b（remote_circle_block）会走清状态机分支。
     }
     else if (remote_circle_block)
     {
