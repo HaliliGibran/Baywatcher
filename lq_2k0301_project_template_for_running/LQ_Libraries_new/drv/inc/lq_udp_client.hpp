@@ -11,6 +11,7 @@
 
 // OpenCV头文件（可选编译）
 #ifdef LQ_HAVE_OPENCV
+    #include <new>
     #include <opencv2/opencv.hpp>
 #endif
 

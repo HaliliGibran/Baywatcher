@@ -8,6 +8,7 @@
 #include <mutex>
 
 #ifdef LQ_HAVE_OPENCV
+    #include <new>
     #include <opencv2/opencv.hpp>
     #define LQ_OPENCV_AVAILABLE 1
 #else

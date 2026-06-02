@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <new>
 #include <opencv2/opencv.hpp>
 #include "main.hpp"
 

@@ -34,6 +34,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <linux/videodev2.h>
+#include <new>
 #include "opencv2/opencv.hpp"
 
 class Camera
