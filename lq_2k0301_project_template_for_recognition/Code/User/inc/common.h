@@ -59,6 +59,24 @@
 #ifndef BW_RECOG_REQUIRE_MANUAL_START
 #define BW_RECOG_REQUIRE_MANUAL_START 0
 #endif
+
+// [先调] latest-frame 后台采集层总开关
+// 作用：
+// - 1：后台线程持续抓相机，只保留最新一帧；前台识别链只消费最新快照。
+// - 0：回退到主循环内同步调用 `get_frame_raw()`。
+// 当前默认 1 的原因：
+// - 模型推理阻塞期间，旧帧会被直接覆盖丢掉，端到端延迟更小。
+#ifndef BW_RECOG_LATEST_FRAME_ENABLE
+#define BW_RECOG_LATEST_FRAME_ENABLE 1
+#endif
+
+// [先调] latest-frame 启动后等待首帧的最长时间（毫秒）
+// 作用：
+// - 启动识别板时，后台采集线程会先尝试抓到第一帧，再进入主循环。
+// - 只影响上电/重启后的第一屏等待，不影响后续 steady-state 性能。
+#ifndef BW_RECOG_LATEST_FRAME_WAIT_FIRST_FRAME_MS
+#define BW_RECOG_LATEST_FRAME_WAIT_FIRST_FRAME_MS 500
+#endif
 #pragma endregion
 
 #pragma region B. 相机采集与曝光

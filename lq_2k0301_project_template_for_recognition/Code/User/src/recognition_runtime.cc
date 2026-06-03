@@ -1,5 +1,6 @@
 #include "recognition_runtime.h"
 
+#include "latest_frame_grabber.h"
 #include "recognition_chain.h"
 #include "stream_chain.h"
 #include "main.hpp"
@@ -261,18 +262,31 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
 {
     StreamChain stream(&server);
     RecognitionChain recognition;
+    LatestFrameGrabber latest_frame_source;
     bool manual_test_started = (BW_RECOG_REQUIRE_MANUAL_START == 0);
     bool prev_in_recognition = false;
     bool manual_cycle_finished = false;
     uint8_t tx_seq = 0;
     BoardVisionCode last_sent_code = BoardVisionCode::INVALID;
     uint64_t last_send_ms = 0;
+    uint64_t last_consumed_frame_seq = 0;
     const bool render_debug = stream_enabled;
+    const bool latest_frame_enabled = (BW_RECOG_LATEST_FRAME_ENABLE != 0);
+    bool latest_frame_running = false;
     PerfWindowStats perf_window;
     steady_time_point_t perf_window_begin = steady_clock_t::now();
 
     stream.Initialize(stream_enabled);
     recognition.Initialize(recognition_enabled_by_switch);
+
+    if (latest_frame_enabled && camera && camera->is_cam_opened())
+    {
+        latest_frame_running = latest_frame_source.Start(camera.get());
+        if (latest_frame_running)
+        {
+            latest_frame_source.WaitForFirstFrame(BW_RECOG_LATEST_FRAME_WAIT_FIRST_FRAME_MS);
+        }
+    }
 
     if (kRecognitionTextLog)
     {
@@ -297,6 +311,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         double overlay_ms = 0.0;
         double send_state_ms = 0.0;
         double publish_ms = 0.0;
+        uint64_t current_frame_seq = 0;
         bool send_state_called = false;
         bool publish_called = false;
 
@@ -311,13 +326,33 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         }
 
         const steady_time_point_t capture_begin = steady_clock_t::now();
-        img = camera->get_frame_raw();
+        if (latest_frame_running)
+        {
+            if (!latest_frame_source.GetLatestFrameSnapshot(&img, &current_frame_seq, nullptr))
+            {
+                usleep(1000);
+                continue;
+            }
+        }
+        else
+        {
+            img = camera->get_frame_raw();
+        }
         const steady_time_point_t capture_end = steady_clock_t::now();
         capture_ms = elapsed_ms_between(capture_begin, capture_end);
         if (img.empty())
         {
             usleep(5 * 1000);
             continue;
+        }
+        if (latest_frame_running)
+        {
+            if (current_frame_seq == 0 || current_frame_seq == last_consumed_frame_seq)
+            {
+                usleep(1000);
+                continue;
+            }
+            last_consumed_frame_seq = current_frame_seq;
         }
 
         const uint64_t t_ms = recognition_now_ms();
@@ -465,7 +500,10 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
 
 #if BW_RECOG_ENABLE_PERF_LOG
         const RecognitionChain::PerfSample& perf_sample = recognition.GetLastPerfSample();
-        perf_window.capture.Add(capture_ms);
+        if (!latest_frame_running)
+        {
+            perf_window.capture.Add(capture_ms);
+        }
         perf_window.ultra_precheck.Add(perf_sample.ultra_precheck_ms, perf_sample.ultra_precheck_called);
         perf_window.hsv_precheck.Add(perf_sample.hsv_precheck_ms, perf_sample.hsv_precheck_called);
         perf_window.extract_roi.Add(perf_sample.extract_roi_ms, perf_sample.extract_roi_called);
@@ -484,18 +522,27 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         {
             if (perf_window.loop.count > 0)
             {
+                PerfStageStats capture_stats = perf_window.capture;
+                if (latest_frame_running)
+                {
+                    const LatestFrameGrabber::CapturePerfStats capture_perf =
+                        latest_frame_source.ConsumeCapturePerfWindow();
+                    capture_stats.total_ms = capture_perf.total_ms;
+                    capture_stats.max_ms = capture_perf.max_ms;
+                    capture_stats.count = capture_perf.count;
+                }
                 const double effective_fps =
                     (perf_window_ms > 0.0)
                         ? (perf_window.loop_count * 1000.0 / perf_window_ms)
                         : 0.0;
                 const double measured_capture_fps =
-                    (perf_window.capture.AverageMs() > 0.0)
-                        ? (1000.0 / perf_window.capture.AverageMs())
+                    (capture_stats.AverageMs() > 0.0)
+                        ? (1000.0 / capture_stats.AverageMs())
                         : 0.0;
                 std::cout << "[PERF] state=" << VisionCodeText(code)
                           << " fps=" << std::fixed << std::setprecision(2) << effective_fps
                           << " capture_fps=" << std::fixed << std::setprecision(2) << measured_capture_fps
-                          << " capture=" << perf_window.capture.Format()
+                          << " capture=" << capture_stats.Format()
                           << " ultra=" << perf_window.ultra_precheck.Format()
                           << " hsv=" << perf_window.hsv_precheck.Format()
                           << " roi=" << perf_window.extract_roi.Format()
