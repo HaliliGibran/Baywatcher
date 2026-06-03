@@ -37,6 +37,7 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netdb.h>
+#include <new>
 #include "opencv2/opencv.hpp"
 
 // 默认端口号

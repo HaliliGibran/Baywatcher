@@ -35,7 +35,6 @@
 #define BW_BYPASS_RIGHT_STRAIGHTEN_IN_PURE_ANGLE -8.0f
 #endif
 
-
 // BayWatcher_TargetHandler::BayWatcher_TargetHandler() {
 // }
 

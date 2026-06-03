@@ -1,6 +1,7 @@
 #ifndef LQ_YOLO_h
 #define LQ_YOLO_h
 
+#include <new>
 #include <opencv2/core/mat.hpp>   // 或者 <opencv2/opencv.hpp>
 #include <iostream>
 #include <opencv2/opencv.hpp>

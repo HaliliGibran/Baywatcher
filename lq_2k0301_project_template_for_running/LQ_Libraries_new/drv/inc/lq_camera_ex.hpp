@@ -32,6 +32,7 @@
 #include <sys/ioctl.h>
 #include <memory>
 
+#include <new>
 #include <opencv2/opencv.hpp>
 
 /****************************************************************************************************

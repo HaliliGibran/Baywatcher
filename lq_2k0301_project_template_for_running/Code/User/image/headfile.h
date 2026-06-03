@@ -7,6 +7,7 @@
  * - 新的核心实现文件应尽量改用最小必要 include，避免把系统库依赖继续扩散。
  */
 /* 第三方库 */
+#include <new>
 #include <opencv2/opencv.hpp>
 // #include <json/json.h>
 // #include <net.h>
