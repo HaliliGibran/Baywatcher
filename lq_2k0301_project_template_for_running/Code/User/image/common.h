@@ -392,7 +392,7 @@
 // 调大：更敢冲，但停车前的距离需求也更大。
 // 调小：更稳，但更像“慢速压线”而不是“冲线”。
 #ifndef BW_ZEBRA_RUSH_SPEED_RATIO
-#define BW_ZEBRA_RUSH_SPEED_RATIO 1.50f
+#define BW_ZEBRA_RUSH_SPEED_RATIO 1.25f
 #endif
 
 // 检测到斑马线后延迟停车的时间（毫秒）：
@@ -403,7 +403,7 @@
 // 调大：车会冲得更深。
 // 调小：更早刹停。
 #ifndef ZEBRA_STOP_DELAY_MS
-#define ZEBRA_STOP_DELAY_MS 3000
+#define ZEBRA_STOP_DELAY_MS 1000
 #endif
 
 // 双次冲线模式下，第一次命中斑马线后的“新判定休眠”时间（毫秒）。
@@ -446,7 +446,7 @@
 // 调大：绕行动作更坚决，但也更容易在目标板附近过度横摆。
 // 调小：更平顺，但可能转不够。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE
-#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 30.0f
+#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 40.0f
 #endif
 
 // 收到 w/s 后，激进固定转角允许持续的最长时间（毫秒）。
@@ -455,7 +455,7 @@
 // - 收到新状态覆盖
 // - stale timeout 触发整体复位
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS
-#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 500
+#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 200
 #endif
 
 // 远端识别状态总过期时间（毫秒）。
@@ -493,7 +493,7 @@
 // 调大：u 阶段更快，更接近普通速度。
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 0.10f
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.40f
 #endif
 #pragma endregion
 

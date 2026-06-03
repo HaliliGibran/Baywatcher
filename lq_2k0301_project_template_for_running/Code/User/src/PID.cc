@@ -1053,23 +1053,23 @@ void BayWatcher_Control_Loop(void* arg) {
     //     PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.5f * factor);
     // }
 
-    // //0.4
-    // if (factor >= 0) {
-    //     PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 0.4f * factor);
-    //     PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 1.0f * factor);
-    // } else {
-    //     PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 1.0f * factor);
-    //     PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.4f * factor);
-    // }
-
-    //0.35
-    if (PID.speed_adjust >= 0) {
-        PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 0.35f * factor);
+    //0.4
+    if (factor >= 0) {
+        PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 0.4f * factor);
         PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 1.0f * factor);
     } else {
         PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 1.0f * factor);
-        PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.35f * factor);
+        PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.4f * factor);
     }
+
+    // //0.35
+    // if (PID.speed_adjust >= 0) {
+    //     PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 0.35f * factor);
+    //     PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 1.0f * factor);
+    // } else {
+    //     PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 1.0f * factor);
+    //     PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.35f * factor);
+    // }
 
     // if (PID.speed_adjust >= 0) {
     //     PID.target_speed_L = effective_base_speed * (1.0f + 1.0f * factor);
