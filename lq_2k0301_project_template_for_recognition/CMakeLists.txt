@@ -188,6 +188,7 @@ add_executable(${BIN} ${PLATFORM_SRC} ${RECOGNITION_BOARD_SRC})
 file(MAKE_DIRECTORY ${OUTPUT_MODEL_DIR})
 configure_file(${PROJECT_MODEL_DIR}/cls.onnx ${OUTPUT_MODEL_DIR}/cls.onnx COPYONLY)
 configure_file(${PROJECT_MODEL_DIR}/class_names.json ${OUTPUT_MODEL_DIR}/class_names.json COPYONLY)
+configure_file(${PROJECT_MODEL_DIR}/deploy_calibration.json ${OUTPUT_MODEL_DIR}/deploy_calibration.json COPYONLY)
 
 #Opencv_lib
 if (LQ_OPENCV_OK AND LQ_OPENCV_MODE STREQUAL "MANUAL")

@@ -1,0 +1,23 @@
+{
+  "workflow_root": "D:\\aaa走马观碑代码\\yolo\\project_root",
+  "arch": "tiny_cnn_micro",
+  "class_names": [
+    "weapon",
+    "supply",
+    "vehicle"
+  ],
+  "image_size": 32,
+  "pretrained": "none",
+  "onnx_path": "D:\\aaa走马观碑代码\\yolo\\project_root\\out_torch_cls\\tiny_cnn_micro_taskroi320_realcal_v1\\cls_torch.onnx",
+  "mean": [
+    0.485,
+    0.456,
+    0.406
+  ],
+  "std": [
+    0.229,
+    0.224,
+    0.225
+  ],
+  "deploy_calibration_path": "D:\\aaa走马观碑代码\\yolo\\project_root\\out_torch_cls\\tiny_cnn_micro_taskroi320_realcal_v1\\deploy_calibration.json"
+}
