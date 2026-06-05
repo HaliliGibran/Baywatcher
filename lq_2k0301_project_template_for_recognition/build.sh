@@ -71,6 +71,12 @@ if [ -f main ]; then
     cp -f ../model/cls.onnx model/cls.onnx
     cp -f ../model/class_names.json model/class_names.json
     cp -f ../model/deploy_calibration.json model/deploy_calibration.json
+    if [ -d ../model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1 ]; then
+        mkdir -p model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1
+        cp -f ../model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/cls.onnx model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/cls.onnx
+        cp -f ../model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/class_names.json model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/class_names.json
+        cp -f ../model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/deploy_calibration.json model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/deploy_calibration.json
+    fi
     #这里可以改成scp传输到我们的板卡上
     # scp main root@172.20.10.9:/home/root/workspace
     # ssh root@172.20.10.9 "mkdir -p /home/root/workspace/model"
@@ -90,6 +96,20 @@ if [ -f main ]; then
     fi
     if ! scp model/deploy_calibration.json root@192.168.1.201:/home/root/workspace/model/deploy_calibration.json; then
         echo "[警告] deploy_calibration.json 上传失败，已保留本地构建产物。"
+    fi
+    if [ -d model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1 ]; then
+        if ! ssh root@192.168.1.201 "mkdir -p /home/root/workspace/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1"; then
+            echo "[警告] 远端 grayred32 模型目录创建失败，已保留本地构建产物。"
+        fi
+        if ! scp model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/cls.onnx root@192.168.1.201:/home/root/workspace/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/cls.onnx; then
+            echo "[警告] grayred32 cls.onnx 上传失败，已保留本地构建产物。"
+        fi
+        if ! scp model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/class_names.json root@192.168.1.201:/home/root/workspace/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/class_names.json; then
+            echo "[警告] grayred32 class_names.json 上传失败，已保留本地构建产物。"
+        fi
+        if ! scp model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/deploy_calibration.json root@192.168.1.201:/home/root/workspace/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/deploy_calibration.json; then
+            echo "[警告] grayred32 deploy_calibration.json 上传失败，已保留本地构建产物。"
+        fi
     fi
 fi
 popd

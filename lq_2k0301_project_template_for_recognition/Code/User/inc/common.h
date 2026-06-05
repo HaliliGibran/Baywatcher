@@ -60,6 +60,27 @@
 #define BW_RECOG_REQUIRE_MANUAL_START 0
 #endif
 
+// [先调] 识别板模型模式枚举：旧 64x64 RGB 三通道模型
+#ifndef BW_RECOG_MODEL_VARIANT_RGB64
+#define BW_RECOG_MODEL_VARIANT_RGB64 0
+#endif
+
+// [先调] 识别板模型模式枚举：新 32x32 gray+red_dom 双通道模型
+#ifndef BW_RECOG_MODEL_VARIANT_GRAYRED32
+#define BW_RECOG_MODEL_VARIANT_GRAYRED32 1
+#endif
+
+// [先调] 当前识别板模型模式
+// 作用：
+// - 0：旧模型，ROI 输出 64x64，走 blobFromImage 的 3 通道 RGB 归一化链。
+// - 1：新模型，ROI 输出 32x32，手工构造 1x2x32x32 的 gray/red_dom 双通道 blob。
+// 调参建议：
+// - 默认保持旧模型模式，切新模型时同步确认板端已部署
+//   `model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/`。
+#ifndef BW_RECOG_MODEL_VARIANT
+#define BW_RECOG_MODEL_VARIANT BW_RECOG_MODEL_VARIANT_RGB64
+#endif
+
 // [先调] latest-frame 后台采集层总开关
 // 作用：
 // - 1：后台线程持续抓相机，只保留最新一帧；前台识别链只消费最新快照。

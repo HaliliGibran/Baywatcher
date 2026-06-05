@@ -31,6 +31,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
 set(PROJECT_MODEL_DIR ${PROJECT_SOURCE_DIR}/model)
 set(OUTPUT_MODEL_DIR ${PROJECT_BINARY_DIR}/model)
+set(PROJECT_MODEL_GRAYRED32_DIR ${PROJECT_SOURCE_DIR}/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1)
+set(OUTPUT_MODEL_GRAYRED32_DIR ${PROJECT_BINARY_DIR}/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1)
 set(LQ_LOCAL_OPENCV_ROOT ${PROJECT_SOURCE_DIR}/cross_lib/opencv)
 set(LQ_LOCAL_NEWLIB_DIR ${PROJECT_SOURCE_DIR}/libraries)
 set(LQ_CAMERA_EX_LIB "")
@@ -189,6 +191,15 @@ file(MAKE_DIRECTORY ${OUTPUT_MODEL_DIR})
 configure_file(${PROJECT_MODEL_DIR}/cls.onnx ${OUTPUT_MODEL_DIR}/cls.onnx COPYONLY)
 configure_file(${PROJECT_MODEL_DIR}/class_names.json ${OUTPUT_MODEL_DIR}/class_names.json COPYONLY)
 configure_file(${PROJECT_MODEL_DIR}/deploy_calibration.json ${OUTPUT_MODEL_DIR}/deploy_calibration.json COPYONLY)
+
+if (EXISTS "${PROJECT_MODEL_GRAYRED32_DIR}/cls.onnx" AND
+    EXISTS "${PROJECT_MODEL_GRAYRED32_DIR}/class_names.json" AND
+    EXISTS "${PROJECT_MODEL_GRAYRED32_DIR}/deploy_calibration.json")
+    file(MAKE_DIRECTORY ${OUTPUT_MODEL_GRAYRED32_DIR})
+    configure_file(${PROJECT_MODEL_GRAYRED32_DIR}/cls.onnx ${OUTPUT_MODEL_GRAYRED32_DIR}/cls.onnx COPYONLY)
+    configure_file(${PROJECT_MODEL_GRAYRED32_DIR}/class_names.json ${OUTPUT_MODEL_GRAYRED32_DIR}/class_names.json COPYONLY)
+    configure_file(${PROJECT_MODEL_GRAYRED32_DIR}/deploy_calibration.json ${OUTPUT_MODEL_GRAYRED32_DIR}/deploy_calibration.json COPYONLY)
+endif()
 
 #Opencv_lib
 if (LQ_OPENCV_OK AND LQ_OPENCV_MODE STREQUAL "MANUAL")

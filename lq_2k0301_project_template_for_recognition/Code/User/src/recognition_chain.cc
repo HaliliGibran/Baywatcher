@@ -32,6 +32,16 @@ constexpr int kRecognitionMinValidFrames = BW_RECOG_MIN_VALID_FRAMES;
 constexpr int kRecognitionMaxValidFrames = BW_RECOG_MAX_VALID_FRAMES;
 constexpr float kRecognitionDecisionTop1AvgThreshold = BW_RECOG_DECISION_TOP1_AVG_THRESHOLD;
 constexpr float kRecognitionDecisionMarginThreshold = BW_RECOG_DECISION_MARGIN_THRESHOLD;
+constexpr int kRecognitionModelVariant = BW_RECOG_MODEL_VARIANT;
+constexpr bool kRecognitionUseGrayRed32Model =
+    (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_GRAYRED32);
+constexpr int kRecognitionModelInputSize = kRecognitionUseGrayRed32Model ? 32 : 64;
+constexpr const char* kRecognitionModelRootDir =
+    kRecognitionUseGrayRed32Model
+        ? "./model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1"
+        : "./model";
+constexpr const char* kRecognitionModelVariantName =
+    kRecognitionUseGrayRed32Model ? "grayred32_mlp_wider" : "rgb64_classic";
 
 struct RoiClassificationResult
 {
@@ -56,6 +66,56 @@ struct ProbabilityDecisionSummary
     float top2_avg = 0.0f;
     float margin = 0.0f;
 };
+
+static RoiClassificationResult finalize_logits_to_result(const cv::Mat& logits_f32,
+                                                         float calibration_temperature,
+                                                         const std::array<float, 3>& logit_bias)
+{
+    RoiClassificationResult result;
+    const int count = std::min(static_cast<int>(logits_f32.total()), 3);
+    float max_logit = -std::numeric_limits<float>::infinity();
+    for (int i = 0; i < count; ++i)
+    {
+        const float value = logits_f32.at<float>(0, i) / std::max(calibration_temperature, 1e-4f)
+            + logit_bias[static_cast<size_t>(i)];
+        if (value > max_logit)
+        {
+            max_logit = value;
+        }
+    }
+    if (!std::isfinite(max_logit))
+    {
+        return result;
+    }
+
+    float exp_sum = 0.0f;
+    for (int i = 0; i < count; ++i)
+    {
+        const float adjusted = logits_f32.at<float>(0, i) / std::max(calibration_temperature, 1e-4f)
+            + logit_bias[static_cast<size_t>(i)];
+        const float exp_value = std::exp(adjusted - max_logit);
+        result.probabilities[static_cast<size_t>(i)] = exp_value;
+        exp_sum += exp_value;
+    }
+    if (exp_sum <= 0.0f)
+    {
+        return result;
+    }
+
+    int best_index = 0;
+    float best_prob = -1.0f;
+    for (int i = 0; i < count; ++i)
+    {
+        result.probabilities[static_cast<size_t>(i)] /= exp_sum;
+        if (result.probabilities[static_cast<size_t>(i)] > best_prob)
+        {
+            best_prob = result.probabilities[static_cast<size_t>(i)];
+            best_index = i;
+        }
+    }
+    result.predicted_index = best_index;
+    return result;
+}
 
 static void draw_trigger_search_info(cv::Mat& view)
 {
@@ -758,82 +818,74 @@ static bool detect_red_rect_like(const cv::Mat& frame_bgr, cv::Rect* best_rect, 
 }
 
 // [Recognition Chain] 单个 ROI 的 Top-1 分类推理。
-// 作用：把 ROI 统一缩放到 64x64，送入 ONNX，输出当前帧的类别索引。
+// 作用：按当前模型模式把 ROI 预处理成对应 blob，再送入 ONNX，输出当前帧的类别索引。
 static RoiClassificationResult classify_roi_index(cv::dnn::Net& net, const cv::Mat& roi_bgr, float calibration_temperature, const std::array<float, 3>& logit_bias)
 {
-    static const float kInputMean[3] = {0.485f, 0.456f, 0.406f};
-    static const float kInputStd[3] = {0.229f, 0.224f, 0.225f};
-    RoiClassificationResult result;
-    cv::Mat resized;
-    cv::resize(roi_bgr, resized, cv::Size(64, 64), 0, 0, cv::INTER_AREA);
-    cv::Mat blob = cv::dnn::blobFromImage(
-        resized,
-        1.0 / 255.0,
-        cv::Size(64, 64),
-        cv::Scalar(),
-        true,
-        false
-    );
-    const int plane = 64 * 64;
-    for (int c = 0; c < 3; ++c)
+    cv::Mat blob;
+
+    if (kRecognitionUseGrayRed32Model)
     {
-        float* ptr = blob.ptr<float>(0, c);
-        if (ptr == nullptr)
+        cv::Mat resized;
+        cv::resize(roi_bgr, resized, cv::Size(32, 32), 0, 0, cv::INTER_AREA);
+
+        cv::Mat resized_f32;
+        resized.convertTo(resized_f32, CV_32FC3, 1.0 / 255.0);
+
+        const int sizes[4] = {1, 2, 32, 32};
+        blob = cv::Mat(4, sizes, CV_32F, cv::Scalar(0));
+        float* gray_channel = blob.ptr<float>(0, 0);
+        float* red_dom_channel = blob.ptr<float>(0, 1);
+
+        for (int y = 0; y < 32; ++y)
         {
-            continue;
-        }
-        for (int i = 0; i < plane; ++i)
-        {
-            ptr[i] = (ptr[i] - kInputMean[c]) / kInputStd[c];
+            for (int x = 0; x < 32; ++x)
+            {
+                const cv::Vec3f bgr = resized_f32.at<cv::Vec3f>(y, x);
+                const float b = bgr[0];
+                const float g = bgr[1];
+                const float r = bgr[2];
+                const float gray = 0.299f * r + 0.587f * g + 0.114f * b;
+                const float red_dom = std::max(r - std::max(g, b), 0.0f);
+                const int idx = y * 32 + x;
+                gray_channel[idx] = (gray - 0.449f) / 0.226f;
+                red_dom_channel[idx] = (red_dom - 0.0f) / 1.0f;
+            }
         }
     }
+    else
+    {
+        static const float kInputMean[3] = {0.485f, 0.456f, 0.406f};
+        static const float kInputStd[3] = {0.229f, 0.224f, 0.225f};
+        cv::Mat resized;
+        cv::resize(roi_bgr, resized, cv::Size(64, 64), 0, 0, cv::INTER_AREA);
+        blob = cv::dnn::blobFromImage(
+            resized,
+            1.0 / 255.0,
+            cv::Size(64, 64),
+            cv::Scalar(),
+            true,
+            false
+        );
+        const int plane = 64 * 64;
+        for (int c = 0; c < 3; ++c)
+        {
+            float* ptr = blob.ptr<float>(0, c);
+            if (ptr == nullptr)
+            {
+                continue;
+            }
+            for (int i = 0; i < plane; ++i)
+            {
+                ptr[i] = (ptr[i] - kInputMean[c]) / kInputStd[c];
+            }
+        }
+    }
+
     net.setInput(blob);
     cv::Mat out = net.forward().reshape(1, 1);
     cv::Mat out_f;
     out.convertTo(out_f, CV_32F);
-    const int count = std::min(static_cast<int>(out_f.total()), 3);
-    float max_logit = -std::numeric_limits<float>::infinity();
-    for (int i = 0; i < count; ++i)
-    {
-        const float value = out_f.at<float>(0, i) / std::max(calibration_temperature, 1e-4f)
-            + logit_bias[static_cast<size_t>(i)];
-        if (value > max_logit)
-        {
-            max_logit = value;
-        }
-    }
-    if (!std::isfinite(max_logit))
-    {
-        return result;
-    }
-
-    float exp_sum = 0.0f;
-    for (int i = 0; i < count; ++i)
-    {
-        const float adjusted = out_f.at<float>(0, i) / std::max(calibration_temperature, 1e-4f)
-            + logit_bias[static_cast<size_t>(i)];
-        const float exp_value = std::exp(adjusted - max_logit);
-        result.probabilities[static_cast<size_t>(i)] = exp_value;
-        exp_sum += exp_value;
-    }
-    if (exp_sum <= 0.0f)
-    {
-        return result;
-    }
-
-    int best_index = 0;
-    float best_prob = -1.0f;
-    for (int i = 0; i < count; ++i)
-    {
-        result.probabilities[static_cast<size_t>(i)] /= exp_sum;
-        if (result.probabilities[static_cast<size_t>(i)] > best_prob)
-        {
-            best_prob = result.probabilities[static_cast<size_t>(i)];
-            best_index = i;
-        }
-    }
-    result.predicted_index = best_index;
-    return result;
+    return finalize_logits_to_result(out_f, calibration_temperature, logit_bias);
 }
 
 static ProbabilityDecisionSummary summarize_probabilities(const std::array<float, 3>& prob_sum, int valid_frames)
@@ -956,9 +1008,9 @@ RecognitionChain::RecognitionChain()
 
 bool RecognitionChain::Initialize(bool enabled_by_switch)
 {
-    const std::string configured_model_path = "./model/cls.onnx";
-    const std::string configured_class_path = "./model/class_names.json";
-    const std::string configured_calibration_path = "./model/deploy_calibration.json";
+    const std::string configured_model_path = std::string(kRecognitionModelRootDir) + "/cls.onnx";
+    const std::string configured_class_path = std::string(kRecognitionModelRootDir) + "/class_names.json";
+    const std::string configured_calibration_path = std::string(kRecognitionModelRootDir) + "/deploy_calibration.json";
     const std::string model_path = resolve_runtime_path(configured_model_path);
     const std::string class_path = resolve_runtime_path(configured_class_path);
     const std::string calibration_path = resolve_runtime_path(configured_calibration_path);
@@ -1007,6 +1059,10 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
     {
         if (kRecognitionTextLog)
         {
+            std::cout << "[ONNX] variant=" << kRecognitionModelVariantName
+                      << ", input=" << kRecognitionModelInputSize << "x" << kRecognitionModelInputSize
+                      << (kRecognitionUseGrayRed32Model ? ", channels=2(gray+red_dom)" : ", channels=3(rgb)")
+                      << std::endl;
             std::cout << "[ONNX] enabled, model=" << model_path << std::endl;
             std::cout << "[ONNX] classes=" << class_path << std::endl;
             std::cout << "[RECOG] roi_method=" << RoiMethodName(DefaultRoiMethod()) << std::endl;
@@ -1116,7 +1172,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     const RoiMethod roi_method = DefaultRoiMethod();
     const auto extract_begin = steady_clock_t::now();
     RoiExtractionResult trigger_roi =
-        ExtractRotatedRoi(frame_bgr, 64, roi_method);
+        ExtractRotatedRoi(frame_bgr, kRecognitionModelInputSize, roi_method);
     const auto extract_end = steady_clock_t::now();
     last_perf_sample_.extract_roi_ms =
         std::chrono::duration<double, std::milli>(extract_end - extract_begin).count();
@@ -1374,7 +1430,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     const RoiMethod roi_method = DefaultRoiMethod();
     const auto extract_begin = steady_clock_t::now();
     RoiExtractionResult roi_result =
-        ExtractRotatedRoi(frame_bgr, 64, roi_method);
+        ExtractRotatedRoi(frame_bgr, kRecognitionModelInputSize, roi_method);
     const auto extract_end = steady_clock_t::now();
     last_perf_sample_.extract_roi_ms =
         std::chrono::duration<double, std::milli>(extract_end - extract_begin).count();

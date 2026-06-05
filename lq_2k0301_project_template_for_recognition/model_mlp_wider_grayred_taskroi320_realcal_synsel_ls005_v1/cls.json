@@ -1,0 +1,23 @@
+{
+  "workflow_root": "D:\\aaa走马观碑代码\\yolo\\project_root",
+  "arch": "mlp_wider_grayred",
+  "class_names": [
+    "weapon",
+    "supply",
+    "vehicle"
+  ],
+  "image_size": 32,
+  "pretrained": "auto",
+  "feature_mode": "gray_red",
+  "input_channels": 2,
+  "onnx_path": "d:\\aaa走马观碑代码\\yolo\\project_root\\out_torch_cls\\mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1\\cls_torch.onnx",
+  "mean": [
+    0.449,
+    0.0
+  ],
+  "std": [
+    0.226,
+    1.0
+  ],
+  "deploy_calibration_path": "d:\\aaa走马观碑代码\\yolo\\project_root\\out_torch_cls\\mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1\\deploy_calibration.json"
+}
