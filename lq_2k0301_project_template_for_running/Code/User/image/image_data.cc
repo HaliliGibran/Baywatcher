@@ -81,6 +81,27 @@ bool remote_aggressive_turn_is_rebound(remote_aggressive_turn_state_t state)
            state == remote_aggressive_turn_state_t::REBOUND_RIGHT;
 }
 
+float remote_clamp_aggressive_primary_output(float value)
+{
+    if (value > BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG)
+    {
+        return BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG;
+    }
+    if (value < -BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG)
+    {
+        return -BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG;
+    }
+    return value;
+}
+
+float remote_primary_aggressive_add_deg(float entry_yaw, float route_sign)
+{
+    const bool same_dir = (entry_yaw * route_sign) >= 0.0f;
+    return same_dir
+        ? BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE
+        : BW_REMOTE_SIGN_AGGRESSIVE_OPPOSITE_ABS_PURE_ANGLE;
+}
+
 uint64_t remote_now_ms()
 {
     return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -375,16 +396,18 @@ bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
     if (g_remote_recognition.aggressive_turn_state ==
         remote_aggressive_turn_state_t::PRIMARY_LEFT)
     {
-        *out_override = g_remote_recognition.aggressive_turn_entry_yaw +
-                        BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE;
+        *out_override = remote_clamp_aggressive_primary_output(
+            g_remote_recognition.aggressive_turn_entry_yaw +
+            remote_primary_aggressive_add_deg(g_remote_recognition.aggressive_turn_entry_yaw, 1.0f));
         return true;
     }
 
     if (g_remote_recognition.aggressive_turn_state ==
         remote_aggressive_turn_state_t::PRIMARY_RIGHT)
     {
-        *out_override = g_remote_recognition.aggressive_turn_entry_yaw -
-                        BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE;
+        *out_override = remote_clamp_aggressive_primary_output(
+            g_remote_recognition.aggressive_turn_entry_yaw -
+            remote_primary_aggressive_add_deg(g_remote_recognition.aggressive_turn_entry_yaw, -1.0f));
         return true;
     }
 

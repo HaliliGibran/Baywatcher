@@ -451,13 +451,31 @@
 // 下列参数只服务于这条“当前活跃”的双板接管链。
 // 旧 TargetHandler 分阶段绕行参数已移出 common.h，不再作为公共调参入口暴露。
 
-// 收到 w/s 后，激进固定转角的绝对值（度）。
-// 只在 BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE=1 时生效。
-// w 用正角，s 用负角；符号在 image_data.cc 内部做镜像。
-// 调大：绕行动作更坚决，但也更容易在目标板附近过度横摆。
-// 调小：更平顺，但可能转不够。
+// 收到 w/s 后，当“进入激进角当下的 pure_angle”与“绕行方向”同向时，额外叠加的激进角（度）。
+// 例子：
+// - 当前已经左拐(positive) + 继续左绕(w) -> 用这组
+// - 当前已经右拐(negative) + 继续右绕(s) -> 也用这组
+// 说明：
+// - 这里只作用于主激进角，不作用于反向回摆角。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE
 #define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 20.0f
+#endif
+
+// 收到 w/s 后，当“进入激进角当下的 pure_angle”与“绕行方向”反向时，额外叠加的激进角（度）。
+// 例子：
+// - 当前已经左拐(positive) + 右绕(s) -> 用这组
+// - 当前已经右拐(negative) + 左绕(w) -> 也用这组
+#ifndef BW_REMOTE_SIGN_AGGRESSIVE_OPPOSITE_ABS_PURE_ANGLE
+#define BW_REMOTE_SIGN_AGGRESSIVE_OPPOSITE_ABS_PURE_ANGLE 20.0f
+#endif
+
+// 主激进角叠加完成后的统一限幅（度）。
+// 作用：
+// - 主激进角 = entry_yaw + route_sign * add_deg
+// - 上式算完后再夹到 [-limit, +limit]
+// - 仅限制主激进角，不限制反向回摆固定角
+#ifndef BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG
+#define BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG 30.0f
 #endif
 
 // w/s 激进角阶段的基础速度倍率。
@@ -471,10 +489,10 @@
 #define BW_REMOTE_SIGN_AGGRESSIVE_SPEED_RATIO 1.0f
 #endif
 
-// 反向回摆角相对于正向激进角的幅度比例。
+// 反向回摆角相对于“主激进角基准值”的幅度比例。
 // 当前语义：
 // - 反向回摆角绝对值 = BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE * 本比例。
-// - 例如主激进角是 40deg、这里是 0.5，则回摆角固定为 20deg。
+// - 回摆仍然是固定角，不叠加入场偏航角。
 // 说明：
 // - 这里只改“反向回摆角”幅度，不改主激进角幅度。
 // - 若回摆明显过猛，可继续调小；若回摆几乎没有拉回效果，可略微调大。
