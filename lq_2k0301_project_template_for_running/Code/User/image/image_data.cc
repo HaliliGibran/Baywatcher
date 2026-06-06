@@ -33,6 +33,7 @@ struct remote_recognition_runtime_t
     remote_follow_state_t follow_state;
     remote_aggressive_turn_state_t aggressive_turn_state;
     uint64_t aggressive_turn_until_ms;
+    float aggressive_turn_entry_yaw;
     bool hold_u_slowdown_until_aggressive_end;
     bool block_circle_until_n;
     bool left_line_found;
@@ -49,6 +50,7 @@ remote_recognition_runtime_t g_remote_recognition = {
     remote_follow_state_t::NONE,
     remote_aggressive_turn_state_t::NONE,
     0,
+    0.0f,
     false,
     false,
     false,
@@ -90,14 +92,18 @@ void remote_aggressive_turn_clear()
 {
     g_remote_recognition.aggressive_turn_state = remote_aggressive_turn_state_t::NONE;
     g_remote_recognition.aggressive_turn_until_ms = 0;
+    g_remote_recognition.aggressive_turn_entry_yaw = 0.0f;
     g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
 }
 
-void remote_aggressive_turn_start(remote_aggressive_turn_state_t state, uint64_t t_ms)
+void remote_aggressive_turn_start(remote_aggressive_turn_state_t state,
+                                  uint64_t t_ms,
+                                  float entry_yaw)
 {
     g_remote_recognition.aggressive_turn_state = state;
     g_remote_recognition.aggressive_turn_until_ms =
         t_ms + static_cast<uint64_t>(BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS);
+    g_remote_recognition.aggressive_turn_entry_yaw = entry_yaw;
 }
 
 void remote_aggressive_turn_advance_or_clear(uint64_t t_ms)
@@ -106,12 +112,16 @@ void remote_aggressive_turn_advance_or_clear(uint64_t t_ms)
     {
         if (g_remote_recognition.aggressive_turn_state == remote_aggressive_turn_state_t::PRIMARY_LEFT)
         {
-            remote_aggressive_turn_start(remote_aggressive_turn_state_t::REBOUND_RIGHT, t_ms);
+            remote_aggressive_turn_start(remote_aggressive_turn_state_t::REBOUND_RIGHT,
+                                         t_ms,
+                                         g_remote_recognition.aggressive_turn_entry_yaw);
             return;
         }
         if (g_remote_recognition.aggressive_turn_state == remote_aggressive_turn_state_t::PRIMARY_RIGHT)
         {
-            remote_aggressive_turn_start(remote_aggressive_turn_state_t::REBOUND_LEFT, t_ms);
+            remote_aggressive_turn_start(remote_aggressive_turn_state_t::REBOUND_LEFT,
+                                         t_ms,
+                                         g_remote_recognition.aggressive_turn_entry_yaw);
             return;
         }
     }
@@ -269,7 +279,9 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.follow_state = remote_follow_state_t::LEFT_EDGE_ROUTE;
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
-        remote_aggressive_turn_start(remote_aggressive_turn_state_t::PRIMARY_LEFT, t_ms);
+        remote_aggressive_turn_start(remote_aggressive_turn_state_t::PRIMARY_LEFT,
+                                     t_ms,
+                                     current_pure_angle);
         g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
         return;
     }
@@ -279,7 +291,9 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.follow_state = remote_follow_state_t::RIGHT_EDGE_ROUTE;
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
-        remote_aggressive_turn_start(remote_aggressive_turn_state_t::PRIMARY_RIGHT, t_ms);
+        remote_aggressive_turn_start(remote_aggressive_turn_state_t::PRIMARY_RIGHT,
+                                     t_ms,
+                                     current_pure_angle);
         g_remote_recognition.hold_u_slowdown_until_aggressive_end = false;
         return;
     }
@@ -361,14 +375,16 @@ bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
     if (g_remote_recognition.aggressive_turn_state ==
         remote_aggressive_turn_state_t::PRIMARY_LEFT)
     {
-        *out_override = BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE;
+        *out_override = g_remote_recognition.aggressive_turn_entry_yaw +
+                        BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE;
         return true;
     }
 
     if (g_remote_recognition.aggressive_turn_state ==
         remote_aggressive_turn_state_t::PRIMARY_RIGHT)
     {
-        *out_override = -BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE;
+        *out_override = g_remote_recognition.aggressive_turn_entry_yaw -
+                        BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE;
         return true;
     }
 
