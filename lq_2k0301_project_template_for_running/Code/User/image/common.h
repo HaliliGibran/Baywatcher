@@ -455,7 +455,7 @@
 // - 收到新状态覆盖
 // - stale timeout 触发整体复位
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS
-#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 200
+#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 75
 #endif
 
 // 远端识别状态总过期时间（毫秒）。
