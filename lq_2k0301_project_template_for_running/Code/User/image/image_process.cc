@@ -702,6 +702,8 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 
     // follow_mode 由上层策略决定，这里只消费，不在主链入口硬重置。
     const track_search_result_t track_search = process_track_edges(img, vehicle_active);
+    image_remote_recognition_update_line_visibility(pts_left.pts_resample_count > 0,
+                                                    pts_right.pts_resample_count > 0);
     const bool zebra_special_lock = update_zebra_rush_state(img, t_ms);
     if (track_search == TRACK_SEARCH_VEHICLE_FALLBACK_HOLD)
     {

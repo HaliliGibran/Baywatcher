@@ -1,4 +1,5 @@
 #include "image_data.h"
+#include <chrono>
 
 namespace {
 
@@ -34,6 +35,8 @@ struct remote_recognition_runtime_t
     uint64_t aggressive_turn_until_ms;
     bool hold_u_slowdown_until_aggressive_end;
     bool block_circle_until_n;
+    bool left_line_found;
+    bool right_line_found;
 };
 
 remote_recognition_runtime_t g_remote_recognition = {
@@ -48,7 +51,40 @@ remote_recognition_runtime_t g_remote_recognition = {
     0,
     false,
     false,
+    false,
+    false,
 };
+
+bool remote_aggressive_turn_is_left_route(remote_aggressive_turn_state_t state)
+{
+    return state == remote_aggressive_turn_state_t::PRIMARY_LEFT ||
+           state == remote_aggressive_turn_state_t::REBOUND_RIGHT;
+}
+
+bool remote_aggressive_turn_is_right_route(remote_aggressive_turn_state_t state)
+{
+    return state == remote_aggressive_turn_state_t::PRIMARY_RIGHT ||
+           state == remote_aggressive_turn_state_t::REBOUND_LEFT;
+}
+
+bool remote_aggressive_turn_is_primary(remote_aggressive_turn_state_t state)
+{
+    return state == remote_aggressive_turn_state_t::PRIMARY_LEFT ||
+           state == remote_aggressive_turn_state_t::PRIMARY_RIGHT;
+}
+
+bool remote_aggressive_turn_is_rebound(remote_aggressive_turn_state_t state)
+{
+    return state == remote_aggressive_turn_state_t::REBOUND_LEFT ||
+           state == remote_aggressive_turn_state_t::REBOUND_RIGHT;
+}
+
+uint64_t remote_now_ms()
+{
+    return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 void remote_aggressive_turn_clear()
 {
@@ -81,6 +117,36 @@ void remote_aggressive_turn_advance_or_clear(uint64_t t_ms)
     }
 
     remote_aggressive_turn_clear();
+}
+
+bool remote_aggressive_turn_should_stop_primary(float raw_pure_angle)
+{
+    if (g_remote_recognition.aggressive_turn_state == remote_aggressive_turn_state_t::PRIMARY_LEFT)
+    {
+        return raw_pure_angle < 0.0f || !g_remote_recognition.left_line_found;
+    }
+
+    if (g_remote_recognition.aggressive_turn_state == remote_aggressive_turn_state_t::PRIMARY_RIGHT)
+    {
+        return raw_pure_angle > 0.0f || !g_remote_recognition.right_line_found;
+    }
+
+    return false;
+}
+
+bool remote_aggressive_turn_should_stop_rebound()
+{
+    if (g_remote_recognition.aggressive_turn_state == remote_aggressive_turn_state_t::REBOUND_RIGHT)
+    {
+        return g_remote_recognition.left_line_found;
+    }
+
+    if (g_remote_recognition.aggressive_turn_state == remote_aggressive_turn_state_t::REBOUND_LEFT)
+    {
+        return g_remote_recognition.right_line_found;
+    }
+
+    return false;
 }
 
 } // namespace
@@ -145,6 +211,8 @@ void image_remote_recognition_reset()
     g_remote_recognition.follow_state = remote_follow_state_t::NONE;
     remote_aggressive_turn_clear();
     g_remote_recognition.block_circle_until_n = false;
+    g_remote_recognition.left_line_found = false;
+    g_remote_recognition.right_line_found = false;
     follow_mode = FollowLine::MIXED;
 }
 
@@ -251,6 +319,12 @@ void image_remote_recognition_tick(uint64_t t_ms)
     }
 }
 
+void image_remote_recognition_update_line_visibility(bool left_found, bool right_found)
+{
+    g_remote_recognition.left_line_found = left_found;
+    g_remote_recognition.right_line_found = right_found;
+}
+
 bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw)
 {
     if (hold_yaw == nullptr || t_ms >= g_remote_recognition.vehicle_hold_until_ms)
@@ -265,12 +339,23 @@ bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw)
 bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
                                                            float* out_override)
 {
-    (void)raw_pure_angle;
     if (out_override == nullptr ||
         BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE == 0 ||
         BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE <= 0.0f)
     {
         return false;
+    }
+
+    if (remote_aggressive_turn_is_primary(g_remote_recognition.aggressive_turn_state) &&
+        remote_aggressive_turn_should_stop_primary(raw_pure_angle))
+    {
+        remote_aggressive_turn_advance_or_clear(remote_now_ms());
+    }
+
+    if (remote_aggressive_turn_is_rebound(g_remote_recognition.aggressive_turn_state) &&
+        remote_aggressive_turn_should_stop_rebound())
+    {
+        remote_aggressive_turn_clear();
     }
 
     if (g_remote_recognition.aggressive_turn_state ==
@@ -290,14 +375,14 @@ bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
     if (g_remote_recognition.aggressive_turn_state ==
         remote_aggressive_turn_state_t::REBOUND_LEFT)
     {
-        *out_override = BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE;
+        *out_override = BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE * BW_REMOTE_SIGN_REBOUND_RATIO;
         return true;
     }
 
     if (g_remote_recognition.aggressive_turn_state ==
         remote_aggressive_turn_state_t::REBOUND_RIGHT)
     {
-        *out_override = -BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE;
+        *out_override = -BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE * BW_REMOTE_SIGN_REBOUND_RATIO;
         return true;
     }
 
@@ -306,6 +391,11 @@ bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
 
 float image_remote_recognition_get_speed_ratio_override()
 {
+    if (g_remote_recognition.aggressive_turn_state != remote_aggressive_turn_state_t::NONE)
+    {
+        return BW_REMOTE_SIGN_AGGRESSIVE_SPEED_RATIO;
+    }
+
     if (g_remote_recognition.current_code == BoardVisionCode::VEHICLE)
     {
         return 1.0f;

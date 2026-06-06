@@ -45,7 +45,7 @@
 
 // 双板 w/s 激进转角结束后，是否立刻接一个同样时长的反向回摆角。
 // 当前行为：
-// - 1：主激进角结束后，自动进入反向激进角，角度绝对值相同、持续时间同 BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS。
+// - 1：主激进角结束后，自动进入反向回摆角。
 // - 0：主激进角结束后直接退出固定角覆盖，回到几何 pure_angle。
 // 说明：
 // - 这里只控制 w/s 绕行动作，不影响 v/u。
@@ -460,11 +460,33 @@
 #define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 40.0f
 #endif
 
+// w/s 激进角阶段的基础速度倍率。
+// 作用：
+// - 只要当前还处在“主激进角 / 反向回摆角”任一阶段，PID 基础速度都会乘这个比例。
+// - 作用对象仅限 w/s 激进角链，不影响 u 的慢速、v 的 hold_yaw、斑马线冲线倍率。
+// 调参建议：
+// - 太小：绕行动作更稳，但速度掉得太狠可能导致动作发钝。
+// - 太大：激进角期间速度保留更多，但更容易甩尾或推过头。
+#ifndef BW_REMOTE_SIGN_AGGRESSIVE_SPEED_RATIO
+#define BW_REMOTE_SIGN_AGGRESSIVE_SPEED_RATIO 0.5f
+#endif
+
+// 反向回摆角相对于正向激进角的幅度比例。
+// 当前语义：
+// - 反向回摆角绝对值 = BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE * 本比例。
+// - 例如主激进角是 40deg、这里是 0.5，则回摆角固定为 20deg。
+// 说明：
+// - 这里只改“反向回摆角”幅度，不改主激进角幅度。
+// - 若回摆明显过猛，可继续调小；若回摆几乎没有拉回效果，可略微调大。
+#ifndef BW_REMOTE_SIGN_REBOUND_RATIO
+#define BW_REMOTE_SIGN_REBOUND_RATIO 0.5f
+#endif
+
 // 收到 w/s 后，激进固定转角允许持续的最长时间（毫秒）。
-// 退出条件不是“只看超时”，还包括：
-// - 几何 pure_angle 已经反向
-// - 收到新状态覆盖
-// - stale timeout 触发整体复位
+// 当前退出语义：
+// - 正向激进角：当几何 pure_angle 已经反向、或当前锁定侧边线丢失、或超时，就结束。
+// - 反向回摆角：当当前锁定侧边线重新找回、或超时，就结束。
+// - 任一阶段都可能被新远端状态、n/b 覆盖，或 stale timeout 整体复位提前打断。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS
 #define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 200
 #endif

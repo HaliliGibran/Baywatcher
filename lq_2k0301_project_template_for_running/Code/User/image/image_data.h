@@ -230,6 +230,14 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
 // - t_ms: 当前时间戳（毫秒）
 void image_remote_recognition_tick(uint64_t t_ms);
 
+// 功能: 把当前帧左右边线可见性同步给远端绕行动作状态机
+// 类型: 全局状态更新函数
+// 关键参数:
+// - left_found/right_found: 当前帧左右边线是否成功建立
+// 说明：
+// - 仅服务于 w/s 激进角链的“丢线停主动作 / 寻线停回摆”逻辑。
+void image_remote_recognition_update_line_visibility(bool left_found, bool right_found);
+
 // 功能: 查询当前是否处于远端 vehicle 的保持航向窗口
 // 类型: 全局状态查询函数
 // 关键参数:
