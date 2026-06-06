@@ -43,6 +43,17 @@
 #define BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE 1
 #endif
 
+// 双板 w/s 激进转角结束后，是否立刻接一个同样时长的反向回摆角。
+// 当前行为：
+// - 1：主激进角结束后，自动进入反向激进角，角度绝对值相同、持续时间同 BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS。
+// - 0：主激进角结束后直接退出固定角覆盖，回到几何 pure_angle。
+// 说明：
+// - 这里只控制 w/s 绕行动作，不影响 v/u。
+// - 回摆仍然会被新远端状态、stale timeout、n/b 覆盖或清空。
+#ifndef BW_REMOTE_SIGN_REBOUND_TURN_ENABLE
+#define BW_REMOTE_SIGN_REBOUND_TURN_ENABLE 1
+#endif
+
 // 普通路段宽度趋势异常时，是否强制退回 MIXED。
 // 使用位置：image_midline_process.cc。
 // - 1：检测到左右候选中线间距沿前向持续增大/减小，就锁 MIXED。
