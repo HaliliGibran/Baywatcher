@@ -1113,6 +1113,78 @@ static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
     return finalize_logits_to_result(out_f, calibration_temperature, logit_bias);
 }
 
+static bool detect_red_candidate_for_early_slowdown(const cv::Mat& frame_bgr,
+                                                    cv::Rect* best_rect)
+{
+    if (frame_bgr.empty())
+    {
+        return false;
+    }
+
+    const int y0 = std::max(0, std::min(kRecognitionSlowdownMinSearchYInclusive, frame_bgr.rows - 1));
+    const int y1 = std::max(y0 + 1, std::min(kRecognitionSlowdownMaxSearchYExclusive, frame_bgr.rows));
+    if (y1 <= y0)
+    {
+        return false;
+    }
+
+    constexpr int kEarlyRedScoreThreshold = 130;
+    constexpr int kEarlyRedMinR = 70;
+    constexpr int kEarlyRedDomThreshold = 60;
+    constexpr int kEarlyMinPixelCount = 24;
+    constexpr int kEarlyMinWidth = 4;
+    constexpr int kEarlyMinHeight = 4;
+
+    int min_x = frame_bgr.cols;
+    int max_x = -1;
+    int min_y = y1;
+    int max_y = -1;
+    int red_count = 0;
+
+    for (int y = y0; y < y1; ++y)
+    {
+        const cv::Vec3b* row_ptr = frame_bgr.ptr<cv::Vec3b>(y);
+        for (int x = 0; x < frame_bgr.cols; ++x)
+        {
+            const int b = static_cast<int>(row_ptr[x][0]);
+            const int g = static_cast<int>(row_ptr[x][1]);
+            const int r = static_cast<int>(row_ptr[x][2]);
+            const int red_score = 2 * r - g - b;
+            const int dom = r - std::max(g, b);
+            if (red_score < kEarlyRedScoreThreshold ||
+                r < kEarlyRedMinR ||
+                dom < kEarlyRedDomThreshold)
+            {
+                continue;
+            }
+
+            ++red_count;
+            min_x = std::min(min_x, x);
+            max_x = std::max(max_x, x);
+            min_y = std::min(min_y, y);
+            max_y = std::max(max_y, y);
+        }
+    }
+
+    if (red_count < kEarlyMinPixelCount || max_x < min_x || max_y < min_y)
+    {
+        return false;
+    }
+
+    const int width = max_x - min_x + 1;
+    const int height = max_y - min_y + 1;
+    if (width < kEarlyMinWidth || height < kEarlyMinHeight)
+    {
+        return false;
+    }
+
+    if (best_rect != nullptr)
+    {
+        *best_rect = cv::Rect(min_x, min_y, width, height);
+    }
+    return true;
+}
+
 static ProbabilityDecisionSummary summarize_probabilities(const std::array<float, kRecognitionMaxClasses>& prob_sum,
                                                           size_t active_class_count,
                                                           int valid_frames)
@@ -1408,10 +1480,17 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
 
     cv::Rect slowdown_red_rect;
     const bool has_slowdown_red_candidate =
-        detect_red_candidate_for_slowdown(frame_bgr, &slowdown_red_rect);
+        detect_red_candidate_for_early_slowdown(frame_bgr, &slowdown_red_rect);
     if (has_slowdown_red_candidate)
     {
         recent_red_candidate_until_ms_ = t_ms + kRecognitionRecentCandidateHoldMs;
+        current_vision_code_ = BoardVisionCode::NO_RESULT;
+        if (render_debug)
+        {
+            cv::rectangle(view, slowdown_red_rect, cv::Scalar(0, 255, 255), 2);
+            cv::putText(view, "EARLY RED -> u", cv::Point(16, 112), cv::FONT_HERSHEY_SIMPLEX,
+                        0.60, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+        }
     }
 
     const RoiMethod roi_method = DefaultRoiMethod();
@@ -1522,10 +1601,6 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         {
             current_vision_code_ = BoardVisionCode::NO_RESULT;
         }
-        if (current_vision_code_ == BoardVisionCode::UNKNOWN && has_slowdown_red_candidate)
-        {
-            current_vision_code_ = BoardVisionCode::NO_RESULT;
-        }
         const std::string red_text = red_observation_text(trigger_roi, frame_bgr.cols);
         const std::string reject_text = roi_reject_reason_text(trigger_roi);
         if (kRecognitionVerboseLog &&
@@ -1577,6 +1652,10 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         latched_release_pending_ = false;
         latched_release_deadline_ms_ = 0;
         current_vision_code_ = fallback_code_from_roi_result(trigger_roi);
+        if (current_vision_code_ == BoardVisionCode::UNKNOWN && has_slowdown_red_candidate)
+        {
+            current_vision_code_ = BoardVisionCode::NO_RESULT;
+        }
         const std::string red_text = red_observation_text(trigger_roi, frame_bgr.cols);
         const std::string reject_text = roi_reject_reason_text(trigger_roi);
         static uint64_t last_reject_log_ms = 0;

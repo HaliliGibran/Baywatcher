@@ -56,6 +56,8 @@ constexpr int kStripSupportMinBelowPixels = 8;
 constexpr int kWhiteReferenceRowY = BW_RECOG_WHITE_REFERENCE_ROW_Y;
 constexpr int kWhiteMaxSaturation = 60;
 constexpr int kWhiteMinValue = 150;
+constexpr int kWhiteMinRgb = 165;
+constexpr int kWhiteMaxChannelDiff = 40;
 constexpr int kWhiteMinSpanWidth = 60;
 
 constexpr int kMorphKernelSize = 5;
@@ -260,10 +262,17 @@ static bool ComputeWhiteEnvelopeXRangeOnReferenceRow(const cv::Mat& frame_bgr,
     int start = -1;
     for (int x = 0; x < image_width; ++x)
     {
+        const cv::Vec3b bgr = row_bgr.at<cv::Vec3b>(0, x);
         const cv::Vec3b hsv = row_hsv.at<cv::Vec3b>(0, x);
+        const int max_rgb = std::max(std::max(static_cast<int>(bgr[0]), static_cast<int>(bgr[1])),
+                                     static_cast<int>(bgr[2]));
+        const int min_rgb = std::min(std::min(static_cast<int>(bgr[0]), static_cast<int>(bgr[1])),
+                                     static_cast<int>(bgr[2]));
         const bool is_white =
             hsv[1] <= static_cast<unsigned char>(kWhiteMaxSaturation) &&
-            hsv[2] >= static_cast<unsigned char>(kWhiteMinValue);
+            hsv[2] >= static_cast<unsigned char>(kWhiteMinValue) &&
+            min_rgb >= kWhiteMinRgb &&
+            (max_rgb - min_rgb) <= kWhiteMaxChannelDiff;
         if (is_white && start < 0)
         {
             start = x;

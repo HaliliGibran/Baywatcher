@@ -569,7 +569,7 @@
 // - slowdown 预触发带为 y=40..160
 // - 正式识别带为 y=80..160
 #ifndef BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN
-#define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN 60
+#define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN 40
 #endif
 
 // [谨慎调] 仅用于触发减速/NO_RESULT 的前置红色检测下边界（开区间）
