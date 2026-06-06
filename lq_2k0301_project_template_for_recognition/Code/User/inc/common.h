@@ -70,15 +70,21 @@
 #define BW_RECOG_MODEL_VARIANT_GRAYRED32 1
 #endif
 
+// [先调] 识别板模型模式枚举：新 32x32 gray 单通道 6 子类模型
+#ifndef BW_RECOG_MODEL_VARIANT_GRAY32_SUBCLASS
+#define BW_RECOG_MODEL_VARIANT_GRAY32_SUBCLASS 2
+#endif
+
 // [先调] 当前识别板模型模式
 // 作用：
 // - 0：旧模型，ROI 输出 64x64，走 blobFromImage 的 3 通道 RGB 归一化链。
 // - 1：新模型，ROI 输出 32x32，手工构造 1x2x32x32 的 gray/red_dom 双通道 blob。
+// - 2：子类模型，ROI 输出 32x32，手工构造 1x1x32x32 的 gray 单通道 blob。
 // 调参建议：
-// - 默认保持旧模型模式，切新模型时同步确认板端已部署
-//   `model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/`。
+// - 当前默认切到 `gray32 subclass` 版。
+// - 切换到其他模型时，同步确认板端对应模型目录已部署。
 #ifndef BW_RECOG_MODEL_VARIANT
-#define BW_RECOG_MODEL_VARIANT BW_RECOG_MODEL_VARIANT_RGB64
+#define BW_RECOG_MODEL_VARIANT BW_RECOG_MODEL_VARIANT_GRAY32_SUBCLASS
 #endif
 
 // [先调] latest-frame 后台采集层总开关
@@ -206,7 +212,7 @@
 // - 0：关闭常规识别/启动信息日志，仅保留阶段耗时和必要错误。
 // - 1：打开识别板当前信息日志。
 #ifndef BW_RECOG_TEXT_LOG_ENABLE
-#define BW_RECOG_TEXT_LOG_ENABLE 0
+#define BW_RECOG_TEXT_LOG_ENABLE 1
 #endif
 
 // [先调] 主循环目标 fps

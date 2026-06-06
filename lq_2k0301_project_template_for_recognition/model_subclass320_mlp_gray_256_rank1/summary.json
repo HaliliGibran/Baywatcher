@@ -1,0 +1,178 @@
+{
+  "run_dir": "D:\\aaa走马观碑代码\\yolo\\project_root\\out_torch_subclass320\\mlp_gray_256",
+  "candidate": {
+    "name": "mlp_gray_256",
+    "feature_mode": "gray",
+    "input_channels": 1,
+    "hidden_dims": [
+      256
+    ],
+    "cnn_channels": null,
+    "epochs": 18,
+    "label_smoothing": 0.04,
+    "lr": 0.0003,
+    "weight_decay": 0.0001,
+    "seed": 42
+  },
+  "class_names": [
+    "急救包",
+    "望远镜",
+    "救护车",
+    "装甲车",
+    "枪支",
+    "炸药包"
+  ],
+  "best_epoch": 18,
+  "best_val_metrics": {
+    "accuracy": 0.922747,
+    "macro_f1": 0.902589,
+    "correct": 860,
+    "total": 932,
+    "per_class": {
+      "急救包": {
+        "precision": 0.878788,
+        "recall": 0.945652,
+        "f1": 0.910995,
+        "support": 184
+      },
+      "望远镜": {
+        "precision": 0.920213,
+        "recall": 0.920213,
+        "f1": 0.920213,
+        "support": 188
+      },
+      "救护车": {
+        "precision": 0.983051,
+        "recall": 0.87,
+        "f1": 0.923077,
+        "support": 200
+      },
+      "装甲车": {
+        "precision": 0.892617,
+        "recall": 0.898649,
+        "f1": 0.895623,
+        "support": 148
+      },
+      "枪支": {
+        "precision": 0.973958,
+        "recall": 0.973958,
+        "f1": 0.973958,
+        "support": 192
+      },
+      "炸药包": {
+        "precision": 0.678571,
+        "recall": 0.95,
+        "f1": 0.791667,
+        "support": 20
+      }
+    },
+    "loss": 0.604814
+  },
+  "test_metrics_torch": {
+    "accuracy": 0.933775,
+    "macro_f1": 0.935441,
+    "correct": 282,
+    "total": 302,
+    "per_class": {
+      "急救包": {
+        "precision": 0.942308,
+        "recall": 0.942308,
+        "f1": 0.942308,
+        "support": 52
+      },
+      "望远镜": {
+        "precision": 0.98,
+        "recall": 0.924528,
+        "f1": 0.951456,
+        "support": 53
+      },
+      "救护车": {
+        "precision": 1.0,
+        "recall": 0.824561,
+        "f1": 0.903846,
+        "support": 57
+      },
+      "装甲车": {
+        "precision": 0.947368,
+        "recall": 0.972973,
+        "f1": 0.96,
+        "support": 37
+      },
+      "枪支": {
+        "precision": 0.943396,
+        "recall": 0.961538,
+        "f1": 0.952381,
+        "support": 52
+      },
+      "炸药包": {
+        "precision": 0.822581,
+        "recall": 1.0,
+        "f1": 0.902655,
+        "support": 51
+      }
+    },
+    "loss": 0.468226
+  },
+  "test_metrics_onnx": {
+    "accuracy": 0.933775,
+    "macro_f1": 0.935441,
+    "correct": 282,
+    "total": 302,
+    "per_class": {
+      "急救包": {
+        "precision": 0.942308,
+        "recall": 0.942308,
+        "f1": 0.942308,
+        "support": 52
+      },
+      "望远镜": {
+        "precision": 0.98,
+        "recall": 0.924528,
+        "f1": 0.951456,
+        "support": 53
+      },
+      "救护车": {
+        "precision": 1.0,
+        "recall": 0.824561,
+        "f1": 0.903846,
+        "support": 57
+      },
+      "装甲车": {
+        "precision": 0.947368,
+        "recall": 0.972973,
+        "f1": 0.96,
+        "support": 37
+      },
+      "枪支": {
+        "precision": 0.943396,
+        "recall": 0.961538,
+        "f1": 0.952381,
+        "support": 52
+      },
+      "炸药包": {
+        "precision": 0.822581,
+        "recall": 1.0,
+        "f1": 0.902655,
+        "support": 51
+      }
+    }
+  },
+  "benchmark": {
+    "samples": 237,
+    "total_ms_mean": 0.0249,
+    "total_ms_median": 0.0224,
+    "forward_ms_mean": 0.0235
+  },
+  "predicted_time_ms": 11.5524,
+  "score": {
+    "discarded": false,
+    "accuracy_pct": 93.38,
+    "accuracy_score": 66.89,
+    "time_score": 76.9,
+    "total_score": 71.89
+  },
+  "elapsed_seconds": 164.71,
+  "train_size": 8404,
+  "val_size": 932,
+  "test_size": 302
+}

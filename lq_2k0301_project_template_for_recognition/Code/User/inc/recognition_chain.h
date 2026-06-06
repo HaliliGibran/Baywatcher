@@ -11,6 +11,8 @@
 class RecognitionChain
 {
 public:
+    static constexpr size_t kMaxModelClasses = 6;
+
     struct PerfSample
     {
         double ultra_precheck_ms = 0.0;
@@ -77,8 +79,8 @@ private:
     bool enabled_;
     cv::dnn::Net net_;
     std::vector<std::string> class_names_;
-    std::array<float, 3> prob_sum_;
-    std::array<float, 3> logit_bias_;
+    std::array<float, kMaxModelClasses> prob_sum_;
+    std::array<float, kMaxModelClasses> logit_bias_;
     int valid_frame_count_;
     int min_valid_frames_;
     int max_valid_frames_;

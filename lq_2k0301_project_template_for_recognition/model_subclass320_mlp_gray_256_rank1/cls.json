@@ -1,0 +1,25 @@
+{
+  "arch": "mlp_gray_256",
+  "feature_mode": "gray",
+  "input_channels": 1,
+  "hidden_dims": [
+    256
+  ],
+  "cnn_channels": null,
+  "class_names": [
+    "急救包",
+    "望远镜",
+    "救护车",
+    "装甲车",
+    "枪支",
+    "炸药包"
+  ],
+  "image_size": 32,
+  "mean": [
+    0.449
+  ],
+  "std": [
+    0.226
+  ],
+  "onnx_path": "D:\\aaa走马观碑代码\\yolo\\project_root\\out_torch_subclass320\\mlp_gray_256\\cls_torch.onnx"
+}

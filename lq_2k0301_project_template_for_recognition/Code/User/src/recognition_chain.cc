@@ -35,24 +35,32 @@ constexpr float kRecognitionDecisionMarginThreshold = BW_RECOG_DECISION_MARGIN_T
 constexpr int kRecognitionModelVariant = BW_RECOG_MODEL_VARIANT;
 constexpr bool kRecognitionUseGrayRed32Model =
     (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_GRAYRED32);
-constexpr int kRecognitionModelInputSize = kRecognitionUseGrayRed32Model ? 32 : 64;
+constexpr bool kRecognitionUseGray32SubclassModel =
+    (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_GRAY32_SUBCLASS);
+constexpr int kRecognitionModelInputSize =
+    (kRecognitionUseGrayRed32Model || kRecognitionUseGray32SubclassModel) ? 32 : 64;
 constexpr const char* kRecognitionModelRootDir =
+    kRecognitionUseGray32SubclassModel
+        ? "./model_subclass320_mlp_gray_256_rank1"
+        :
     kRecognitionUseGrayRed32Model
         ? "./model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1"
         : "./model";
 constexpr const char* kRecognitionModelVariantName =
-    kRecognitionUseGrayRed32Model ? "grayred32_mlp_wider" : "rgb64_classic";
+    kRecognitionUseGray32SubclassModel ? "gray32_subclass_mlp_256" :
+    (kRecognitionUseGrayRed32Model ? "grayred32_mlp_wider" : "rgb64_classic");
+constexpr size_t kRecognitionMaxClasses = RecognitionChain::kMaxModelClasses;
 
 struct RoiClassificationResult
 {
     int predicted_index = -1;
-    std::array<float, 3> probabilities = {0.0f, 0.0f, 0.0f};
+    std::array<float, kRecognitionMaxClasses> probabilities = {};
 };
 
 struct DeployCalibration
 {
     float temperature = 1.0f;
-    std::array<float, 3> logit_bias = {0.0f, 0.0f, 0.0f};
+    std::array<float, kRecognitionMaxClasses> logit_bias = {};
     float decision_top1_threshold = kRecognitionDecisionTop1AvgThreshold;
     float decision_margin_threshold = kRecognitionDecisionMarginThreshold;
     bool loaded = false;
@@ -69,10 +77,11 @@ struct ProbabilityDecisionSummary
 
 static RoiClassificationResult finalize_logits_to_result(const cv::Mat& logits_f32,
                                                          float calibration_temperature,
-                                                         const std::array<float, 3>& logit_bias)
+                                                         const std::array<float, kRecognitionMaxClasses>& logit_bias)
 {
     RoiClassificationResult result;
-    const int count = std::min(static_cast<int>(logits_f32.total()), 3);
+    const int count = std::min(static_cast<int>(logits_f32.total()),
+                               static_cast<int>(kRecognitionMaxClasses));
     float max_logit = -std::numeric_limits<float>::infinity();
     for (int i = 0; i < count; ++i)
     {
@@ -621,9 +630,9 @@ static float parse_json_number_or_default(const std::string& content,
     }
 }
 
-static std::array<float, 3> parse_json_float_array3(const std::string& content,
-                                                    const std::string& key,
-                                                    const std::array<float, 3>& default_value)
+static std::array<float, kRecognitionMaxClasses> parse_json_float_array(const std::string& content,
+                                                                        const std::string& key,
+                                                                        const std::array<float, kRecognitionMaxClasses>& default_value)
 {
     const std::regex re("\"" + key + "\"\\s*:\\s*\\[([^\\]]*)\\]");
     std::smatch match;
@@ -631,11 +640,11 @@ static std::array<float, 3> parse_json_float_array3(const std::string& content,
     {
         return default_value;
     }
-    std::array<float, 3> out = default_value;
+    std::array<float, kRecognitionMaxClasses> out = default_value;
     std::stringstream ss(match[1].str());
     std::string item;
     int idx = 0;
-    while (std::getline(ss, item, ',') && idx < 3)
+    while (std::getline(ss, item, ',') && idx < static_cast<int>(kRecognitionMaxClasses))
     {
         try
         {
@@ -667,7 +676,7 @@ static DeployCalibration load_deploy_calibration_json(const std::string& path)
     const std::string content = ss.str();
 
     calibration.temperature = std::max(1e-4f, parse_json_number_or_default(content, "temperature", 1.0f));
-    calibration.logit_bias = parse_json_float_array3(content, "logit_bias", calibration.logit_bias);
+    calibration.logit_bias = parse_json_float_array(content, "logit_bias", calibration.logit_bias);
     calibration.decision_top1_threshold = parse_json_number_or_default(content, "decision_top1_threshold", kRecognitionDecisionTop1AvgThreshold);
     calibration.decision_margin_threshold = parse_json_number_or_default(content, "decision_margin_threshold", kRecognitionDecisionMarginThreshold);
     calibration.loaded = true;
@@ -676,10 +685,18 @@ static DeployCalibration load_deploy_calibration_json(const std::string& path)
 
 static std::vector<std::string> load_class_names_from_json(const std::string& path)
 {
+    const auto default_class_names = []() -> std::vector<std::string> {
+        if (kRecognitionUseGray32SubclassModel)
+        {
+            return {"急救包", "望远镜", "救护车", "装甲车", "枪支", "炸药包"};
+        }
+        return {"weapon", "supply", "vehicle"};
+    };
+
     std::ifstream fin(path);
     if (!fin.is_open())
     {
-        return {"supply", "vehicle", "weapon"};
+        return default_class_names();
     }
 
     std::ostringstream ss;
@@ -719,7 +736,7 @@ static std::vector<std::string> load_class_names_from_json(const std::string& pa
 
     if (out.empty())
     {
-        out = {"supply", "vehicle", "weapon"};
+        out = default_class_names();
     }
     return out;
 }
@@ -732,6 +749,18 @@ static uint8_t parse_target_class_code(const std::string& name)
     s.resize(name.size());
     std::transform(name.begin(), name.end(), s.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (name.find("枪支") != std::string::npos || name.find("炸药包") != std::string::npos)
+    {
+        return 1;
+    }
+    if (name.find("急救包") != std::string::npos || name.find("望远镜") != std::string::npos)
+    {
+        return 2;
+    }
+    if (name.find("救护车") != std::string::npos || name.find("装甲车") != std::string::npos)
+    {
+        return 3;
+    }
     if (s.find("weapon") != std::string::npos)
     {
         return 1;
@@ -819,11 +848,38 @@ static bool detect_red_rect_like(const cv::Mat& frame_bgr, cv::Rect* best_rect, 
 
 // [Recognition Chain] 单个 ROI 的 Top-1 分类推理。
 // 作用：按当前模型模式把 ROI 预处理成对应 blob，再送入 ONNX，输出当前帧的类别索引。
-static RoiClassificationResult classify_roi_index(cv::dnn::Net& net, const cv::Mat& roi_bgr, float calibration_temperature, const std::array<float, 3>& logit_bias)
+static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
+                                                  const cv::Mat& roi_bgr,
+                                                  float calibration_temperature,
+                                                  const std::array<float, kRecognitionMaxClasses>& logit_bias)
 {
     cv::Mat blob;
 
-    if (kRecognitionUseGrayRed32Model)
+    if (kRecognitionUseGray32SubclassModel)
+    {
+        cv::Mat resized;
+        cv::resize(roi_bgr, resized, cv::Size(32, 32), 0, 0, cv::INTER_AREA);
+
+        cv::Mat gray_u8;
+        cv::cvtColor(resized, gray_u8, cv::COLOR_BGR2GRAY);
+        cv::Mat gray_f32;
+        gray_u8.convertTo(gray_f32, CV_32F, 1.0 / 255.0);
+
+        const int sizes[4] = {1, 1, 32, 32};
+        blob = cv::Mat(4, sizes, CV_32F, cv::Scalar(0));
+        float* gray_channel = blob.ptr<float>(0, 0);
+
+        for (int y = 0; y < 32; ++y)
+        {
+            for (int x = 0; x < 32; ++x)
+            {
+                const int idx = y * 32 + x;
+                const float gray = gray_f32.at<float>(y, x);
+                gray_channel[idx] = (gray - 0.449f) / 0.226f;
+            }
+        }
+    }
+    else if (kRecognitionUseGrayRed32Model)
     {
         cv::Mat resized;
         cv::resize(roi_bgr, resized, cv::Size(32, 32), 0, 0, cv::INTER_AREA);
@@ -888,7 +944,9 @@ static RoiClassificationResult classify_roi_index(cv::dnn::Net& net, const cv::M
     return finalize_logits_to_result(out_f, calibration_temperature, logit_bias);
 }
 
-static ProbabilityDecisionSummary summarize_probabilities(const std::array<float, 3>& prob_sum, int valid_frames)
+static ProbabilityDecisionSummary summarize_probabilities(const std::array<float, kRecognitionMaxClasses>& prob_sum,
+                                                          size_t active_class_count,
+                                                          int valid_frames)
 {
     ProbabilityDecisionSummary summary;
     if (valid_frames <= 0)
@@ -896,8 +954,14 @@ static ProbabilityDecisionSummary summarize_probabilities(const std::array<float
         return summary;
     }
 
-    std::array<float, 3> avg_probs = {0.0f, 0.0f, 0.0f};
-    for (size_t i = 0; i < avg_probs.size(); ++i)
+    active_class_count = std::min(active_class_count, kRecognitionMaxClasses);
+    if (active_class_count == 0)
+    {
+        return summary;
+    }
+
+    std::array<float, kRecognitionMaxClasses> avg_probs = {};
+    for (size_t i = 0; i < active_class_count; ++i)
     {
         avg_probs[i] = prob_sum[i] / static_cast<float>(valid_frames);
     }
@@ -906,7 +970,7 @@ static ProbabilityDecisionSummary summarize_probabilities(const std::array<float
     int second_index = -1;
     float best_value = -1.0f;
     float second_value = -1.0f;
-    for (int i = 0; i < static_cast<int>(avg_probs.size()); ++i)
+    for (int i = 0; i < static_cast<int>(active_class_count); ++i)
     {
         const float value = avg_probs[static_cast<size_t>(i)];
         if (value > best_value)
@@ -986,8 +1050,8 @@ bool RecognitionChain::ParseSwitch(int argc, char** argv, bool default_value)
 
 RecognitionChain::RecognitionChain()
     : enabled_(false),
-      prob_sum_({0.0f, 0.0f, 0.0f}),
-      logit_bias_({0.0f, 0.0f, 0.0f}),
+      prob_sum_(),
+      logit_bias_(),
       valid_frame_count_(0),
       min_valid_frames_(kRecognitionMinValidFrames),
       max_valid_frames_(kRecognitionMaxValidFrames),
@@ -1061,7 +1125,9 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
         {
             std::cout << "[ONNX] variant=" << kRecognitionModelVariantName
                       << ", input=" << kRecognitionModelInputSize << "x" << kRecognitionModelInputSize
-                      << (kRecognitionUseGrayRed32Model ? ", channels=2(gray+red_dom)" : ", channels=3(rgb)")
+                      << (kRecognitionUseGray32SubclassModel
+                              ? ", channels=1(gray)"
+                              : (kRecognitionUseGrayRed32Model ? ", channels=2(gray+red_dom)" : ", channels=3(rgb)"))
                       << std::endl;
             std::cout << "[ONNX] enabled, model=" << model_path << std::endl;
             std::cout << "[ONNX] classes=" << class_path << std::endl;
@@ -1087,7 +1153,7 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
 
 void RecognitionChain::Reset()
 {
-    prob_sum_ = {0.0f, 0.0f, 0.0f};
+    prob_sum_.fill(0.0f);
     valid_frame_count_ = 0;
     mode_ = Mode::NORMAL;
     recognition_timeout_ms_ = 0;
@@ -1371,7 +1437,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     // [Recognition Chain Step 3] 进入识别态。
     // 作用：marker ROI 一旦构造成功，就直接进入分类阶段。
     mode_ = Mode::RECOGNITION;
-    prob_sum_ = {0.0f, 0.0f, 0.0f};
+    prob_sum_.fill(0.0f);
     valid_frame_count_ = 0;
     recognition_timeout_ms_ = t_ms + kRecognitionProbabilityTimeoutMs;
     current_vision_code_ = BoardVisionCode::NO_RESULT;
@@ -1449,7 +1515,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     if (roi_result.status == "miss")
     {
-        prob_sum_ = {0.0f, 0.0f, 0.0f};
+        prob_sum_.fill(0.0f);
         valid_frame_count_ = 0;
         current_vision_code_ = fallback_code_from_roi_result(roi_result);
         latched_symbol_code_ = BoardVisionCode::INVALID;
@@ -1478,7 +1544,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     if (roi_result.status != "rotated_roi")
     {
-        prob_sum_ = {0.0f, 0.0f, 0.0f};
+        prob_sum_.fill(0.0f);
         valid_frame_count_ = 0;
         current_vision_code_ = fallback_code_from_roi_result(roi_result);
         latched_symbol_code_ = BoardVisionCode::INVALID;
@@ -1517,6 +1583,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     const auto classify_begin = steady_clock_t::now();
     last_perf_sample_.classify_total_called = true;
+    const size_t active_class_count = std::min(class_names_.size(), kRecognitionMaxClasses);
     const RoiQualityMetrics quality =
         ComputeLowInformationRoiMetrics(roi_result.roi_bgr, roi_method, roi_result);
     std::ostringstream quality_info;
@@ -1536,7 +1603,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     last_perf_sample_.onnx_infer_called = true;
     if (cls.predicted_index >= 0 && cls.predicted_index < static_cast<int>(class_names_.size()))
     {
-        for (size_t i = 0; i < prob_sum_.size(); ++i)
+        for (size_t i = 0; i < active_class_count; ++i)
         {
             prob_sum_[i] += cls.probabilities[i];
         }
@@ -1555,13 +1622,15 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                         0.55, cv::Scalar(255, 255, 0), 2, cv::LINE_AA);
         }
         const ProbabilityDecisionSummary prob_summary =
-            summarize_probabilities(prob_sum_, valid_frame_count_);
+            summarize_probabilities(prob_sum_, active_class_count, valid_frame_count_);
         std::ostringstream prob_info;
-        prob_info << "avg_probs: "
-                  << std::fixed << std::setprecision(2)
-                  << prob_sum_[0] / static_cast<float>(valid_frame_count_) << "/"
-                  << prob_sum_[1] / static_cast<float>(valid_frame_count_) << "/"
-                  << prob_sum_[2] / static_cast<float>(valid_frame_count_);
+        prob_info << "avg_probs:";
+        for (size_t i = 0; i < active_class_count; ++i)
+        {
+            prob_info << (i == 0 ? " " : "/")
+                      << std::fixed << std::setprecision(2)
+                      << prob_sum_[i] / static_cast<float>(valid_frame_count_);
+        }
         if (render_debug)
         {
             cv::putText(view, prob_info.str(), cv::Point(16, 196), cv::FONT_HERSHEY_SIMPLEX,
@@ -1599,7 +1668,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     }
 
     const ProbabilityDecisionSummary prob_summary =
-        summarize_probabilities(prob_sum_, valid_frame_count_);
+        summarize_probabilities(prob_sum_, active_class_count, valid_frame_count_);
     const bool early_ready =
         valid_frame_count_ >= min_valid_frames_ &&
         prob_summary.top1_avg >= decision_top1_threshold_ &&
@@ -1614,7 +1683,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     }
 
     // [Recognition Chain Step 5] 概率累积收敛。
-    // 作用：从 3~5 帧概率里选最终类别，再映射到后续车体策略。
+    // 作用：从当前累计的有效推理帧里选最终类别，再映射到后续车体策略。
     std::string label = "no_decision";
     TargetClass target = TargetClass::UNKNOWN;
     bool has_final_decision = false;
@@ -1675,7 +1744,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     }
 
     mode_ = Mode::NORMAL;
-    prob_sum_ = {0.0f, 0.0f, 0.0f};
+    prob_sum_.fill(0.0f);
     valid_frame_count_ = 0;
     last_perf_sample_.process_recog_total_ms =
         std::chrono::duration<double, std::milli>(steady_clock_t::now() - process_begin).count();
