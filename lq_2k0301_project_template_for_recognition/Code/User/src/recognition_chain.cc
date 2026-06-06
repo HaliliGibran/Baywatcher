@@ -23,6 +23,8 @@ constexpr uint64_t kRecognitionTriggerRejectLogIntervalMs = 300;
 constexpr uint64_t kRecognitionProbabilityTimeoutMs = 1200;
 constexpr int kRecognitionTriggerFrameWidth = BW_RECOG_CAMERA_FRAME_WIDTH;
 constexpr int kRecognitionTriggerFrameHeight = BW_RECOG_CAMERA_FRAME_HEIGHT;
+constexpr int kRecognitionSlowdownMinSearchYInclusive = BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN;
+constexpr int kRecognitionSlowdownMaxSearchYExclusive = BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MAX;
 constexpr int kRecognitionMinSearchYInclusive = BW_RECOG_TRIGGER_SEARCH_Y_MIN;
 constexpr int kRecognitionMaxSearchYExclusive = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr uint64_t kRecognitionRecentCandidateHoldMs = 200;
@@ -138,7 +140,9 @@ static RoiClassificationResult finalize_logits_to_result(const cv::Mat& logits_f
 static void draw_trigger_search_info(cv::Mat& view)
 {
     std::ostringstream oss;
-    oss << "search_y=[" << kRecognitionMinSearchYInclusive
+    oss << "slowdown_y=[" << kRecognitionSlowdownMinSearchYInclusive
+        << "," << kRecognitionSlowdownMaxSearchYExclusive << ")"
+        << " recog_y=[" << kRecognitionMinSearchYInclusive
         << "," << kRecognitionMaxSearchYExclusive << ")";
     cv::putText(view, oss.str(), cv::Point(16, 84), cv::FONT_HERSHEY_SIMPLEX,
                 0.55, cv::Scalar(255, 220, 0), 2, cv::LINE_AA);
@@ -949,6 +953,37 @@ static bool detect_red_rect_like(const cv::Mat& frame_bgr, cv::Rect* best_rect, 
     return true;
 }
 
+static bool detect_red_candidate_for_slowdown(const cv::Mat& frame_bgr, cv::Rect* best_rect = nullptr)
+{
+    if (frame_bgr.empty())
+    {
+        return false;
+    }
+
+    const int y_min = std::max(0, std::min(kRecognitionSlowdownMinSearchYInclusive, frame_bgr.rows));
+    const int y_max = std::max(y_min, std::min(kRecognitionSlowdownMaxSearchYExclusive, frame_bgr.rows));
+    if (y_max - y_min <= 1)
+    {
+        return false;
+    }
+
+    const cv::Rect band_rect(0, y_min, frame_bgr.cols, y_max - y_min);
+    cv::Rect local_rect;
+    if (!detect_red_rect_like(frame_bgr(band_rect), &local_rect, nullptr))
+    {
+        return false;
+    }
+
+    if (best_rect != nullptr)
+    {
+        *best_rect = cv::Rect(local_rect.x,
+                              local_rect.y + y_min,
+                              local_rect.width,
+                              local_rect.height);
+    }
+    return true;
+}
+
 // [Recognition Chain] 单个 ROI 的 Top-1 分类推理。
 // 作用：按当前模型模式把 ROI 预处理成对应 blob，再送入 ONNX，输出当前帧的类别索引。
 static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
@@ -1371,6 +1406,14 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         view.release();
     }
 
+    cv::Rect slowdown_red_rect;
+    const bool has_slowdown_red_candidate =
+        detect_red_candidate_for_slowdown(frame_bgr, &slowdown_red_rect);
+    if (has_slowdown_red_candidate)
+    {
+        recent_red_candidate_until_ms_ = t_ms + kRecognitionRecentCandidateHoldMs;
+    }
+
     const RoiMethod roi_method = DefaultRoiMethod();
     const auto extract_begin = steady_clock_t::now();
     RoiExtractionResult trigger_roi =
@@ -1475,6 +1518,14 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         latched_release_pending_ = false;
         latched_release_deadline_ms_ = 0;
         current_vision_code_ = fallback_code_from_roi_result(trigger_roi);
+        if (current_vision_code_ == BoardVisionCode::UNKNOWN && has_slowdown_red_candidate)
+        {
+            current_vision_code_ = BoardVisionCode::NO_RESULT;
+        }
+        if (current_vision_code_ == BoardVisionCode::UNKNOWN && has_slowdown_red_candidate)
+        {
+            current_vision_code_ = BoardVisionCode::NO_RESULT;
+        }
         const std::string red_text = red_observation_text(trigger_roi, frame_bgr.cols);
         const std::string reject_text = roi_reject_reason_text(trigger_roi);
         if (kRecognitionVerboseLog &&
@@ -1509,6 +1560,11 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
                         0.65, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
             cv::putText(view, reject_text, cv::Point(16, 140), cv::FONT_HERSHEY_SIMPLEX,
                         0.48, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+            if (current_vision_code_ == BoardVisionCode::NO_RESULT && has_slowdown_red_candidate)
+            {
+                cv::putText(view, "EARLY RED -> u", cv::Point(16, 168), cv::FONT_HERSHEY_SIMPLEX,
+                            0.55, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+            }
         }
         last_perf_sample_.try_total_ms =
             std::chrono::duration<double, std::milli>(steady_clock_t::now() - try_begin).count();
@@ -1564,6 +1620,11 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
                         0.65, cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
             cv::putText(view, reject_text, cv::Point(16, 140), cv::FONT_HERSHEY_SIMPLEX,
                         0.50, cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
+            if (current_vision_code_ == BoardVisionCode::NO_RESULT && has_slowdown_red_candidate)
+            {
+                cv::putText(view, "EARLY RED -> u", cv::Point(16, 168), cv::FONT_HERSHEY_SIMPLEX,
+                            0.55, cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
+            }
         }
         last_perf_sample_.try_total_ms =
             std::chrono::duration<double, std::milli>(steady_clock_t::now() - try_begin).count();

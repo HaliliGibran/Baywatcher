@@ -561,6 +561,22 @@
 #define BW_RECOG_TRIGGER_SEARCH_Y_MAX 160
 #endif
 
+// [谨慎调] 仅用于触发减速/NO_RESULT 的前置红色检测上边界
+// 作用：
+// - 这条带只用于更早地发出 `u`，让运行板先减速。
+// - 不改变正式进入识别链的 ROI 搜索带；正式识别仍使用 y=80..160。
+// 当前默认：
+// - slowdown 预触发带为 y=40..160
+// - 正式识别带为 y=80..160
+#ifndef BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN
+#define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN 40
+#endif
+
+// [谨慎调] 仅用于触发减速/NO_RESULT 的前置红色检测下边界（开区间）
+#ifndef BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MAX
+#define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MAX BW_RECOG_TRIGGER_SEARCH_Y_MAX
+#endif
+
 // [一般别动] 红色掩膜允许处理到的最大 y（开区间）
 // 作用：
 // - 与《红带分类与ROI提取流程320.md》保持一致。
