@@ -455,7 +455,7 @@
 // - 收到新状态覆盖
 // - stale timeout 触发整体复位
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS
-#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 75
+#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 200
 #endif
 
 // 远端识别状态总过期时间（毫秒）。
@@ -493,7 +493,7 @@
 // 调大：u 阶段更快，更接近普通速度。
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 0.40f
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.1f
 #endif
 #pragma endregion
 
