@@ -27,6 +27,7 @@ constexpr int kRecognitionMinSearchYInclusive = BW_RECOG_TRIGGER_SEARCH_Y_MIN;
 constexpr int kRecognitionMaxSearchYExclusive = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr uint64_t kRecognitionRecentCandidateHoldMs = 200;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
+constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
 constexpr bool kRecognitionVerboseLog = kRecognitionTextLog && (BW_RECOG_VERBOSE_LOG != 0);
 constexpr int kRecognitionMinValidFrames = BW_RECOG_MIN_VALID_FRAMES;
 constexpr int kRecognitionMaxValidFrames = BW_RECOG_MAX_VALID_FRAMES;
@@ -35,20 +36,28 @@ constexpr float kRecognitionDecisionMarginThreshold = BW_RECOG_DECISION_MARGIN_T
 constexpr int kRecognitionModelVariant = BW_RECOG_MODEL_VARIANT;
 constexpr bool kRecognitionUseGrayRed32Model =
     (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_GRAYRED32);
+constexpr bool kRecognitionUseRgb32SubclassModel =
+    (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_RGB32_SUBCLASS);
 constexpr bool kRecognitionUseGray32SubclassModel =
     (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_GRAY32_SUBCLASS);
+constexpr bool kRecognitionUseSubclassModel =
+    kRecognitionUseGray32SubclassModel || kRecognitionUseRgb32SubclassModel;
 constexpr int kRecognitionModelInputSize =
-    (kRecognitionUseGrayRed32Model || kRecognitionUseGray32SubclassModel) ? 32 : 64;
+    (kRecognitionUseGrayRed32Model || kRecognitionUseSubclassModel) ? 32 : 64;
 constexpr const char* kRecognitionModelRootDir =
     kRecognitionUseGray32SubclassModel
         ? "./model_subclass320_mlp_gray_256_rank1"
+        :
+    kRecognitionUseRgb32SubclassModel
+        ? "./model_subclass320_mlp_rgb_256_128_rank3"
         :
     kRecognitionUseGrayRed32Model
         ? "./model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1"
         : "./model";
 constexpr const char* kRecognitionModelVariantName =
     kRecognitionUseGray32SubclassModel ? "gray32_subclass_mlp_256" :
-    (kRecognitionUseGrayRed32Model ? "grayred32_mlp_wider" : "rgb64_classic");
+    (kRecognitionUseRgb32SubclassModel ? "rgb32_subclass_mlp_256_128" :
+     (kRecognitionUseGrayRed32Model ? "grayred32_mlp_wider" : "rgb64_classic"));
 constexpr size_t kRecognitionMaxClasses = RecognitionChain::kMaxModelClasses;
 
 struct RoiClassificationResult
@@ -686,7 +695,7 @@ static DeployCalibration load_deploy_calibration_json(const std::string& path)
 static std::vector<std::string> load_class_names_from_json(const std::string& path)
 {
     const auto default_class_names = []() -> std::vector<std::string> {
-        if (kRecognitionUseGray32SubclassModel)
+        if (kRecognitionUseSubclassModel)
         {
             return {"急救包", "望远镜", "救护车", "装甲车", "枪支", "炸药包"};
         }
@@ -776,6 +785,100 @@ static uint8_t parse_target_class_code(const std::string& name)
     return 0;
 }
 
+static size_t recognition_accum_class_count(size_t model_class_count)
+{
+    if (kRecognitionUseSubclassModel)
+    {
+        return 3;
+    }
+    return std::min(model_class_count, kRecognitionMaxClasses);
+}
+
+static const char* grouped_class_name(int grouped_index)
+{
+    switch (grouped_index)
+    {
+    case 0: return "weapon";
+    case 1: return "supply";
+    case 2: return "vehicle";
+    default: return "unknown";
+    }
+}
+
+static uint8_t grouped_target_code(int grouped_index)
+{
+    switch (grouped_index)
+    {
+    case 0: return 1;
+    case 1: return 2;
+    case 2: return 3;
+    default: return 0;
+    }
+}
+
+static int grouped_index_from_target_code(uint8_t target_code)
+{
+    switch (target_code)
+    {
+    case 1: return 0;
+    case 2: return 1;
+    case 3: return 2;
+    default: return -1;
+    }
+}
+
+static void accumulate_probabilities_for_runtime_decision(
+    const RoiClassificationResult& cls,
+    const std::vector<std::string>& class_names,
+    std::array<float, kRecognitionMaxClasses>& prob_sum)
+{
+    if (!kRecognitionUseSubclassModel)
+    {
+        const size_t active_class_count = std::min(class_names.size(), kRecognitionMaxClasses);
+        for (size_t i = 0; i < active_class_count; ++i)
+        {
+            prob_sum[i] += cls.probabilities[i];
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < class_names.size() && i < kRecognitionMaxClasses; ++i)
+    {
+        const int grouped_index = grouped_index_from_target_code(parse_target_class_code(class_names[i]));
+        if (grouped_index >= 0 && grouped_index < 3)
+        {
+            prob_sum[static_cast<size_t>(grouped_index)] += cls.probabilities[i];
+        }
+    }
+}
+
+static std::string runtime_decision_label(int decision_index,
+                                          const std::vector<std::string>& class_names)
+{
+    if (kRecognitionUseSubclassModel)
+    {
+        return grouped_class_name(decision_index);
+    }
+    if (decision_index >= 0 && decision_index < static_cast<int>(class_names.size()))
+    {
+        return class_names[static_cast<size_t>(decision_index)];
+    }
+    return "unknown";
+}
+
+static uint8_t runtime_decision_target_code(int decision_index,
+                                            const std::vector<std::string>& class_names)
+{
+    if (kRecognitionUseSubclassModel)
+    {
+        return grouped_target_code(decision_index);
+    }
+    if (decision_index >= 0 && decision_index < static_cast<int>(class_names.size()))
+    {
+        return parse_target_class_code(class_names[static_cast<size_t>(decision_index)]);
+    }
+    return 0;
+}
 // [Recognition Chain] 红色触发物检测。
 // 作用：在当前 320x240 原始图上找红色近矩形目标，作为进入识别态的前置触发器。
 static bool detect_red_rect_like(const cv::Mat& frame_bgr, cv::Rect* best_rect, cv::Mat* out_mask = nullptr)
@@ -876,6 +979,37 @@ static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
                 const int idx = y * 32 + x;
                 const float gray = gray_f32.at<float>(y, x);
                 gray_channel[idx] = (gray - 0.449f) / 0.226f;
+            }
+        }
+    }
+    else if (kRecognitionUseRgb32SubclassModel)
+    {
+        static const float kInputMean[3] = {0.485f, 0.456f, 0.406f};
+        static const float kInputStd[3] = {0.229f, 0.224f, 0.225f};
+        cv::Mat resized;
+        cv::resize(roi_bgr, resized, cv::Size(32, 32), 0, 0, cv::INTER_AREA);
+
+        cv::Mat resized_f32;
+        resized.convertTo(resized_f32, CV_32FC3, 1.0 / 255.0);
+
+        const int sizes[4] = {1, 3, 32, 32};
+        blob = cv::Mat(4, sizes, CV_32F, cv::Scalar(0));
+        float* r_channel = blob.ptr<float>(0, 0);
+        float* g_channel = blob.ptr<float>(0, 1);
+        float* b_channel = blob.ptr<float>(0, 2);
+
+        for (int y = 0; y < 32; ++y)
+        {
+            for (int x = 0; x < 32; ++x)
+            {
+                const cv::Vec3f bgr = resized_f32.at<cv::Vec3f>(y, x);
+                const float b = bgr[0];
+                const float g = bgr[1];
+                const float r = bgr[2];
+                const int idx = y * 32 + x;
+                r_channel[idx] = (r - kInputMean[0]) / kInputStd[0];
+                g_channel[idx] = (g - kInputMean[1]) / kInputStd[1];
+                b_channel[idx] = (b - kInputMean[2]) / kInputStd[2];
             }
         }
     }
@@ -1127,7 +1261,9 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
                       << ", input=" << kRecognitionModelInputSize << "x" << kRecognitionModelInputSize
                       << (kRecognitionUseGray32SubclassModel
                               ? ", channels=1(gray)"
-                              : (kRecognitionUseGrayRed32Model ? ", channels=2(gray+red_dom)" : ", channels=3(rgb)"))
+                              : (kRecognitionUseRgb32SubclassModel
+                                     ? ", channels=3(rgb)"
+                                     : (kRecognitionUseGrayRed32Model ? ", channels=2(gray+red_dom)" : ", channels=3(rgb)")))
                       << std::endl;
             std::cout << "[ONNX] enabled, model=" << model_path << std::endl;
             std::cout << "[ONNX] classes=" << class_path << std::endl;
@@ -1583,7 +1719,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     const auto classify_begin = steady_clock_t::now();
     last_perf_sample_.classify_total_called = true;
-    const size_t active_class_count = std::min(class_names_.size(), kRecognitionMaxClasses);
+    const size_t active_class_count = recognition_accum_class_count(class_names_.size());
     const RoiQualityMetrics quality =
         ComputeLowInformationRoiMetrics(roi_result.roi_bgr, roi_method, roi_result);
     std::ostringstream quality_info;
@@ -1603,10 +1739,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     last_perf_sample_.onnx_infer_called = true;
     if (cls.predicted_index >= 0 && cls.predicted_index < static_cast<int>(class_names_.size()))
     {
-        for (size_t i = 0; i < active_class_count; ++i)
-        {
-            prob_sum_[i] += cls.probabilities[i];
-        }
+        accumulate_probabilities_for_runtime_decision(cls, class_names_, prob_sum_);
         valid_frame_count_++;
         const std::string& name = class_names_[cls.predicted_index];
         if (render_debug)
@@ -1637,10 +1770,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                         0.52, cv::Scalar(255, 255, 0), 2, cv::LINE_AA);
         }
         std::ostringstream top_info;
-        top_info << "top1="
-                 << (prob_summary.top1_index >= 0 && prob_summary.top1_index < static_cast<int>(class_names_.size())
-                         ? class_names_[prob_summary.top1_index]
-                         : std::string("unknown"))
+        top_info << "top1=" << runtime_decision_label(prob_summary.top1_index, class_names_)
                  << " p=" << std::fixed << std::setprecision(2) << prob_summary.top1_avg
                  << " m=" << prob_summary.margin;
         if (render_debug)
@@ -1695,12 +1825,12 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     }
     if (valid_frame_count_ >= min_valid_frames_ &&
         prob_summary.top1_index >= 0 &&
-        prob_summary.top1_index < static_cast<int>(class_names_.size()) &&
+        prob_summary.top1_index < static_cast<int>(active_class_count) &&
         prob_summary.top1_avg >= decision_top1_threshold_ &&
         prob_summary.margin >= decision_margin_threshold_)
     {
-        label = class_names_[prob_summary.top1_index];
-        target = static_cast<TargetClass>(parse_target_class_code(label));
+        label = runtime_decision_label(prob_summary.top1_index, class_names_);
+        target = static_cast<TargetClass>(runtime_decision_target_code(prob_summary.top1_index, class_names_));
         final_code = vision_code_from_target_code(static_cast<uint8_t>(target));
         has_final_decision = (final_code != BoardVisionCode::INVALID);
     }
@@ -1716,10 +1846,12 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         }
     }
 
-    if (kRecognitionTextLog)
+    if (kRecognitionResultLog)
     {
         std::cout << "[RECOG] result=" << label
                   << ", valid_frames=" << valid_frame_count_
+                  << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
+                  << ", cls_ms=" << last_perf_sample_.classify_total_ms
                   << ", top1_avg=" << std::fixed << std::setprecision(4) << prob_summary.top1_avg
                   << ", margin=" << prob_summary.margin;
         if (!has_final_decision)
@@ -1736,7 +1868,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     latched_release_pending_ = false;
     latched_release_deadline_ms_ = 0;
 
-    if (kRecognitionTextLog)
+    if (kRecognitionResultLog)
     {
         std::cout << "[RECOG] state_out=" << vision_code_text(current_vision_code_)
                   << ", blob_area=" << std::fixed << std::setprecision(1) << current_blob_area_

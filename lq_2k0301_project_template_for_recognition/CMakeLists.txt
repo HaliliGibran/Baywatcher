@@ -35,6 +35,8 @@ set(PROJECT_MODEL_GRAYRED32_DIR ${PROJECT_SOURCE_DIR}/model_mlp_wider_grayred_ta
 set(OUTPUT_MODEL_GRAYRED32_DIR ${PROJECT_BINARY_DIR}/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1)
 set(PROJECT_MODEL_GRAY32_SUBCLASS_DIR ${PROJECT_SOURCE_DIR}/model_subclass320_mlp_gray_256_rank1)
 set(OUTPUT_MODEL_GRAY32_SUBCLASS_DIR ${PROJECT_BINARY_DIR}/model_subclass320_mlp_gray_256_rank1)
+set(PROJECT_MODEL_RGB32_SUBCLASS_DIR ${PROJECT_SOURCE_DIR}/model_subclass320_mlp_rgb_256_128_rank3)
+set(OUTPUT_MODEL_RGB32_SUBCLASS_DIR ${PROJECT_BINARY_DIR}/model_subclass320_mlp_rgb_256_128_rank3)
 set(LQ_LOCAL_OPENCV_ROOT ${PROJECT_SOURCE_DIR}/cross_lib/opencv)
 set(LQ_LOCAL_NEWLIB_DIR ${PROJECT_SOURCE_DIR}/libraries)
 set(LQ_CAMERA_EX_LIB "")
@@ -210,6 +212,16 @@ if (EXISTS "${PROJECT_MODEL_GRAY32_SUBCLASS_DIR}/cls.onnx" AND
     configure_file(${PROJECT_MODEL_GRAY32_SUBCLASS_DIR}/class_names.json ${OUTPUT_MODEL_GRAY32_SUBCLASS_DIR}/class_names.json COPYONLY)
     if (EXISTS "${PROJECT_MODEL_GRAY32_SUBCLASS_DIR}/deploy_calibration.json")
         configure_file(${PROJECT_MODEL_GRAY32_SUBCLASS_DIR}/deploy_calibration.json ${OUTPUT_MODEL_GRAY32_SUBCLASS_DIR}/deploy_calibration.json COPYONLY)
+    endif()
+endif()
+
+if (EXISTS "${PROJECT_MODEL_RGB32_SUBCLASS_DIR}/cls.onnx" AND
+    EXISTS "${PROJECT_MODEL_RGB32_SUBCLASS_DIR}/class_names.json")
+    file(MAKE_DIRECTORY ${OUTPUT_MODEL_RGB32_SUBCLASS_DIR})
+    configure_file(${PROJECT_MODEL_RGB32_SUBCLASS_DIR}/cls.onnx ${OUTPUT_MODEL_RGB32_SUBCLASS_DIR}/cls.onnx COPYONLY)
+    configure_file(${PROJECT_MODEL_RGB32_SUBCLASS_DIR}/class_names.json ${OUTPUT_MODEL_RGB32_SUBCLASS_DIR}/class_names.json COPYONLY)
+    if (EXISTS "${PROJECT_MODEL_RGB32_SUBCLASS_DIR}/deploy_calibration.json")
+        configure_file(${PROJECT_MODEL_RGB32_SUBCLASS_DIR}/deploy_calibration.json ${OUTPUT_MODEL_RGB32_SUBCLASS_DIR}/deploy_calibration.json COPYONLY)
     endif()
 endif()
 

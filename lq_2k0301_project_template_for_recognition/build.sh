@@ -85,6 +85,14 @@ if [ -f main ]; then
             cp -f ../model_subclass320_mlp_gray_256_rank1/deploy_calibration.json model_subclass320_mlp_gray_256_rank1/deploy_calibration.json
         fi
     fi
+    if [ -d ../model_subclass320_mlp_rgb_256_128_rank3 ]; then
+        mkdir -p model_subclass320_mlp_rgb_256_128_rank3
+        cp -f ../model_subclass320_mlp_rgb_256_128_rank3/cls.onnx model_subclass320_mlp_rgb_256_128_rank3/cls.onnx
+        cp -f ../model_subclass320_mlp_rgb_256_128_rank3/class_names.json model_subclass320_mlp_rgb_256_128_rank3/class_names.json
+        if [ -f ../model_subclass320_mlp_rgb_256_128_rank3/deploy_calibration.json ]; then
+            cp -f ../model_subclass320_mlp_rgb_256_128_rank3/deploy_calibration.json model_subclass320_mlp_rgb_256_128_rank3/deploy_calibration.json
+        fi
+    fi
     #这里可以改成scp传输到我们的板卡上
     # scp main root@172.20.10.9:/home/root/workspace
     # ssh root@172.20.10.9 "mkdir -p /home/root/workspace/model"
@@ -132,6 +140,22 @@ if [ -f main ]; then
         if [ -f model_subclass320_mlp_gray_256_rank1/deploy_calibration.json ]; then
             if ! scp model_subclass320_mlp_gray_256_rank1/deploy_calibration.json root@192.168.1.201:/home/root/workspace/model_subclass320_mlp_gray_256_rank1/deploy_calibration.json; then
                 echo "[警告] gray32 subclass deploy_calibration.json 上传失败，已保留本地构建产物。"
+            fi
+        fi
+    fi
+    if [ -d model_subclass320_mlp_rgb_256_128_rank3 ]; then
+        if ! ssh root@192.168.1.201 "mkdir -p /home/root/workspace/model_subclass320_mlp_rgb_256_128_rank3"; then
+            echo "[警告] 远端 rgb32 subclass 模型目录创建失败，已保留本地构建产物。"
+        fi
+        if ! scp model_subclass320_mlp_rgb_256_128_rank3/cls.onnx root@192.168.1.201:/home/root/workspace/model_subclass320_mlp_rgb_256_128_rank3/cls.onnx; then
+            echo "[警告] rgb32 subclass cls.onnx 上传失败，已保留本地构建产物。"
+        fi
+        if ! scp model_subclass320_mlp_rgb_256_128_rank3/class_names.json root@192.168.1.201:/home/root/workspace/model_subclass320_mlp_rgb_256_128_rank3/class_names.json; then
+            echo "[警告] rgb32 subclass class_names.json 上传失败，已保留本地构建产物。"
+        fi
+        if [ -f model_subclass320_mlp_rgb_256_128_rank3/deploy_calibration.json ]; then
+            if ! scp model_subclass320_mlp_rgb_256_128_rank3/deploy_calibration.json root@192.168.1.201:/home/root/workspace/model_subclass320_mlp_rgb_256_128_rank3/deploy_calibration.json; then
+                echo "[警告] rgb32 subclass deploy_calibration.json 上传失败，已保留本地构建产物。"
             fi
         fi
     fi
