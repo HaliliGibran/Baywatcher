@@ -479,7 +479,7 @@
 // - 这里只改“反向回摆角”幅度，不改主激进角幅度。
 // - 若回摆明显过猛，可继续调小；若回摆几乎没有拉回效果，可略微调大。
 #ifndef BW_REMOTE_SIGN_REBOUND_RATIO
-#define BW_REMOTE_SIGN_REBOUND_RATIO 0.1f
+#define BW_REMOTE_SIGN_REBOUND_RATIO 1.0f
 #endif
 
 // 收到 w/s 后，激进固定转角允许持续的最长时间（毫秒）。
