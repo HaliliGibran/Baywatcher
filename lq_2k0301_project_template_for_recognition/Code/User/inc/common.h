@@ -57,7 +57,7 @@
 // - 单板联调、静态拍照验证时设为 1。
 // - 双板实车联调时通常设为 0。
 #ifndef BW_RECOG_REQUIRE_MANUAL_START
-#define BW_RECOG_REQUIRE_MANUAL_START 0
+#define BW_RECOG_REQUIRE_MANUAL_START 1
 #endif
 
 // [先调] 识别板模型模式枚举：旧 64x64 RGB 三通道模型
@@ -177,7 +177,7 @@
 // 建议：
 // - 先固定场地，在 80~140 区间实车扫一轮。
 #ifndef BW_RECOG_CAMERA_MANUAL_EXPOSURE
-#define BW_RECOG_CAMERA_MANUAL_EXPOSURE 120
+#define BW_RECOG_CAMERA_MANUAL_EXPOSURE 80
 #endif
 
 // [谨慎调] 是否优先尝试低 CPU MJPG 模式
@@ -210,7 +210,7 @@
 // - 1：按 1s 窗口输出各阶段耗时统计。
 // - 0：完全关闭性能统计，减少一点点终端输出和字符串开销。
 #ifndef BW_RECOG_ENABLE_PERF_LOG
-#define BW_RECOG_ENABLE_PERF_LOG 1
+#define BW_RECOG_ENABLE_PERF_LOG 0
 #endif
 
 // [先调] 是否启用识别板文字日志
