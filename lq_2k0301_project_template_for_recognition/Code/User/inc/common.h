@@ -57,7 +57,7 @@
 // - 单板联调、静态拍照验证时设为 1。
 // - 双板实车联调时通常设为 0。
 #ifndef BW_RECOG_REQUIRE_MANUAL_START
-#define BW_RECOG_REQUIRE_MANUAL_START 1
+#define BW_RECOG_REQUIRE_MANUAL_START 0
 #endif
 
 // [先调] 识别板模型模式枚举：旧 64x64 RGB 三通道模型
@@ -90,7 +90,7 @@
 // - 当前默认切到 `gray32 subclass` 版。
 // - 切换到其他模型时，同步确认板端对应模型目录已部署。
 #ifndef BW_RECOG_MODEL_VARIANT
-#define BW_RECOG_MODEL_VARIANT BW_RECOG_MODEL_VARIANT_GRAY32_SUBCLASS
+#define BW_RECOG_MODEL_VARIANT BW_RECOG_MODEL_VARIANT_RGB32_SUBCLASS
 #endif
 
 // [先调] latest-frame 后台采集层总开关
@@ -164,7 +164,7 @@
 // - 识别不稳、画面时亮时暗时优先开 1。
 // - 场地光照变化极大时才考虑回到 0。
 #ifndef BW_RECOG_CAMERA_USE_MANUAL_EXPOSURE
-#define BW_RECOG_CAMERA_USE_MANUAL_EXPOSURE 1 
+#define BW_RECOG_CAMERA_USE_MANUAL_EXPOSURE 1
 #endif
 
 // [先调] 手动曝光值
@@ -177,7 +177,7 @@
 // 建议：
 // - 先固定场地，在 80~140 区间实车扫一轮。
 #ifndef BW_RECOG_CAMERA_MANUAL_EXPOSURE
-#define BW_RECOG_CAMERA_MANUAL_EXPOSURE 80
+#define BW_RECOG_CAMERA_MANUAL_EXPOSURE 40
 #endif
 
 // [谨慎调] 是否优先尝试低 CPU MJPG 模式
@@ -416,7 +416,7 @@
 // 调小效果：
 // - 更快，但更容易误判。
 #ifndef BW_RECOG_DECISION_TOP1_AVG_THRESHOLD
-#define BW_RECOG_DECISION_TOP1_AVG_THRESHOLD 0.80f
+#define BW_RECOG_DECISION_TOP1_AVG_THRESHOLD 0.3
 #endif
 
 // [谨慎调] 分类 margin 阈值
@@ -428,7 +428,7 @@
 // 调小效果：
 // - 更快，但类别更容易抖动。
 #ifndef BW_RECOG_DECISION_MARGIN_THRESHOLD
-#define BW_RECOG_DECISION_MARGIN_THRESHOLD 0.15f
+#define BW_RECOG_DECISION_MARGIN_THRESHOLD 0.01f
 #endif
 #pragma endregion
 
