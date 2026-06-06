@@ -610,19 +610,19 @@ void BayWatcher_Control_Init(void) {
     // PID_Speed_R.Kp = 105.00f; PID_Speed_R.Ki = 7.09f; PID_Speed_R.Kd = 0.00f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 7000.0f;
 
-    // 无负压1
-    // 左轮速度环PID
+    // // 无负压1
+    // // 左轮速度环PID
+    // // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
     // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
-    PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
-    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
-    PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
+    // // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
+    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
 
-    // 右轮速度环PID
+    // // 右轮速度环PID
+    // // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
     // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
-    PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
-    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
-    PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
+    // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
+    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
 
 
@@ -646,19 +646,19 @@ void BayWatcher_Control_Init(void) {
     // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
-    // // 有负压 19-21.20
-    // // 左轮速度环PID
-    // // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
-    // PID_Speed_L.Kp = 113.32f; PID_Speed_L.Ki = 26.00f; PID_Speed_L.Kd = 0.00f;
-    // // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
-    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
+    // 有负压 19-21.20
+    // 左轮速度环PID
+    // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
+    PID_Speed_L.Kp = 113.32f; PID_Speed_L.Ki = 26.00f; PID_Speed_L.Kd = 0.00f;
+    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
+    PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
 
-    // // 右轮速度环PID
-    // // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
-    // PID_Speed_R.Kp = 113.00f; PID_Speed_R.Ki = 26.00f; PID_Speed_R.Kd = 0.00f;
-    // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
-    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
+    // 右轮速度环PID
+    // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
+    PID_Speed_R.Kp = 113.00f; PID_Speed_R.Ki = 26.00f; PID_Speed_R.Kd = 0.00f;
+    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
+    PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
     // // 左轮前进环PID
     // PID_Speed_F_L.Kp = 0.00f; PID_Speed_F_L.Ki = 0.00f; PID_Speed_F_L.Kd = 0.00f;
@@ -713,8 +713,8 @@ void BayWatcher_Control_Init(void) {
     // // 无负压 17.66 0.4
     // PID_Cube.Kp_a = 6.985f ;  PID_Cube.Kp_b = 0.488f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 820.10f ; PID_Cube.Kd_b = 0.00000f;
 
-    // 无负压 17.66 0.4
-    PID_Cube.Kp_a = 6.588f ;  PID_Cube.Kp_b = 0.493f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 833.10f ; PID_Cube.Kd_b = 0.00000f;
+    // // 无负压 17.66 0.4
+    // PID_Cube.Kp_a = 6.588f ;  PID_Cube.Kp_b = 0.493f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 833.10f ; PID_Cube.Kd_b = 0.00000f;
 
     // // 有负压 15.90 25%
     // PID_Cube.Kp_a = 5.75f ;  PID_Cube.Kp_b = 0.465f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 813.10f ; PID_Cube.Kd_b = 0.00010f;
@@ -749,6 +749,8 @@ void BayWatcher_Control_Init(void) {
     // // 有负压 21.25 0.35 60%
     // PID_Cube.Kp_a = 6.5685f ;  PID_Cube.Kp_b = 0.4846f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 410.10f ; PID_Cube.Kd_b = 0.00100f;
 
+    // 有负压 21.25 0.35 60%
+    PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4844f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.10f ; PID_Cube.Kd_b = 0.00100f;
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
     reset_curve_slowdown_state(0.0f);
