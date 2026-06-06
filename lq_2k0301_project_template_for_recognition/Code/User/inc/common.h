@@ -177,7 +177,7 @@
 // 建议：
 // - 先固定场地，在 80~140 区间实车扫一轮。
 #ifndef BW_RECOG_CAMERA_MANUAL_EXPOSURE
-#define BW_RECOG_CAMERA_MANUAL_EXPOSURE 40
+#define BW_RECOG_CAMERA_MANUAL_EXPOSURE 100
 #endif
 
 // [谨慎调] 是否优先尝试低 CPU MJPG 模式
@@ -569,7 +569,7 @@
 // - slowdown 预触发带为 y=40..160
 // - 正式识别带为 y=80..160
 #ifndef BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN
-#define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN 40
+#define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN 60
 #endif
 
 // [谨慎调] 仅用于触发减速/NO_RESULT 的前置红色检测下边界（开区间）

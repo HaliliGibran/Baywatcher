@@ -457,7 +457,7 @@
 // 调大：绕行动作更坚决，但也更容易在目标板附近过度横摆。
 // 调小：更平顺，但可能转不够。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE
-#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 40.0f
+#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 20.0f
 #endif
 
 // w/s 激进角阶段的基础速度倍率。
@@ -468,7 +468,7 @@
 // - 太小：绕行动作更稳，但速度掉得太狠可能导致动作发钝。
 // - 太大：激进角期间速度保留更多，但更容易甩尾或推过头。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_SPEED_RATIO
-#define BW_REMOTE_SIGN_AGGRESSIVE_SPEED_RATIO 0.5f
+#define BW_REMOTE_SIGN_AGGRESSIVE_SPEED_RATIO 1.0f
 #endif
 
 // 反向回摆角相对于正向激进角的幅度比例。
@@ -479,7 +479,7 @@
 // - 这里只改“反向回摆角”幅度，不改主激进角幅度。
 // - 若回摆明显过猛，可继续调小；若回摆几乎没有拉回效果，可略微调大。
 #ifndef BW_REMOTE_SIGN_REBOUND_RATIO
-#define BW_REMOTE_SIGN_REBOUND_RATIO 0.5f
+#define BW_REMOTE_SIGN_REBOUND_RATIO 0.1f
 #endif
 
 // 收到 w/s 后，激进固定转角允许持续的最长时间（毫秒）。
@@ -488,7 +488,7 @@
 // - 反向回摆角：当当前锁定侧边线重新找回、或超时，就结束。
 // - 任一阶段都可能被新远端状态、n/b 覆盖，或 stale timeout 整体复位提前打断。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS
-#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 200
+#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 10000
 #endif
 
 // 远端识别状态总过期时间（毫秒）。
@@ -526,7 +526,7 @@
 // 调大：u 阶段更快，更接近普通速度。
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 0.1f
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.3f
 #endif
 #pragma endregion
 

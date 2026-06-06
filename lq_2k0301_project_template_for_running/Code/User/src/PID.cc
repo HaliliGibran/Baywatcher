@@ -900,7 +900,7 @@ float cfg_esc_diff_limit = 0.0f;  // 负压差速补偿最大限幅值 (百分�
 
 float global_ramp_step = 1.0f;           // (旧有代码预留) 全局基础提速步长
 uint32_t g_startup_delay_ms = 0.0f;       // [发车阶段1]：按下发车后，死锁车轮并在原地等待的毫秒数 (用于手离开车体)
-float g_startup_esc_target = 60.0f;      // [发车阶段2]：负压风扇/电调起转的最终目标百分比 (例如 25.0f 表示 25%)
+float g_startup_esc_target = 70.0f;      // [发车阶段2]：负压风扇/电调起转的最终目标百分比 (例如 25.0f 表示 25%)
 float g_startup_esc_step = 0.075f;         // [发车阶段2]：风扇软起步长，每个控制周期增加的风扇推力 (数值越小风扇起转越平滑)
 float g_startup_speed_step = 0.05f;       // [发车阶段3]：底盘电机软起步长，每个控制周期底盘提速的增量 (防烧胎打滑)
 
