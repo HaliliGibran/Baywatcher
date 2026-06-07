@@ -1,4 +1,5 @@
 #include "image_data.h"
+#include <cmath>
 #include <chrono>
 
 namespace {
