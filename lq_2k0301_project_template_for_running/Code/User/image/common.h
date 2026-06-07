@@ -458,7 +458,7 @@
 // 说明：
 // - 这里只作用于主激进角，不作用于反向回摆角。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE
-#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 20.0f
+#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 5.0f
 #endif
 
 // 收到 w/s 后，当“进入激进角当下的 pure_angle”与“绕行方向”反向时，额外叠加的激进角（度）。
@@ -475,7 +475,7 @@
 // - 上式算完后再夹到 [-limit, +limit]
 // - 仅限制主激进角，不限制反向回摆固定角
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG
-#define BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG 30.0f
+#define BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG 25.0f
 #endif
 
 // w/s 激进角阶段的基础速度倍率。
