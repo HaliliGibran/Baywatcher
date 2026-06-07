@@ -102,6 +102,18 @@ float remote_primary_aggressive_add_deg(float entry_yaw, float route_sign)
         : BW_REMOTE_SIGN_AGGRESSIVE_OPPOSITE_ABS_PURE_ANGLE;
 }
 
+float remote_primary_aggressive_output(float entry_yaw, float route_sign)
+{
+    if (std::fabs(entry_yaw) <= BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_THRESHOLD_DEG)
+    {
+        return remote_clamp_aggressive_primary_output(
+            route_sign * BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_FIXED_DEG);
+    }
+
+    return remote_clamp_aggressive_primary_output(
+        entry_yaw + route_sign * remote_primary_aggressive_add_deg(entry_yaw, route_sign));
+}
+
 uint64_t remote_now_ms()
 {
     return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -396,18 +408,16 @@ bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
     if (g_remote_recognition.aggressive_turn_state ==
         remote_aggressive_turn_state_t::PRIMARY_LEFT)
     {
-        *out_override = remote_clamp_aggressive_primary_output(
-            g_remote_recognition.aggressive_turn_entry_yaw +
-            remote_primary_aggressive_add_deg(g_remote_recognition.aggressive_turn_entry_yaw, 1.0f));
+        *out_override = remote_primary_aggressive_output(
+            g_remote_recognition.aggressive_turn_entry_yaw, 1.0f);
         return true;
     }
 
     if (g_remote_recognition.aggressive_turn_state ==
         remote_aggressive_turn_state_t::PRIMARY_RIGHT)
     {
-        *out_override = remote_clamp_aggressive_primary_output(
-            g_remote_recognition.aggressive_turn_entry_yaw -
-            remote_primary_aggressive_add_deg(g_remote_recognition.aggressive_turn_entry_yaw, -1.0f));
+        *out_override = remote_primary_aggressive_output(
+            g_remote_recognition.aggressive_turn_entry_yaw, -1.0f);
         return true;
     }
 

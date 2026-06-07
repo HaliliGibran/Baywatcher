@@ -478,6 +478,22 @@
 #define BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG 25.0f
 #endif
 
+// 当进入激进角当下的原始偏航角绝对值不大于该阈值时，不使用“entry_yaw + 叠加量”。
+// 而是直接切到固定主激进角，见 BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_FIXED_DEG。
+#ifndef BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_THRESHOLD_DEG
+#define BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_THRESHOLD_DEG 10.0f
+#endif
+
+// 小偏航场景下使用的固定主激进角（度）。
+// 输出形式：
+// - 左绕(w) 固定为 +本值
+// - 右绕(s) 固定为 -本值
+// 说明：
+// - 这条规则只作用于主激进角，不作用于反向回摆角。
+#ifndef BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_FIXED_DEG
+#define BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_FIXED_DEG 20.0f
+#endif
+
 // w/s 激进角阶段的基础速度倍率。
 // 作用：
 // - 只要当前还处在“主激进角 / 反向回摆角”任一阶段，PID 基础速度都会乘这个比例。
