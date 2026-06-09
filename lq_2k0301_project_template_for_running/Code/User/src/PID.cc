@@ -496,6 +496,50 @@ static bool handle_zebra_stop_request()
 } // namespace
 #pragma endregion
 
+
+#pragma region Turnover PT
+static bool handle_rollover_protection()
+{
+    // 【请替换为你实际测出的阈值】
+    const float ROLLOVER_THRESHOLD = 4.0f; 
+    const int REQUIRED_ABNORMAL_FRAMES = 5; // 连续 5 帧异常才触发 (约 25ms)，过滤过坎颠簸
+    
+    static int abnormal_cnt = 0; // 静态计数器，记录连续异常帧数
+
+    // 如果车没跑，不需要触发保护，并清零计数器
+    if (PID.is_running == 0) {
+        abnormal_cnt = 0; 
+        return false;
+    }
+
+    // 检测 Z 轴加速度是否跌破安全阈值
+    if (imu_sys.raw_az < ROLLOVER_THRESHOLD) {
+        abnormal_cnt++;
+        
+        // 只有连续 N 帧都处于翻覆状态，才下达绝杀指令
+        if (abnormal_cnt >= REQUIRED_ABNORMAL_FRAMES) {
+            // 瞬间切断电机和电调，重置 PID
+            BayWatcher_Stop_Car();
+            
+            printf("\n=================================================\n");
+            printf("[ALARM] Turnover Protection!\n");
+            printf("[ALARM] 当前 Z 轴: %.2f (连续 %d 帧跌破阈值 %.2f)\n", imu_sys.raw_az, REQUIRED_ABNORMAL_FRAMES, ROLLOVER_THRESHOLD);
+            printf("[ALARM] Turnover Protection!\n");
+            printf("=================================================\n\n");
+            
+            abnormal_cnt = 0; // 触发后清零，等待下一次发车
+            return true;
+        }
+    } else {
+        // 只要有一帧恢复正常（比如颠簸结束），立刻清零计数器
+        abnormal_cnt = 0; 
+    }
+
+    return false;
+}// namespace
+
+#pragma endregion
+
 #pragma region VOFA Ctrl
 
 
@@ -910,7 +954,10 @@ void BayWatcher_Control_Loop(void* arg) {
     if (handle_zebra_stop_request()) {
         return;
     }
-
+    // //底盘速度环翻车拦截
+    // if (handle_rollover_protection()) {
+    //     return;
+    // }
     if (PID.is_running == 0) {
         PID_Speed_L.output = 0; PID_Speed_L.prev_error = 0;
         PID_Speed_R.output = 0; PID_Speed_R.prev_error = 0;
@@ -1118,6 +1165,10 @@ void BayWatcher_Cube_Loop(void* arg){
     if (handle_zebra_stop_request()) {
         return;
     }
+    // //底盘方向环翻车拦截
+    // if (handle_rollover_protection()) {
+    //     return;
+    // }
     if (PID.is_running == 0) {
         PID_Speed_L.output = 0; PID_Speed_L.prev_error = 0;
         PID_Speed_R.output = 0; PID_Speed_R.prev_error = 0;

@@ -135,8 +135,8 @@ void task_sensor_read(void* arg) {
 }// 传感器：IMU/TOF/TFT
 void task_display_status(void* arg) {
     /*ADC phase*/
-    // float bat_v = ADC_sys.getBatteryVoltage();
-    // printf("%.2f\n",bat_v);
+    float bat_v = ADC_sys.getBatteryVoltage();
+    printf("%.2f\n",bat_v);
     // if (bat_v < 6.8f && bat_v > 0) {
     //     printf("[WARNING] 电池电压过低: %.2fV, 请及时充电！\n", bat_v);
     // }
@@ -258,7 +258,7 @@ int main(int argc, char** argv)
     TimerThread sensor_thread(task_sensor_read, NULL, 20);
     TimerThread vofa_thread(task_vofa_comm, NULL, 20);            //VOFA+通信(UDP/TCP/UART),Log日志
     TimerThread board_comm_thread(task_board_comm_rx, NULL, 5);    // 双板串口收包
-    TimerThread debug_thread(task_display_status, NULL, 5000);    //ADC
+    TimerThread debug_thread(task_display_status, NULL, 1000);    //ADC
     // TimerThread handler_thread(task_target_handler, NULL, 20);    //targethandler
     // handler_thread.start();
     pid_thread.start();
@@ -274,20 +274,6 @@ int main(int argc, char** argv)
     //     printf("线程启动失败！请检查是否链接了 pthread 库。\n");
     //     return -1;
     // }
-    // if (pid_thread.start()) 
-    // {
-    //     printf("速度采样线程已启动，采样周期: 5ms\n");
-    // } else {
-    //     printf("线程启动失败！请检查是否链接了 pthread 库。\n");
-    //     return -1;
-    // }
-    // // if (pid_thread.start()) 
-    // {
-    //     printf("速度采样线程已启动，采样周期: 5ms\n");
-    // } else {
-    //     printf("线程启动失败！请检查是否链接了 pthread 库。\n");    //     return -1;
-    // }
-
     
     // 设置终端为非阻塞 (用于按键 'c' 快速复位赛道状态)
     {
