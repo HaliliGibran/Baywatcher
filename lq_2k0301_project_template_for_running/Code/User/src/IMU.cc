@@ -37,19 +37,19 @@ bool BayWatcher_IMU::init(const std::string& dev_path) {
 void BayWatcher_IMU::update() {
     if (!is_initialized || mpu6050_dev == nullptr) return;
 
-    // // 获取 6 轴数据
-    // bool success = mpu6050_dev->get_mpu6050_gyro(
-    //     &raw_ax, &raw_ay, &raw_az, 
-    //     &raw_gx, &raw_gy, &raw_gz
-    // );
+    // 获取 6 轴数据
+    bool success = mpu6050_dev->get_mpu6050_gyro(
+        &raw_ax, &raw_ay, &raw_az, 
+        &raw_gx, &raw_gy, &raw_gz
+    );
 
-    bool success = mpu6050_dev->get_mpu6050_ang(&raw_gx, &raw_gy, &raw_gz);//only gyrp
+    // bool success = mpu6050_dev->get_mpu6050_ang(&raw_gx, &raw_gy, &raw_gz);//only gyrp
     // bool success = mpu6050_dev->get_mpu6050_acc(&raw_ax, &raw_ay, &raw_az);//only acc
 
     if (success) {
         // 获取当前温度
         temperature = mpu6050_dev->get_mpu6050_tem();
     } else {
-        printf("[NEUQ_IMU] 数据读取失败，请检查 I2C 总线状态。\n");
+        printf("[IMU] 数据读取失败，请检查 I2C 总线状态。\n");
     }
 }

@@ -20,76 +20,68 @@ const float FACTOR_LIMIT = 1.23f;        // 差速比例输出限幅
 
 #pragma region 长直道加速
 
-// bool cfg_straight_accel_enable = true;      // 是否开启直道加速
-bool cfg_straight_accel_enable = false;      
+bool cfg_straight_accel_enable = true;      // 是否开启直道加速
 
-float cfg_straight_accel_max_add = 2.0f;    // 1. 作用上限：直道加速最大补偿速度
+float cfg_straight_accel_max_add = 2.0f;    // 作用上限：直道加速最大补偿速度
 
 // 2. 最小阈值：在此范围内视为绝对直道，补偿拉满 (100% max_add)
-float cfg_straight_accel_curve_min_th = 15.0f; // 适应远瞻基准，低于15f为绝对直道
-float cfg_straight_accel_yaw_min_th = 3.0f;    // 允许一定的微小画龙修正
+float cfg_straight_accel_curve_min_th = 15.0f; // 适应取最大曲率算法，垫高底线容忍直道毛刺
+float cfg_straight_accel_yaw_min_th = 3.5f;    // 直道 yaw 控制在 -5 到 5，满分阈值设为 3.5
 
 // 3. 最大阈值：超过此值视为入弯，一票否决，加速清零
-float cfg_straight_accel_curve_max_th = 28.0f; // 适应远瞻基准，高于28f视为弯道
-float cfg_straight_accel_yaw_max_th = 8.0f;    // 允许微小的摇摆
+float cfg_straight_accel_curve_max_th = 22.0f; // 相应拉高最高阈值
+float cfg_straight_accel_yaw_max_th = 7.0f;    // 超过 7 度绝对不是直道
 
-// 4. 剧烈程度 (核心参数)
-// 范围：0.1 ~ 3.0。
-// 值 < 1.0 (如 0.4)：激进模式！只要没到最大阈值，保持高加速，快到最大阈值瞬间断油（极度贴合最长白列法）
-// 值 > 1.0 (如 2.0)：保守模式！一有微小偏差就快速减速
+// 4. 剧烈程度 (保持 0.4 激进模式)
 float cfg_straight_accel_intensity = 0.4f;  
 
-// 积分视野：记录最近 N 帧的前瞻曲率，用于计算历史平均值，弥补单帧视觉前瞻距离不足的问题
 #define CURVE_HISTORY_SIZE 10
 
-static float current_straight_add = 0.0f;             // 当前实际输出的直道加速加成值（经过低通滤波后的平滑值）
-static int continuous_straight_frames = 0;            // 连续被判定为满足直道条件的帧数计数器（防弯道误判）
-static float last_pure_angle = 0.0f;                  // 上一帧的纯跟踪偏角（用于计算偏角变化率 delta_yaw，防画龙）
-static float curve_history[CURVE_HISTORY_SIZE] = {0}; // 环形数组，保存最近 N 帧经过中值滤波后的曲率
-static int curve_history_index = 0;                   // 环形数组的当前写入指针
+static float current_straight_add = 0.0f;             
+static int continuous_straight_frames = 0;            
+static float last_pure_angle = 0.0f;                  
+static float curve_history[CURVE_HISTORY_SIZE] = {0}; 
+static int curve_history_index = 0;                   
 
-// 5帧时间中值滤波器状态
 static float curve_median_history[5] = {0.0f};
 static int curve_median_index = 0;
-static float curve_smoothed = 0.0f;                   // 经过非对称一阶低通滤波后的平滑曲率
+static float curve_smoothed = 0.0f;                   
 
 static void reset_straight_acceleration_state() {
     current_straight_add = 0.0f;
     continuous_straight_frames = 0;
     last_pure_angle = 0.0f;
-    for (int i = 0; i < CURVE_HISTORY_SIZE; i++) {
-        curve_history[i] = 0.0f;
-    }
+    for (int i = 0; i < CURVE_HISTORY_SIZE; i++) curve_history[i] = 0.0f;
     curve_history_index = 0;
-    for (int i = 0; i < 5; i++) {
-        curve_median_history[i] = 0.0f;
-    }
+    for (int i = 0; i < 5; i++) curve_median_history[i] = 0.0f;
     curve_median_index = 0;
     curve_smoothed = 0.0f;
 }
 
 static float update_straight_acceleration(float pure_angle, float preview_curve) {
-    if (!cfg_straight_accel_enable) {
+    // ================== 核心元素拦截区 ==================
+    // 元素互斥逻辑：只要不在普通赛道 (NORMAL)，立刻清零直道状态机并断油
+    // 完美实现环岛和十字路口内部不进行任何直道加速
+    if (!cfg_straight_accel_enable || element_type != ElementType::NORMAL) {
         reset_straight_acceleration_state();
         return 0.0f;
     }
+    // ====================================================
 
     float abs_yaw = std::fabs(pure_angle);
     float abs_curve = std::fabs(preview_curve);
     
-    // 1. 计算 Yaw 微分 (画龙/S弯检测)
+    // 获取物理角速度 (原始数据量级较大)
+    float abs_gz = std::fabs(imu_sys.raw_gz);
+    
     float delta_yaw = std::fabs(pure_angle - last_pure_angle);
     last_pure_angle = pure_angle;
 
-    // 2. 5帧时间中值滤波器 (彻底消除孤立噪声尖峰)
+    // 5帧时间中值滤波器 (消除孤立噪声尖峰)
     curve_median_history[curve_median_index] = abs_curve;
     curve_median_index = (curve_median_index + 1) % 5;
-
     float sorted_curves[5];
-    for (int i = 0; i < 5; i++) {
-        sorted_curves[i] = curve_median_history[i];
-    }
-    // 经典起泡排序 (5个元素极速排序)
+    for (int i = 0; i < 5; i++) sorted_curves[i] = curve_median_history[i];
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4 - i; j++) {
             if (sorted_curves[j] > sorted_curves[j + 1]) {
@@ -99,58 +91,47 @@ static float update_straight_acceleration(float pure_angle, float preview_curve)
             }
         }
     }
-    float curve_filtered = sorted_curves[2]; // 取中位数
+    float curve_filtered = sorted_curves[2]; 
 
-    // 3. 非对称一阶低通滤波
-    // 进弯（曲率上升）快响应 (beta = 0.35f)，确保安全；出弯（曲率下降）慢响应 (beta = 0.08f)，防止车身速度高频抖动
+    // 非对称一阶低通滤波
     float beta = (curve_filtered > curve_smoothed) ? 0.35f : 0.08f;
     curve_smoothed += beta * (curve_filtered - curve_smoothed);
 
-    // 4. 计算 Curve 积分视野 (滑动窗口平均 - 采用已剔除噪点后的 curve_filtered)
+    // 计算 Curve 积分视野
     curve_history[curve_history_index] = curve_filtered;
     curve_history_index = (curve_history_index + 1) % CURVE_HISTORY_SIZE;
-    
     float curve_sum = 0.0f;
-    for (int i = 0; i < CURVE_HISTORY_SIZE; i++) {
-        curve_sum += curve_history[i];
-    }
+    for (int i = 0; i < CURVE_HISTORY_SIZE; i++) curve_sum += curve_history[i];
     float curve_avg = curve_sum / CURVE_HISTORY_SIZE;
 
     float target_add = 0.0f;
 
-    // 动态限制阈值
-    float max_delta_yaw_th = 2.5f; // 一帧内偏角跳变超过 2.5度，说明在晃动 (S弯/画龙)
-    float max_curve_avg_th = cfg_straight_accel_curve_max_th * 0.8f; // 历史平均曲率低于绝对上限的80%
+    float max_delta_yaw_th = 3.0f; // 放宽一点横向跳变容忍度
+    float max_curve_avg_th = cfg_straight_accel_curve_max_th * 0.8f; 
 
-    // 第一步：判断当前帧是否越过危险阈值（弯道/画龙/伪直道）
-    // 此处一票否决使用 curve_smoothed 替代瞬时 abs_curve，有效规避瞬时噪点导致的频繁断油
+    // ================== 核心拦截区 ==================
     if (abs_yaw >= cfg_straight_accel_yaw_max_th || 
         curve_smoothed >= cfg_straight_accel_curve_max_th ||
         delta_yaw >= max_delta_yaw_th ||
-        curve_avg >= max_curve_avg_th) {
-        
-        // 只要有一项被判定为危险，直道连续计数器立刻清零
+        curve_avg >= max_curve_avg_th ||
+        abs_gz >= 3000.0f) // S弯天敌：如果物理角速度 > 3000，一票否决！
+    {
         continuous_straight_frames = 0; 
         target_add = 0.0f;
     } else {
-        // 在直道阈值范围内，增加直道帧数计数
         continuous_straight_frames++;
         
-        // 连续 5 帧都是直道，才允许加速（防弯道偶尔一帧变直导致突然冲一下）
-        if (continuous_straight_frames > 5) { 
-            // 第二步：计算线性得分 (0.0 ~ 1.0)
+        // 延长考核期：连续 10 帧 (50ms) 满足上述所有条件，才认为是真直道
+        if (continuous_straight_frames > 10) { 
             float yaw_score = 1.0f;
             if (abs_yaw > cfg_straight_accel_yaw_min_th) {
                 float yaw_diff = cfg_straight_accel_yaw_max_th - cfg_straight_accel_yaw_min_th;
-                if (yaw_diff < 0.001f) yaw_diff = 0.001f; // 防止除零
                 yaw_score = 1.0f - (abs_yaw - cfg_straight_accel_yaw_min_th) / yaw_diff;
             }
 
-            // 使用平滑后的 curve_smoothed 代替原有的 curve_avg 计算得分，更贴物理实际且非常稳定
             float curve_score = 1.0f;
             if (curve_smoothed > cfg_straight_accel_curve_min_th) {
                 float curve_diff = cfg_straight_accel_curve_max_th - cfg_straight_accel_curve_min_th;
-                if (curve_diff < 0.001f) curve_diff = 0.001f; 
                 curve_score = 1.0f - (curve_smoothed - cfg_straight_accel_curve_min_th) / curve_diff;
             }
             
@@ -161,19 +142,16 @@ static float update_straight_acceleration(float pure_angle, float preview_curve)
             float power_score = std::pow(final_score, cfg_straight_accel_intensity);
             target_add = cfg_straight_accel_max_add * power_score;
         } else {
-            // 刚进入直道的前几帧，先不给加速
             target_add = 0.0f;
         }
     }
 
-    // 第三步：输出低通滤波 (针对实际输出的加速额度 target_add 做二重保护平滑)
-    float alpha_up = 0.08f;   // 提速时的平滑系数，越小越平缓
-    float alpha_down = 0.40f; // 降速时的平滑系数，较大，保证安全入弯
-
+    // 最终低通输出
+    float alpha_up = 0.08f;   
+    float alpha_down = 0.40f; 
     float alpha = (target_add > current_straight_add) ? alpha_up : alpha_down;
     
     current_straight_add += alpha * (target_add - current_straight_add);
-
     if (current_straight_add < 0.01f) current_straight_add = 0.0f;
 
     return current_straight_add;
@@ -498,41 +476,56 @@ static bool handle_zebra_stop_request()
 
 
 #pragma region Turnover PT
-static bool handle_rollover_protection()
-{
-    // 【请替换为你实际测出的阈值】
-    const float ROLLOVER_THRESHOLD = 4.0f; 
-    const int REQUIRED_ABNORMAL_FRAMES = 5; // 连续 5 帧异常才触发 (约 25ms)，过滤过坎颠簸
-    
-    static int abnormal_cnt = 0; // 静态计数器，记录连续异常帧数
 
-    // 如果车没跑，不需要触发保护，并清零计数器
+// 翻车测试开关
+// #define DEBUG_IMU_TEST 1
+#define DEBUG_IMU_TEST 0
+
+static bool handle_rollover_protection()
+{   // ================== 边界配置 ==================
+    const float ROLLOVER_THRESHOLD = 3800.0f; // 翻车硬阈值：低于 3000 判定为异常
+    const int CONFIRM_CHECKS = 5;             // 连续 5 次低频检查均异常才触发紧急抱死
+
+    // ================== 蒸馏器 ==================
+    // 降频计数器：让 5ms 周期调用的函数，每 10 次才真正往下走一次
+    // 实际判断周期变为：5ms * 10 = 50ms (20Hz)，对龙芯 CPU 而言算力开销直接稀释到千万分之一级
+    static int loop_divider = 0;
+    if (++loop_divider % 10 != 0) {
+        return false; 
+    }
+
+    // 状态状态计数器（只有在 50ms 的执行周期内才会自增/清零）
+    static int abnormal_low_freq_cnt = 0; 
+
+    // 如果车子本身就处于停止状态，清空计数，不参与判断
     if (PID.is_running == 0) {
-        abnormal_cnt = 0; 
+        abnormal_low_freq_cnt = 0; 
         return false;
     }
 
-    // 检测 Z 轴加速度是否跌破安全阈值
+    // ================== 仅针对 Z 轴重力的非线性判据 ==================
+    // 你的日志显示，瞬态颠簸曾跌到过 2634，采用连续低频确认可以完美过滤这种瞬态毛刺
     if (imu_sys.raw_az < ROLLOVER_THRESHOLD) {
-        abnormal_cnt++;
+        abnormal_low_freq_cnt++;
         
-        // 只有连续 N 帧都处于翻覆状态，才下达绝杀指令
-        if (abnormal_cnt >= REQUIRED_ABNORMAL_FRAMES) {
-            // 瞬间切断电机和电调，重置 PID
+        // 50ms 检查一次，连续 3 次通过检查 -> 说明车子在 150ms 内一直四轮朝天
+        if (abnormal_low_freq_cnt >= CONFIRM_CHECKS) {
+            
+            // 瞬间切断底盘电机和电调负压，复位所有 PID 积分
             BayWatcher_Stop_Car();
             
             printf("\n=================================================\n");
             printf("[ALARM] Turnover Protection!\n");
-            printf("[ALARM] 当前 Z 轴: %.2f (连续 %d 帧跌破阈值 %.2f)\n", imu_sys.raw_az, REQUIRED_ABNORMAL_FRAMES, ROLLOVER_THRESHOLD);
+            printf("[ALARM] current g: %d \n", (int)imu_sys.raw_az);
             printf("[ALARM] Turnover Protection!\n");
             printf("=================================================\n\n");
             
-            abnormal_cnt = 0; // 触发后清零，等待下一次发车
+            abnormal_low_freq_cnt = 0; 
             return true;
         }
     } else {
-        // 只要有一帧恢复正常（比如颠簸结束），立刻清零计数器
-        abnormal_cnt = 0; 
+        // 只要有一帧数据回升到 3000 以上（比如上坡、颠簸复位），计数器立刻清零
+        abnormal_low_freq_cnt = 0; 
     }
 
     return false;
@@ -954,10 +947,11 @@ void BayWatcher_Control_Loop(void* arg) {
     if (handle_zebra_stop_request()) {
         return;
     }
-    // //底盘速度环翻车拦截
-    // if (handle_rollover_protection()) {
-    //     return;
-    // }
+    //底盘速度环翻车拦截
+    if (handle_rollover_protection()) {
+        return;
+    }
+
     if (PID.is_running == 0) {
         PID_Speed_L.output = 0; PID_Speed_L.prev_error = 0;
         PID_Speed_R.output = 0; PID_Speed_R.prev_error = 0;
@@ -1165,10 +1159,11 @@ void BayWatcher_Cube_Loop(void* arg){
     if (handle_zebra_stop_request()) {
         return;
     }
-    // //底盘方向环翻车拦截
-    // if (handle_rollover_protection()) {
-    //     return;
-    // }
+    //底盘方向环翻车拦截
+    if (handle_rollover_protection()) {
+        return;
+    }
+
     if (PID.is_running == 0) {
         PID_Speed_L.output = 0; PID_Speed_L.prev_error = 0;
         PID_Speed_R.output = 0; PID_Speed_R.prev_error = 0;
@@ -1181,6 +1176,18 @@ void BayWatcher_Cube_Loop(void* arg){
     // imu_sys.raw_gz =PID_Cube.gyro ;
     PID_Cube.gyro = imu_sys.raw_gz ;
     // PID_Cube.gyro = 0;
+
+#if DEBUG_IMU_TEST
+    // ==================== IMU Z轴数据测试 ====================
+    static int imu_test_cnt = 0;
+    if (++imu_test_cnt % 20 == 0) {
+        // raw_az: Z轴重力加速度 (用于测算翻车保护的阈值)
+        // raw_gz: Z轴角速度 (用于测算 S弯/直角弯的陀螺仪阻尼)
+        printf("[IMU 原始] Z轴重力: %8d | Z轴角速度: %8d\n\n", 
+               (int)imu_sys.raw_az, (int)imu_sys.raw_gz);
+    }
+    // ================================================================
+#endif
 
 
     float scale_x = 1.5f; 
