@@ -493,17 +493,18 @@ static void update_track_state_machine(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     }
 }
 
-// 功能: 把当前逆透视边线直接写成对应侧的候选中线
+// 功能: 拷贝点列到目标缓存
 // 类型: 局部功能函数
-// 关键参数: p-待同步的边线处理上下文
-static void copy_resampled_edge_to_candidate_mid(pts_well_processed* p)
+// 关键参数: src/src_count-源点列, dst/dst_count-目标点列
+static void copy_point_line(const float (&src)[PT_MAXLEN][2], int32_t src_count,
+                            float (&dst)[PT_MAXLEN][2], int32_t* dst_count)
 {
-    if (p == nullptr)
+    if (dst_count == nullptr)
     {
         return;
     }
 
-    int32_t n = p->pts_resample_count;
+    int32_t n = src_count;
     if (n < 0)
     {
         n = 0;
@@ -513,54 +514,62 @@ static void copy_resampled_edge_to_candidate_mid(pts_well_processed* p)
         n = PT_MAXLEN;
     }
 
-    p->mid_count = n;
+    *dst_count = n;
     for (int32_t i = 0; i < n; ++i)
     {
-        p->mid[i][0] = p->pts_resample[i][0];
-        p->mid[i][1] = p->pts_resample[i][1];
+        dst[i][0] = src[i][0];
+        dst[i][1] = src[i][1];
     }
 }
 
-// 功能: 远端 w/s 锁边时，直接把逆透视边线作为最终中线输出
+// 功能: 远端 w/s 锁边时，基于锁定侧边线生成“外推强制线”并直接覆盖 path
 // 类型: 局部功能函数
 // 关键参数: forced_mode-锁定到左/右边线
-static bool build_midline_from_remote_follow_override(FollowLine forced_mode)
+static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 {
-    copy_resampled_edge_to_candidate_mid(&pts_left);
-    copy_resampled_edge_to_candidate_mid(&pts_right);
-
     follow_mode = forced_mode;
 
-    const pts_well_processed* src = nullptr;
+    pts_well_processed* src = nullptr;
+    bool is_left = false;
     if (forced_mode == FollowLine::MIDLEFT)
     {
         src = &pts_left;
+        is_left = true;
     }
     else if (forced_mode == FollowLine::MIDRIGHT)
     {
         src = &pts_right;
+        is_left = false;
     }
     else
     {
         return false;
     }
 
-    int32_t n = src->mid_count;
-    if (n < 0)
+    if (src->pts_resample_count <= 0)
     {
-        n = 0;
-    }
-    if (n > PT_MAXLEN)
-    {
-        n = PT_MAXLEN;
+        return false;
     }
 
-    midline.mid_count = n;
-    for (int32_t i = 0; i < n; ++i)
+    float forced_line[PT_MAXLEN][2] = {};
+    int32_t forced_count = 0;
+    BuildRemoteFollowOuterLine(is_left,
+                               src->pts_resample, &src->pts_resample_count,
+                               forced_line, &forced_count);
+    if (forced_count <= 0)
     {
-        midline.mid[i][0] = src->mid[i][0];
-        midline.mid[i][1] = src->mid[i][1];
+        return false;
     }
+
+    copy_point_line(forced_line, forced_count, midline.mid, &midline.mid_count);
+    copy_point_line(forced_line, forced_count, midline.path, &midline.path_count);
+
+    if (midline.mid_count <= 0 || midline.path_count <= 0)
+    {
+        return false;
+    }
+
+    CalculatePureAngleFromPath(midline.path, midline.path_count, &pure_angle);
     return true;
 }
 
@@ -787,15 +796,18 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
         update_track_state_machine(img);
     }
 
+    bool remote_follow_override_applied = false;
     if (remote_follow_locked && !zebra_special_lock)
     {
-        build_midline_from_remote_follow_override(forced_follow_mode);
+        remote_follow_override_applied =
+            build_path_from_remote_follow_override(forced_follow_mode);
     }
-    else
+
+    if (!remote_follow_override_applied)
     {
         build_midline_from_current_state();
+        build_path_and_measure_pure_angle();
     }
-    build_path_and_measure_pure_angle();
 
     const bool has_valid_measure = (midline.mid_count > 0 && midline.path_count > 0);
     pure_angle = finalize_pure_angle_output(pure_angle, has_valid_measure);

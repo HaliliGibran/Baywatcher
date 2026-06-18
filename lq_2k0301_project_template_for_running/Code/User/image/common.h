@@ -40,7 +40,7 @@
 // - 车已经能靠单边锁线稳定绕行时，可先关掉让动作更顺。
 // - 车在目标板前转向不够坚决时，再打开。
 #ifndef BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE
-#define BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE 1
+#define BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE 0
 #endif
 
 // 双板 w/s 激进转角结束后，是否立刻接一个同样时长的反向回摆角。
@@ -52,6 +52,19 @@
 // - 回摆仍然会被新远端状态、stale timeout、n/b 覆盖或清空。
 #ifndef BW_REMOTE_SIGN_REBOUND_TURN_ENABLE
 #define BW_REMOTE_SIGN_REBOUND_TURN_ENABLE 1
+#endif
+
+// 双板 w/s 锁边绕行时，强制 path 相对锁定边线“向外”偏移的赛道宽比例。
+// 使用位置：image_handle.cc / BuildRemoteFollowOuterLine()。
+// 当前语义：
+// - 左锁边：以左边线为基准，向赛道左外侧偏移 本比例 * ROADWIDTH。
+// - 右锁边：以右边线为基准，向赛道右外侧偏移 本比例 * ROADWIDTH。
+// - 这条线会同时同步到 midline.mid（供预瞄/显示）和 midline.path（供控制）。
+// 调参建议：
+// - 变大：绕行更贴外侧，避让更激进。
+// - 变小：更接近原边线，动作更保守。
+#ifndef BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO
+#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.25f
 #endif
 
 // 普通路段宽度趋势异常时，是否强制退回 MIXED。
