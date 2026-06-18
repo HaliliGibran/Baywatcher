@@ -95,6 +95,14 @@ static inline void process_line(bool is_left, pts_well_processed& ctx)
                  ctx.resample_src_id);
 }
 
+// 功能: 双板 w/s 锁边绕行时，基于单侧重采样边线生成“向外偏移”的强制跟踪线
+// 类型: 图像处理函数
+// 关键参数: is_left-输入是否为左边线, edge_resample/edge_count-输入重采样边线,
+//          out_line/out_count-输出外推后的强制线
+void BuildRemoteFollowOuterLine(bool is_left,
+                                float (&edge_resample)[PT_MAXLEN][2], int32_t* edge_count,
+                                float (&out_line)[PT_MAXLEN][2], int32_t* out_count);
+
 // 功能: 由路径点列计算“pure angle”（度，右转为负/左转为正）
 // 类型: 图像处理函数
 // 关键参数: path/path_count-路径点列, out_pure_angle-输出角度

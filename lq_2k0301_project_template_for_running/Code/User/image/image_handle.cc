@@ -1060,6 +1060,146 @@ void GetMidLine_Right(float (&pts_right)[PT_MAXLEN][2], int32_t* pts_right_count
     *mid_right_count = n;
 }
 
+// 功能: 根据左边线生成“向赛道外侧偏移”的强制线
+// 类型: 图像处理函数
+// 关键参数: dist-偏移距离(像素), approx_num-导数近似跨度
+static void GetOuterLine_Left(float (&pts_left)[PT_MAXLEN][2], int32_t* pts_left_count,
+                              float (&outer_left)[PT_MAXLEN][2], int32_t* outer_left_count,
+                              int32_t approx_num, float dist)
+{
+    if (outer_left_count == nullptr)
+    {
+        return;
+    }
+
+    if (pts_left_count == nullptr || *pts_left_count <= 0)
+    {
+        *outer_left_count = 0;
+        return;
+    }
+
+    int n = *pts_left_count;
+    if (n > PT_MAXLEN)
+    {
+        n = PT_MAXLEN;
+    }
+    const int a = (approx_num > 0) ? approx_num : 1;
+
+    for (int i = 0; i < n; ++i)
+    {
+        int im = i - a;
+        if (im < 0)
+        {
+            im = 0;
+        }
+        int ip = i + a;
+        if (ip > n - 1)
+        {
+            ip = n - 1;
+        }
+
+        const float dx = pts_left[ip][1] - pts_left[im][1];
+        const float dy = pts_left[ip][0] - pts_left[im][0];
+        const float len2 = dx * dx + dy * dy;
+
+        if (len2 <= 1e-12f)
+        {
+            if (i > 0)
+            {
+                outer_left[i][1] = outer_left[i - 1][1];
+                outer_left[i][0] = outer_left[i - 1][0];
+            }
+            else
+            {
+                outer_left[i][1] = pts_left[i][1];
+                outer_left[i][0] = pts_left[i][0];
+            }
+            continue;
+        }
+
+        float inv_len = fast_rsqrt(len2);
+        inv_len = inv_len * (1.5f - 0.5f * len2 * inv_len * inv_len);
+
+        const float cosv = dx * inv_len;
+        const float sinv = dy * inv_len;
+
+        outer_left[i][1] = pts_left[i][1] + sinv * dist;
+        outer_left[i][0] = pts_left[i][0] - cosv * dist;
+    }
+
+    *outer_left_count = n;
+}
+
+// 功能: 根据右边线生成“向赛道外侧偏移”的强制线
+// 类型: 图像处理函数
+// 关键参数: dist-偏移距离(像素), approx_num-导数近似跨度
+static void GetOuterLine_Right(float (&pts_right)[PT_MAXLEN][2], int32_t* pts_right_count,
+                               float (&outer_right)[PT_MAXLEN][2], int32_t* outer_right_count,
+                               int32_t approx_num, float dist)
+{
+    if (outer_right_count == nullptr)
+    {
+        return;
+    }
+
+    if (pts_right_count == nullptr || *pts_right_count <= 0)
+    {
+        *outer_right_count = 0;
+        return;
+    }
+
+    int n = *pts_right_count;
+    if (n > PT_MAXLEN)
+    {
+        n = PT_MAXLEN;
+    }
+    const int a = (approx_num > 0) ? approx_num : 1;
+
+    for (int i = 0; i < n; ++i)
+    {
+        int im = i - a;
+        if (im < 0)
+        {
+            im = 0;
+        }
+        int ip = i + a;
+        if (ip > n - 1)
+        {
+            ip = n - 1;
+        }
+
+        const float dx = pts_right[ip][1] - pts_right[im][1];
+        const float dy = pts_right[ip][0] - pts_right[im][0];
+        const float len2 = dx * dx + dy * dy;
+
+        if (len2 <= 1e-12f)
+        {
+            if (i > 0)
+            {
+                outer_right[i][1] = outer_right[i - 1][1];
+                outer_right[i][0] = outer_right[i - 1][0];
+            }
+            else
+            {
+                outer_right[i][1] = pts_right[i][1];
+                outer_right[i][0] = pts_right[i][0];
+            }
+            continue;
+        }
+
+        float inv_len = fast_rsqrt(len2);
+        inv_len = inv_len * (1.5f - 0.5f * len2 * inv_len * inv_len);
+
+        const float cosv = dx * inv_len;
+        const float sinv = dy * inv_len;
+
+        outer_right[i][1] = pts_right[i][1] - sinv * dist;
+        outer_right[i][0] = pts_right[i][0] + cosv * dist;
+    }
+
+    *outer_right_count = n;
+}
+
 
 
 
@@ -1241,6 +1381,50 @@ static float get_single_side_mid_offset_pixels(bool is_left)
 #else
     return PIXPERMETER * ROADWIDTH * default_ratio;
 #endif
+}
+
+void BuildRemoteFollowOuterLine(bool is_left,
+                                float (&edge_resample)[PT_MAXLEN][2], int32_t* edge_count,
+                                float (&out_line)[PT_MAXLEN][2], int32_t* out_count)
+{
+    if (out_count == nullptr)
+    {
+        return;
+    }
+
+    *out_count = 0;
+    if (edge_count == nullptr || *edge_count <= 0)
+    {
+        return;
+    }
+
+    static const int span = []() -> int {
+        int v = (int)lround(ANGLEDIST / RESAMPLEDIST);
+        return (v < 1) ? 1 : v;
+    }();
+    static const float resample_dist_pix = RESAMPLEDIST * PIXPERMETER;
+    const float outer_offset_pix = PIXPERMETER * ROADWIDTH * BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO;
+
+    if (!(resample_dist_pix > 0.0f) || !(outer_offset_pix > 0.0f))
+    {
+        return;
+    }
+
+    if (is_left)
+    {
+        GetOuterLine_Left(edge_resample, edge_count, out_line, out_count, span, outer_offset_pix);
+    }
+    else
+    {
+        GetOuterLine_Right(edge_resample, edge_count, out_line, out_count, span, outer_offset_pix);
+    }
+
+    if (*out_count <= 1)
+    {
+        return;
+    }
+
+    GetLinesResample(out_line, out_count, out_line, out_count, resample_dist_pix, nullptr);
 }
 
 
