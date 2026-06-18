@@ -22,14 +22,15 @@ const float FACTOR_LIMIT = 1.23f;        // 差速比例输出限幅
 
 bool cfg_straight_accel_enable = true;      // 是否开启直道加速
 
-float cfg_straight_accel_max_add = 2.0f;    // 作用上限：直道加速最大补偿速度
+float cfg_straight_accel_max_add = 4.0f;    // 作用上限：直道加速最大补偿速度
+// float cfg_straight_accel_max_add = 2.0f;    
 
-// 2. 最小阈值：在此范围内视为绝对直道，补偿拉满 (100% max_add)
-float cfg_straight_accel_curve_min_th = 15.0f; // 适应取最大曲率算法，垫高底线容忍直道毛刺
+//  最小阈值：在此范围内视为绝对直道，补偿拉满 (100% max_add)
+float cfg_straight_accel_curve_min_th = 22.0f; // 适应取最大曲率算法，垫高底线容忍直道毛刺
 float cfg_straight_accel_yaw_min_th = 3.5f;    // 直道 yaw 控制在 -5 到 5，满分阈值设为 3.5
 
 // 3. 最大阈值：超过此值视为入弯，一票否决，加速清零
-float cfg_straight_accel_curve_max_th = 22.0f; // 相应拉高最高阈值
+float cfg_straight_accel_curve_max_th = 30.0f; // 相应拉高最高阈值
 float cfg_straight_accel_yaw_max_th = 7.0f;    // 超过 7 度绝对不是直道
 
 // 4. 剧烈程度 (保持 0.4 激进模式)
@@ -484,7 +485,7 @@ static bool handle_zebra_stop_request()
 static bool handle_rollover_protection()
 {   // ================== 边界配置 ==================
     const float ROLLOVER_THRESHOLD = 3800.0f; // 翻车硬阈值：低于 3000 判定为异常
-    const int CONFIRM_CHECKS = 5;             // 连续 5 次低频检查均异常才触发紧急抱死
+    const int CONFIRM_CHECKS = 8;             // 连续 8 次低频检查均异常才触发紧急抱死
 
     // ================== 蒸馏器 ==================
     // 降频计数器：让 5ms 周期调用的函数，每 10 次才真正往下走一次
@@ -542,6 +543,12 @@ float vofa_target_speed_adjust = 0.0f;
 
 
 #pragma endregion
+
+
+
+
+
+
 
 #pragma region PID
 //============================ PID算法分区 =============================
@@ -639,14 +646,6 @@ void BayWatcher_Control_Init(void) {
     vL = 0;
     vR = 0;
 
-    // // 左轮速度环PID
-    // PID_Speed_L.Kp = 105.32f; PID_Speed_L.Ki = 7.15f; PID_Speed_L.Kd = 0.00f;
-    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 7000.0f;
-
-    // // 右轮速度环PID
-    // PID_Speed_R.Kp = 105.00f; PID_Speed_R.Ki = 7.09f; PID_Speed_R.Kd = 0.00f;
-    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 7000.0f;
-
     // // 无负压1
     // // 左轮速度环PID
     // // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
@@ -726,22 +725,7 @@ void BayWatcher_Control_Init(void) {
     ERROR_MAX = 40.0f; KP_Fuzzy = 0.0f; KD_Fuzzy = 0.0f;
 
     // // 三次拟位式PID
-    // // 无负压 16.07
-    // PID_Cube.Kp_a = 5.55f ;  PID_Cube.Kp_b = 0.455f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 808.10f ; PID_Cube.Kd_b = 0.00000f;
-
-    // // 无负压 16.40
-    // PID_Cube.Kp_a = 5.57f ;  PID_Cube.Kp_b = 0.455f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 808.10f ; PID_Cube.Kd_b = 0.00000f;
-
-    // // 无负压 16.50 0.5
-    // PID_Cube.Kp_a = 5.57f ;  PID_Cube.Kp_b = 0.4555f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 809.10f ; PID_Cube.Kd_b = 0.00000f;
-
-    // // 无负压 16.50 0.5
-    // PID_Cube.Kp_a = 6.00f ;  PID_Cube.Kp_b = 0.475f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 808.10f ; PID_Cube.Kd_b = 0.00000f;
-
-    // // 无负压 16.93 0.4
-    // PID_Cube.Kp_a = 6.55f ;  PID_Cube.Kp_b = 0.475f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 814.10f ; PID_Cube.Kd_b = 0.00000f;
-
-    // // 无负压 17.22 0.4
+     // // 无负压 17.22 0.4
     // PID_Cube.Kp_a = 6.55f ;  PID_Cube.Kp_b = 0.475f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 814.10f ; PID_Cube.Kd_b = 0.00000f;
 
     // // 无负压 17.52 0.4
@@ -786,7 +770,7 @@ void BayWatcher_Control_Init(void) {
     // // 有负压 21.25 0.35 60%
     // PID_Cube.Kp_a = 6.5685f ;  PID_Cube.Kp_b = 0.4846f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 410.10f ; PID_Cube.Kd_b = 0.00100f;
 
-    // 有负压 21.25 0.35 60%
+    // 有负压 19.92 - 20.10 0.40 70%
     PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4844f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.10f ; PID_Cube.Kd_b = 0.00100f;
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
