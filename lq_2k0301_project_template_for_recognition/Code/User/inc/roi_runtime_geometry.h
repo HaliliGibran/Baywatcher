@@ -64,6 +64,20 @@ struct RoiExtractionResult
     int merged_reference_span_count = 0;
     std::string reference_range_source = "fallback";
 
+    bool has_track_left_boundary = false;
+    std::vector<cv::Point> track_left_boundary;
+
+    bool has_track_right_boundary = false;
+    std::vector<cv::Point> track_right_boundary;
+
+    bool has_track_classify_point = false;
+    cv::Point track_classify_point;
+
+    bool has_track_classify_bounds = false;
+    int track_classify_left_x = 0;
+    int track_classify_right_x = 0;
+    int track_classify_row_y = 0;
+
     bool touches_search_top = false;
     bool touch_top_expand = false;
     bool touch_top_skip_refine = false;

@@ -4,6 +4,7 @@
 #include "recognition_chain.h"
 #include "stream_chain.h"
 #include "main.hpp"
+#include <algorithm>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -17,6 +18,222 @@ namespace {
 using steady_clock_t = std::chrono::steady_clock;
 using steady_time_point_t = std::chrono::time_point<steady_clock_t>;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
+
+struct RuntimeWhiteReferenceStats
+{
+    bool valid = false;
+    int sample_count = 0;
+    float mean_b = 0.0f;
+    float mean_g = 0.0f;
+    float mean_r = 0.0f;
+    float mean_luma = 0.0f;
+};
+
+struct RuntimeWhiteReferenceNormalizeState
+{
+    bool initialized = false;
+    float gain_b = 1.0f;
+    float gain_g = 1.0f;
+    float gain_r = 1.0f;
+};
+
+static float clamp_float(float value, float min_value, float max_value)
+{
+    return std::max(min_value, std::min(value, max_value));
+}
+
+static bool IsRuntimeWhiteReferenceSeed(const cv::Vec3b& bgr, const cv::Vec3b& hsv)
+{
+    const int max_rgb = std::max(std::max(static_cast<int>(bgr[0]), static_cast<int>(bgr[1])),
+                                 static_cast<int>(bgr[2]));
+    const int min_rgb = std::min(std::min(static_cast<int>(bgr[0]), static_cast<int>(bgr[1])),
+                                 static_cast<int>(bgr[2]));
+    return hsv[1] <= static_cast<unsigned char>(BW_RECOG_WHITE_REF_SEED_MAX_SATURATION) &&
+           hsv[2] >= static_cast<unsigned char>(BW_RECOG_WHITE_REF_SEED_MIN_VALUE) &&
+           min_rgb >= BW_RECOG_WHITE_REF_SEED_MIN_RGB &&
+           (max_rgb - min_rgb) <= BW_RECOG_WHITE_REF_SEED_MAX_CHANNEL_DIFF;
+}
+
+static bool ComputeRuntimeWhiteReferenceStats(const cv::Mat& frame_bgr,
+                                              RuntimeWhiteReferenceStats* out_stats)
+{
+    if (out_stats == nullptr)
+    {
+        return false;
+    }
+    *out_stats = RuntimeWhiteReferenceStats();
+    if (frame_bgr.empty())
+    {
+        return false;
+    }
+
+    const int row_y = std::max(0, std::min(BW_RECOG_WHITE_REFERENCE_ROW_Y, frame_bgr.rows - 1));
+    const int half_height = std::max(0, BW_RECOG_WHITE_REF_STATS_HALF_HEIGHT);
+    const int y0 = std::max(0, row_y - half_height);
+    const int y1 = std::min(frame_bgr.rows - 1, row_y + half_height);
+    if (y1 < y0)
+    {
+        return false;
+    }
+
+    const cv::Mat roi_bgr = frame_bgr.rowRange(y0, y1 + 1);
+    cv::Mat roi_hsv;
+    cv::cvtColor(roi_bgr, roi_hsv, cv::COLOR_BGR2HSV);
+
+    double sum_b = 0.0;
+    double sum_g = 0.0;
+    double sum_r = 0.0;
+    double sum_luma = 0.0;
+    int sample_count = 0;
+
+    for (int y = 0; y < roi_bgr.rows; ++y)
+    {
+        const cv::Vec3b* bgr_row = roi_bgr.ptr<cv::Vec3b>(y);
+        const cv::Vec3b* hsv_row = roi_hsv.ptr<cv::Vec3b>(y);
+        for (int x = 0; x < roi_bgr.cols; ++x)
+        {
+            if (!IsRuntimeWhiteReferenceSeed(bgr_row[x], hsv_row[x]))
+            {
+                continue;
+            }
+
+            const float b = static_cast<float>(bgr_row[x][0]);
+            const float g = static_cast<float>(bgr_row[x][1]);
+            const float r = static_cast<float>(bgr_row[x][2]);
+            sum_b += b;
+            sum_g += g;
+            sum_r += r;
+            sum_luma += 0.114 * b + 0.587 * g + 0.299 * r;
+            ++sample_count;
+        }
+    }
+
+    if (sample_count <= 0)
+    {
+        return false;
+    }
+
+    out_stats->valid = true;
+    out_stats->sample_count = sample_count;
+    out_stats->mean_b = static_cast<float>(sum_b / sample_count);
+    out_stats->mean_g = static_cast<float>(sum_g / sample_count);
+    out_stats->mean_r = static_cast<float>(sum_r / sample_count);
+    out_stats->mean_luma = static_cast<float>(sum_luma / sample_count);
+    return true;
+}
+
+static RuntimeWhiteReferenceNormalizeState& GetRuntimeWhiteReferenceNormalizeState()
+{
+    static RuntimeWhiteReferenceNormalizeState state;
+    return state;
+}
+
+static void ApplyRuntimeWhiteReferenceGains(cv::Mat* frame_bgr,
+                                            const RuntimeWhiteReferenceNormalizeState& state)
+{
+    if (frame_bgr == nullptr || frame_bgr->empty() || !state.initialized)
+    {
+        return;
+    }
+
+    for (int y = 0; y < frame_bgr->rows; ++y)
+    {
+        cv::Vec3b* row = frame_bgr->ptr<cv::Vec3b>(y);
+        for (int x = 0; x < frame_bgr->cols; ++x)
+        {
+            row[x][0] = cv::saturate_cast<unsigned char>(row[x][0] * state.gain_b);
+            row[x][1] = cv::saturate_cast<unsigned char>(row[x][1] * state.gain_g);
+            row[x][2] = cv::saturate_cast<unsigned char>(row[x][2] * state.gain_r);
+        }
+    }
+}
+
+static void ApplyRecognitionWhiteReferenceNormalization(cv::Mat* frame_bgr, bool allow_adapt)
+{
+#if BW_RECOG_WHITE_REF_NORMALIZE_ENABLE == 0
+    (void)frame_bgr;
+    (void)allow_adapt;
+#else
+    if (frame_bgr == nullptr || frame_bgr->empty())
+    {
+        return;
+    }
+
+    RuntimeWhiteReferenceNormalizeState& state = GetRuntimeWhiteReferenceNormalizeState();
+    RuntimeWhiteReferenceStats stats;
+    const bool has_stats = ComputeRuntimeWhiteReferenceStats(*frame_bgr, &stats);
+
+    if (allow_adapt && has_stats && stats.valid)
+    {
+        const float safe_luma = std::max(stats.mean_luma, 1.0f);
+        const float safe_b = std::max(stats.mean_b, 1.0f);
+        const float safe_g = std::max(stats.mean_g, 1.0f);
+        const float safe_r = std::max(stats.mean_r, 1.0f);
+        const float target_luma = std::max(1.0f, BW_RECOG_WHITE_REF_NORMALIZE_TARGET_LUMA);
+        const float avg_channel = (stats.mean_b + stats.mean_g + stats.mean_r) / 3.0f;
+        const float alpha = clamp_float(BW_RECOG_WHITE_REF_NORMALIZE_ALPHA, 0.0f, 1.0f);
+
+        const float luma_gain = clamp_float(
+            target_luma / safe_luma,
+            BW_RECOG_WHITE_REF_NORMALIZE_LUMA_GAIN_MIN,
+            BW_RECOG_WHITE_REF_NORMALIZE_LUMA_GAIN_MAX);
+        const float wb_gain_b = clamp_float(
+            avg_channel / safe_b,
+            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MIN,
+            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MAX);
+        const float wb_gain_g = clamp_float(
+            avg_channel / safe_g,
+            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MIN,
+            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MAX);
+        const float wb_gain_r = clamp_float(
+            avg_channel / safe_r,
+            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MIN,
+            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MAX);
+
+        const float target_gain_b = luma_gain * wb_gain_b;
+        const float target_gain_g = luma_gain * wb_gain_g;
+        const float target_gain_r = luma_gain * wb_gain_r;
+
+        if (!state.initialized)
+        {
+            state.initialized = true;
+            state.gain_b = target_gain_b;
+            state.gain_g = target_gain_g;
+            state.gain_r = target_gain_r;
+        }
+        else
+        {
+            state.gain_b += (target_gain_b - state.gain_b) * alpha;
+            state.gain_g += (target_gain_g - state.gain_g) * alpha;
+            state.gain_r += (target_gain_r - state.gain_r) * alpha;
+        }
+    }
+
+    ApplyRuntimeWhiteReferenceGains(frame_bgr, state);
+#endif
+}
+
+void ApplyRecognitionProcessingMask(cv::Mat* frame_bgr)
+{
+    if (frame_bgr == nullptr || frame_bgr->empty())
+    {
+        return;
+    }
+
+    const int rows = frame_bgr->rows;
+    const int keep_y_min = std::max(0, std::min(BW_RECOG_PROCESS_KEEP_Y_MIN, rows));
+    const int keep_y_max =
+        std::max(keep_y_min, std::min(BW_RECOG_PROCESS_KEEP_Y_MAX, rows));
+
+    if (keep_y_min > 0)
+    {
+        frame_bgr->rowRange(0, keep_y_min).setTo(cv::Scalar::all(0));
+    }
+    if (keep_y_max < rows)
+    {
+        frame_bgr->rowRange(keep_y_max, rows).setTo(cv::Scalar::all(0));
+    }
+}
 
 const char* VisionCodeText(BoardVisionCode code)
 {
@@ -253,6 +470,26 @@ void RenderVisionStateOverlay(cv::Mat& view, BoardVisionCode code, double blob_a
 
 } // namespace
 
+namespace recognition_runtime {
+
+uint64_t now_ms()
+{
+    return recognition_now_ms();
+}
+
+void prepare_frame_for_processing(cv::Mat* frame_bgr, bool allow_adapt)
+{
+    ApplyRecognitionProcessingMask(frame_bgr);
+    ApplyRecognitionWhiteReferenceNormalization(frame_bgr, allow_adapt);
+}
+
+cv::Mat build_publish_view(const cv::Mat& source_view)
+{
+    return BuildPublishView(source_view);
+}
+
+} // namespace recognition_runtime
+
 // 功能: 识别板独立运行时主循环
 // 类型: 图像运行时主循环
 // 关键参数:
@@ -355,7 +592,11 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
             last_consumed_frame_seq = current_frame_seq;
         }
 
-        const uint64_t t_ms = recognition_now_ms();
+        const uint64_t t_ms = recognition_runtime::now_ms();
+        recognition_runtime::prepare_frame_for_processing(
+            &img,
+            !recognition.IsInRecognitionMode() && !recognition.HasRecentRedCandidate(t_ms));
+
         if (!recognition.IsEnabled())
         {
             if (render_debug)
@@ -448,7 +689,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
 
         // 7. 发布图传画面
         const steady_time_point_t publish_begin = steady_clock_t::now();
-        stream.PublishFrame(BuildPublishView(view));
+        stream.PublishFrame(recognition_runtime::build_publish_view(view));
         const steady_time_point_t publish_end = steady_clock_t::now();
         publish_ms = elapsed_ms_between(publish_begin, publish_end);
         publish_called = true;
