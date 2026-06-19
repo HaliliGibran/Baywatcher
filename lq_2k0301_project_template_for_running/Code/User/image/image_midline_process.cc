@@ -1376,29 +1376,41 @@ static inline float curvature_to_angle_deg(float curvature)
     return acosf(cosv) * (180.0f / PI32);
 }
 
-int MidLineSuggestPureAnglePreviewImageY(const float (&mid)[PT_MAXLEN][2], int32_t mid_count,
-                                         int base_img_y)
+static float compute_preview_robust_angle_from_mid_segment(const float (&mid)[PT_MAXLEN][2],
+                                                           int32_t start_index,
+                                                           int32_t segment_count)
 {
-    if (base_img_y < 0) base_img_y = 0;
-    if (base_img_y > IMAGE_H - 1) base_img_y = IMAGE_H - 1;
-
-    int preview_img_y_out = base_img_y;
-    if (mid_count < 3)
+    if (start_index < 0)
     {
-        preview_curve_angle_deg = 0.0f;
-        return preview_img_y_out;
+        start_index = 0;
+    }
+    if (segment_count <= 0)
+    {
+        return 0.0f;
+    }
+    if (start_index >= PT_MAXLEN)
+    {
+        return 0.0f;
+    }
+    if (segment_count > PT_MAXLEN - start_index)
+    {
+        segment_count = PT_MAXLEN - start_index;
+    }
+    if (segment_count < 3)
+    {
+        return 0.0f;
     }
 
-    // 1) 整条中线的局部转角链：
-    //    先算 curvature(1-cos)，再还原成角度值。
-    //    这里不再直接取“单点最大角度”，而是：
-    //    - 先对每个局部转角做合理限幅
-    //    - 再在原始顺序上做短窗统计
-    //    - 每个窗口直接取中位数，避免单个离群尖峰把整窗抬高
-    //    不再对小角度做额外归零；小角度虽然不会推动预瞄点，但保留它的连续量更利于调试和观察。
+    float segment_mid[PT_MAXLEN][2] = {};
+    for (int32_t i = 0; i < segment_count; ++i)
+    {
+        segment_mid[i][0] = mid[start_index + i][0];
+        segment_mid[i][1] = mid[start_index + i][1];
+    }
+
     float curvature[PT_MAXLEN] = {0.0f};
-    int curvature_count = (mid_count > PT_MAXLEN) ? PT_MAXLEN : (int)mid_count;
-    local_curvature_points(mid, &curvature_count,
+    int curvature_count = segment_count;
+    local_curvature_points(segment_mid, &curvature_count,
                            curvature, &curvature_count,
                            PUREANGLE_PREVIEW_CURV_DIST);
 
@@ -1418,7 +1430,6 @@ int MidLineSuggestPureAnglePreviewImageY(const float (&mid)[PT_MAXLEN][2], int32
         angle_deg_chain[i] = angle_deg;
     }
 
-    float robust_angle_deg = 0.0f;
     int robust_window = PUREANGLE_PREVIEW_ROBUST_WINDOW;
     if (robust_window < 1)
     {
@@ -1430,6 +1441,7 @@ int MidLineSuggestPureAnglePreviewImageY(const float (&mid)[PT_MAXLEN][2], int32
     }
     const int half_window = robust_window >> 1;
 
+    float robust_angle_deg = 0.0f;
     for (int i = 0; i < curvature_count; ++i)
     {
         float window_angles[PT_MAXLEN];
@@ -1475,6 +1487,49 @@ int MidLineSuggestPureAnglePreviewImageY(const float (&mid)[PT_MAXLEN][2], int32
         {
             robust_angle_deg = window_angle_deg;
         }
+    }
+
+    return robust_angle_deg;
+}
+
+int MidLineSuggestPureAnglePreviewImageY(const float (&mid)[PT_MAXLEN][2], int32_t mid_count,
+                                         int base_img_y,
+                                         int32_t preview_curve_split_index)
+{
+    if (base_img_y < 0) base_img_y = 0;
+    if (base_img_y > IMAGE_H - 1) base_img_y = IMAGE_H - 1;
+
+    int preview_img_y_out = base_img_y;
+    if (mid_count < 3)
+    {
+        preview_curve_angle_deg = 0.0f;
+        return preview_img_y_out;
+    }
+
+    // 1) 中线局部转角链：
+    //    默认整条 mid 作为单段处理。
+    //    但在 MIXED 且存在“前段双边混合、后段单边延长”的情况下，
+    //    不再跨越拼接缝直接算局部转角，而是拆成两段分别算，再取整体最大稳健转角。
+    int total_count = (mid_count > PT_MAXLEN) ? PT_MAXLEN : (int)mid_count;
+    float robust_angle_deg = 0.0f;
+    if (preview_curve_split_index > 0 && preview_curve_split_index < total_count)
+    {
+        robust_angle_deg =
+            compute_preview_robust_angle_from_mid_segment(mid, 0, preview_curve_split_index);
+
+        const float tail_robust_angle_deg =
+            compute_preview_robust_angle_from_mid_segment(mid,
+                                                          preview_curve_split_index,
+                                                          total_count - preview_curve_split_index);
+        if (tail_robust_angle_deg > robust_angle_deg)
+        {
+            robust_angle_deg = tail_robust_angle_deg;
+        }
+    }
+    else
+    {
+        robust_angle_deg =
+            compute_preview_robust_angle_from_mid_segment(mid, 0, total_count);
     }
 
     preview_curve_angle_deg = robust_angle_deg;

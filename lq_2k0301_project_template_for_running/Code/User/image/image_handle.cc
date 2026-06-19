@@ -1603,7 +1603,8 @@ void CalculatePureAngleFromPath(const float (&path)[PT_MAXLEN][2], int32_t path_
 
     const int preview_img_y_angle_target = MidLineSuggestPureAnglePreviewImageY(midline.mid,
                                                                                 midline.mid_count,
-                                                                                PUREANGLE_PREVIEW_BASE_IMAGE_Y);
+                                                                                PUREANGLE_PREVIEW_BASE_IMAGE_Y,
+                                                                                midline.preview_curve_split_index);
     const int angle_shift = preview_shift_from_img_y(preview_img_y_angle_target);
     const int speed_shift = preview_shift_from_speed_feedback();
     const int final_shift = (speed_shift > angle_shift) ? speed_shift : angle_shift;

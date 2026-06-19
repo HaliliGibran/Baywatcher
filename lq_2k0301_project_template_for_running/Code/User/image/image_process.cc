@@ -522,12 +522,40 @@ static void copy_point_line(const float (&src)[PT_MAXLEN][2], int32_t src_count,
     }
 }
 
+static int32_t compute_preview_curve_split_index_for_mixed(int32_t left_mid_count,
+                                                           int32_t right_mid_count,
+                                                           FollowLine mode)
+{
+    if (mode != FollowLine::MIXED)
+    {
+        return -1;
+    }
+
+    if (left_mid_count <= 0 || right_mid_count <= 0)
+    {
+        return -1;
+    }
+
+    const int32_t overlap_count =
+        (left_mid_count < right_mid_count) ? left_mid_count : right_mid_count;
+    const int32_t full_count =
+        (left_mid_count > right_mid_count) ? left_mid_count : right_mid_count;
+
+    if (overlap_count <= 0 || full_count <= overlap_count)
+    {
+        return -1;
+    }
+
+    return overlap_count;
+}
+
 // 功能: 远端 w/s 锁边时，基于锁定侧边线生成“外推强制线”并直接覆盖 path
 // 类型: 局部功能函数
 // 关键参数: forced_mode-锁定到左/右边线
 static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 {
     follow_mode = forced_mode;
+    midline.preview_curve_split_index = -1;
 
     pts_well_processed* src = nullptr;
     bool is_left = false;
@@ -596,6 +624,10 @@ static void build_midline_from_current_state()
             pts_far_right.mid, &pts_far_right.mid_count,
             midline.mid, &midline.mid_count,
             follow_mode);
+        midline.preview_curve_split_index =
+            compute_preview_curve_split_index_for_mixed(pts_far_left.mid_count,
+                                                        pts_far_right.mid_count,
+                                                        follow_mode);
         return;
     }
 
@@ -603,6 +635,10 @@ static void build_midline_from_current_state()
         pts_right.mid, &pts_right.mid_count,
         midline.mid, &midline.mid_count,
         follow_mode);
+    midline.preview_curve_split_index =
+        compute_preview_curve_split_index_for_mixed(pts_left.mid_count,
+                                                    pts_right.mid_count,
+                                                    follow_mode);
 }
 
 // 功能: 从最终中线构建路径并计算当帧测量角

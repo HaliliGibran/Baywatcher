@@ -103,6 +103,7 @@ struct midline_data
 {
     float mid[PT_MAXLEN][2];   // 中线点列（融合后）
     int32_t mid_count;
+    int32_t preview_curve_split_index; // MIXED 时“混合段/非混合段”的拼接点；<0 表示整条按单段处理
 
     float path[PT_MAXLEN][2];  // 路径点列（从 core 并轨到中线）
     int32_t path_count;

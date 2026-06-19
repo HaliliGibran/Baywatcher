@@ -219,6 +219,7 @@ midline_data midline;
 void image_reset_midline_path_state()
 {
     midline.mid_count = 0;
+    midline.preview_curve_split_index = -1;
     midline.path_count = 0;
 }
 
