@@ -55,6 +55,64 @@ foreach(_camera_lib_candidate IN LISTS LQ_CAMERA_EX_LIB_CANDIDATES)
 endforeach()
 
 set(LQ_USE_CAMERA_EX_COMPAT OFF)
+set(LQ_CAMERA_EX_LIB_HAS_ADVANCED_CONTROLS OFF)
+set(LQ_CAMERA_EX_REQUIRED_SYMBOLS
+    "lq_camera_ex::set_exposure_auto()"
+    "lq_camera_ex::set_gain_manual(double)"
+    "lq_camera_ex::set_white_balance_manual(double, double)"
+    "lq_camera_ex::set_white_balance_auto()"
+    "lq_camera_ex::get_exposure_value() const"
+    "lq_camera_ex::get_gain_value() const"
+    "lq_camera_ex::get_white_balance_blue_u_value() const"
+    "lq_camera_ex::get_white_balance_red_v_value() const"
+)
+
+if (EXISTS "${LQ_CAMERA_EX_LIB}")
+    if (NOT CMAKE_NM)
+        find_program(CMAKE_NM NAMES
+            loongarch64-linux-gnu-nm
+            llvm-nm
+            nm)
+    endif()
+
+    if (CMAKE_NM)
+        execute_process(
+            COMMAND ${CMAKE_NM} -C "${LQ_CAMERA_EX_LIB}"
+            OUTPUT_VARIABLE LQ_CAMERA_EX_NM_OUTPUT
+            RESULT_VARIABLE LQ_CAMERA_EX_NM_RESULT
+            ERROR_QUIET)
+
+        if (LQ_CAMERA_EX_NM_RESULT EQUAL 0)
+            set(LQ_CAMERA_EX_LIB_HAS_ADVANCED_CONTROLS ON)
+            foreach(_camera_required_symbol IN LISTS LQ_CAMERA_EX_REQUIRED_SYMBOLS)
+                string(FIND "${LQ_CAMERA_EX_NM_OUTPUT}" "${_camera_required_symbol}" _camera_symbol_pos)
+                if (_camera_symbol_pos EQUAL -1)
+                    set(LQ_CAMERA_EX_LIB_HAS_ADVANCED_CONTROLS OFF)
+                    set(LQ_CAMERA_EX_FIRST_MISSING_SYMBOL "${_camera_required_symbol}")
+                    break()
+                endif()
+            endforeach()
+        endif()
+    endif()
+endif()
+
+if (EXISTS "${LQ_CAMERA_EX_LIB}" AND NOT LQ_CAMERA_EX_LIB_HAS_ADVANCED_CONTROLS)
+    if (EXISTS "${LQ_CAMERA_EX_COMPAT_SRC}")
+        set(LQ_USE_CAMERA_EX_COMPAT ON)
+        message(WARNING
+            "检测到现有 lq_camera_ex 静态库缺少高级相机控制接口，自动改用源码兼容实现：\n"
+            "  lib: ${LQ_CAMERA_EX_LIB}\n"
+            "  missing: ${LQ_CAMERA_EX_FIRST_MISSING_SYMBOL}\n"
+            "  compat: ${LQ_CAMERA_EX_COMPAT_SRC}")
+    else()
+        message(FATAL_ERROR
+            "现有 lq_camera_ex 静态库缺少高级相机控制接口，且兼容源码不存在。\n"
+            "  lib: ${LQ_CAMERA_EX_LIB}\n"
+            "  missing: ${LQ_CAMERA_EX_FIRST_MISSING_SYMBOL}\n"
+            "请补齐 ${LQ_CAMERA_EX_COMPAT_SRC}，或替换为包含这些接口的新版本 liblq_camera_ex.a。")
+    endif()
+endif()
+
 if (NOT EXISTS "${LQ_CAMERA_EX_LIB}")
     if (EXISTS "${LQ_CAMERA_EX_COMPAT_SRC}")
         set(LQ_USE_CAMERA_EX_COMPAT ON)
