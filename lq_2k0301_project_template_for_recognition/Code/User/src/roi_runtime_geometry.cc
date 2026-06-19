@@ -198,6 +198,10 @@ static BuildRoiQuadResult BuildRoiQuadFromBlobQuad(const std::vector<cv::Point2f
                                                    int image_width,
                                                    int image_height,
                                                    RoiMethod roi_method);
+static bool ClampRectToImage(const cv::Rect& rect,
+                             int image_width,
+                             int image_height,
+                             cv::Rect* out_rect);
 
 static bool IsFinitePoint(const cv::Point2f& p)
 {
