@@ -110,6 +110,49 @@
 #ifndef BW_RECOG_LATEST_FRAME_WAIT_FIRST_FRAME_MS
 #define BW_RECOG_LATEST_FRAME_WAIT_FIRST_FRAME_MS 500
 #endif
+
+// [先调] ROI 拍摄模式编译期默认开关
+// 作用：
+// - 1：允许通过命令行进入独立 ROI 拍摄支链。
+// - 0：默认仍以正常识别支链为主，仅在命令行显式指定时再切换。
+#ifndef BW_ENABLE_ROI_CAPTURE_MODE
+#define BW_ENABLE_ROI_CAPTURE_MODE 0
+#endif
+
+// [先调] ROI 拍摄模式输出 ROI 边长
+// 作用：
+// - 板端只发送这张最终 warp 后的 ROI JPEG。
+// - 默认跟当前模型输入尺寸保持一致，便于直接做板端口径数据采集。
+#ifndef BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE
+#if (BW_RECOG_MODEL_VARIANT == BW_RECOG_MODEL_VARIANT_RGB64)
+#define BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE 64
+#else
+#define BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE 32
+#endif
+#endif
+
+// [先调] ROI 拍摄模式发送目标主机
+// 作用：
+// - 板端按 2 发送 ROI 时，TCP 连接到该主机。
+// - 默认为空字符串，建议通过运行参数 `--roi-host=...` 明确指定电脑 IP。
+#ifndef BW_RECOG_ROI_CAPTURE_SEND_HOST
+#define BW_RECOG_ROI_CAPTURE_SEND_HOST ""
+#endif
+
+// [先调] ROI 拍摄模式发送目标端口
+#ifndef BW_RECOG_ROI_CAPTURE_SEND_PORT
+#define BW_RECOG_ROI_CAPTURE_SEND_PORT 5001
+#endif
+
+// [先调] ROI 发送 JPEG 质量
+#ifndef BW_RECOG_ROI_CAPTURE_JPEG_QUALITY
+#define BW_RECOG_ROI_CAPTURE_JPEG_QUALITY 95
+#endif
+
+// [先调] ROI 发送 socket 超时（毫秒）
+#ifndef BW_RECOG_ROI_CAPTURE_SOCKET_TIMEOUT_MS
+#define BW_RECOG_ROI_CAPTURE_SOCKET_TIMEOUT_MS 1500
+#endif
 #pragma endregion
 
 #pragma region B. 相机采集与曝光
@@ -124,6 +167,26 @@
 // [一般别动] 识别板运行时采集分辨率高度
 #ifndef BW_RECOG_CAMERA_FRAME_HEIGHT
 #define BW_RECOG_CAMERA_FRAME_HEIGHT 240
+#endif
+
+// [先调] 识别板软件处理保留区上边界
+// 作用：
+// - 拿到单帧后，y 小于该值的区域会立刻清黑，不再参与后续任何处理。
+// - 只影响板端软件处理，不改变相机实际输出分辨率。
+// 当前默认：
+// - 屏蔽顶部 y=0..29，仅保留 y>=30。
+#ifndef BW_RECOG_PROCESS_KEEP_Y_MIN
+#define BW_RECOG_PROCESS_KEEP_Y_MIN 30
+#endif
+
+// [先调] 识别板软件处理保留区下边界（开区间）
+// 作用：
+// - 拿到单帧后，y 大于等于该值的区域会立刻清黑，不再参与后续任何处理。
+// - 为保留 y=160 参考行，这里默认写成 161。
+// 当前默认：
+// - 屏蔽底部 y=161..239，仅保留 y<=160。
+#ifndef BW_RECOG_PROCESS_KEEP_Y_MAX
+#define BW_RECOG_PROCESS_KEEP_Y_MAX 161
 #endif
 
 // [一般别动] 当前识别板透视表宽度
@@ -167,6 +230,40 @@
 #define BW_RECOG_CAMERA_USE_MANUAL_EXPOSURE 1
 #endif
 
+// [先调] 启动后是否先进入五点采光模式
+// 作用：
+// - 1：上电后先不进正常识别链，而是进入“五个位置采光”前置流程。
+// - 采光阶段相机会先切回自动曝光/自动白平衡；每到一个点按一次 `c` 采样。
+// - 五个有效点采完后，板端自动取中位数参数并切回固定曝光/增益/白平衡，再进入正常流程。
+// - 0：跳过五点采光，直接按下方固定手动参数进入正常流程。
+#ifndef BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_ENABLE
+#define BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_ENABLE 1
+#endif
+
+// [一般别动] 启动五点采光的目标点数
+#ifndef BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_POINT_COUNT
+#define BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_POINT_COUNT 5
+#endif
+
+// [先调] 五点采光结果持久化配置文件名
+// 作用：
+// - 五点采光完成后，会把最终固定曝光/增益/白平衡写到该文件。
+// - 下次上电进入五点采光阶段时，按 `q` 会直接读取这个文件并跳过重新采样。
+// 说明：
+// - 文件默认写在可执行程序所在目录。
+#ifndef BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_CONFIG_FILE
+#define BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_CONFIG_FILE "recognition_startup_lighting.cfg"
+#endif
+
+// [先调] 每次按键采样后，为等待自动曝光/白平衡稳定而额外丢弃的帧数
+// 调大效果：
+// - 单点采样更稳，但每次采样等待更久。
+// 调小效果：
+// - 采样更快，但若相机自动参数尚未稳定，固定参数会更飘。
+#ifndef BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_SETTLE_FRAMES
+#define BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_SETTLE_FRAMES 12
+#endif
+
 // [先调] 手动曝光值
 // 作用：
 // - 仅在 BW_RECOG_CAMERA_USE_MANUAL_EXPOSURE=1 时生效。
@@ -178,6 +275,39 @@
 // - 先固定场地，在 80~140 区间实车扫一轮。
 #ifndef BW_RECOG_CAMERA_MANUAL_EXPOSURE
 #define BW_RECOG_CAMERA_MANUAL_EXPOSURE 100
+#endif
+
+// [先调] 是否启用固定手动增益
+// 作用：
+// - 0：沿用摄像头当前默认增益策略。
+// - 1：启动时显式写入固定增益值，避免相机在暗光里把噪声一并放大。
+#ifndef BW_RECOG_CAMERA_USE_MANUAL_GAIN
+#define BW_RECOG_CAMERA_USE_MANUAL_GAIN 1
+#endif
+
+// [先调] 手动增益值
+// 建议：
+// - 先在五个典型光照点实测，再选一组“最差场景也能接受”的固定值。
+#ifndef BW_RECOG_CAMERA_MANUAL_GAIN
+#define BW_RECOG_CAMERA_MANUAL_GAIN 16.0
+#endif
+
+// [先调] 是否启用固定手动白平衡
+// 作用：
+// - 0：沿用摄像头当前默认白平衡策略。
+// - 1：启动时显式写入固定白平衡，减少白边/红边颜色漂移。
+#ifndef BW_RECOG_CAMERA_USE_MANUAL_WHITE_BALANCE
+#define BW_RECOG_CAMERA_USE_MANUAL_WHITE_BALANCE 1
+#endif
+
+// [先调] 手动白平衡蓝通道参数
+#ifndef BW_RECOG_CAMERA_MANUAL_WB_BLUE
+#define BW_RECOG_CAMERA_MANUAL_WB_BLUE 4600.0
+#endif
+
+// [先调] 手动白平衡红通道参数
+#ifndef BW_RECOG_CAMERA_MANUAL_WB_RED
+#define BW_RECOG_CAMERA_MANUAL_WB_RED 4600.0
 #endif
 
 // [谨慎调] 是否优先尝试低 CPU MJPG 模式
@@ -569,12 +699,20 @@
 // - slowdown 预触发带为 y=40..160
 // - 正式识别带为 y=80..160
 #ifndef BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN
-#define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN 60
+#define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN 40
 #endif
 
 // [谨慎调] 仅用于触发减速/NO_RESULT 的前置红色检测下边界（开区间）
 #ifndef BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MAX
 #define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MAX BW_RECOG_TRIGGER_SEARCH_Y_MAX
+#endif
+
+// [先调] 白赛道左右边线寻线的最小 y
+// 作用：
+// - 只影响左右边线从多高的位置开始往下建立边界，不改变正式红色 ROI 搜索带。
+// - 默认和减速预触发红带起始 y 保持一致。
+#ifndef BW_RECOG_TRACK_BOUNDARY_Y_MIN
+#define BW_RECOG_TRACK_BOUNDARY_Y_MIN BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN
 #endif
 
 // [一般别动] 红色掩膜允许处理到的最大 y（开区间）
@@ -591,6 +729,179 @@
 // - 当前固定流程要求 white_reference_row_y = 160，并在该行上求白红带参考包络。
 #ifndef BW_RECOG_WHITE_REFERENCE_ROW_Y
 #define BW_RECOG_WHITE_REFERENCE_ROW_Y 160
+#endif
+
+// [先调] 是否启用基于白参考带的每帧归一化
+// 作用：
+// - 1：对处理保留区做“轻量白平衡 + 亮度归一化”，让白边和红边口径更稳定。
+// - 0：直接使用原始相机图像。
+#ifndef BW_RECOG_WHITE_REF_NORMALIZE_ENABLE
+#define BW_RECOG_WHITE_REF_NORMALIZE_ENABLE 1
+#endif
+
+// [先调] 白参考带归一化目标亮度
+// 作用：
+// - 参考白带会被拉向该目标亮度。
+// - 调大更亮，调小更保守。
+#ifndef BW_RECOG_WHITE_REF_NORMALIZE_TARGET_LUMA
+#define BW_RECOG_WHITE_REF_NORMALIZE_TARGET_LUMA 200.0f
+#endif
+
+// [谨慎调] 白参考带归一化亮度总增益最小值
+#ifndef BW_RECOG_WHITE_REF_NORMALIZE_LUMA_GAIN_MIN
+#define BW_RECOG_WHITE_REF_NORMALIZE_LUMA_GAIN_MIN 0.75f
+#endif
+
+// [谨慎调] 白参考带归一化亮度总增益最大值
+#ifndef BW_RECOG_WHITE_REF_NORMALIZE_LUMA_GAIN_MAX
+#define BW_RECOG_WHITE_REF_NORMALIZE_LUMA_GAIN_MAX 1.30f
+#endif
+
+// [谨慎调] 白参考带归一化单通道白平衡增益最小值
+#ifndef BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MIN
+#define BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MIN 0.85f
+#endif
+
+// [谨慎调] 白参考带归一化单通道白平衡增益最大值
+#ifndef BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MAX
+#define BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MAX 1.15f
+#endif
+
+// [先调] 白参考带归一化滤波系数
+// 作用：
+// - 越大越快跟随环境变化；越小越稳。
+#ifndef BW_RECOG_WHITE_REF_NORMALIZE_ALPHA
+#define BW_RECOG_WHITE_REF_NORMALIZE_ALPHA 0.20f
+#endif
+
+// [先调] 白参考统计用种子白像素最大饱和度
+#ifndef BW_RECOG_WHITE_REF_SEED_MAX_SATURATION
+#define BW_RECOG_WHITE_REF_SEED_MAX_SATURATION 90
+#endif
+
+// [先调] 白参考统计用种子白像素最小亮度
+#ifndef BW_RECOG_WHITE_REF_SEED_MIN_VALUE
+#define BW_RECOG_WHITE_REF_SEED_MIN_VALUE 110
+#endif
+
+// [先调] 白参考统计用种子白像素最小 RGB
+#ifndef BW_RECOG_WHITE_REF_SEED_MIN_RGB
+#define BW_RECOG_WHITE_REF_SEED_MIN_RGB 95
+#endif
+
+// [先调] 白参考统计用种子白像素最大通道差
+#ifndef BW_RECOG_WHITE_REF_SEED_MAX_CHANNEL_DIFF
+#define BW_RECOG_WHITE_REF_SEED_MAX_CHANNEL_DIFF 90
+#endif
+
+// [先调] 白参考统计上下文使用的行半高
+#ifndef BW_RECOG_WHITE_REF_STATS_HALF_HEIGHT
+#define BW_RECOG_WHITE_REF_STATS_HALF_HEIGHT 2
+#endif
+
+// [先调] 白赛道边界寻线失败时的小窗口保底半宽（像素）
+// 作用：
+// - 识别板当前 marker / brick 分流改为“白赛道边界内外拓扑判定”。
+// - 主链先用白带版迷宫法爬左右边界；当某一行断边时，先在上一行边界附近的小窗口内补搜。
+// 调大效果：
+// - 更容易跨过轻微断边，但也更容易被旁边噪声带偏。
+// 调小效果：
+// - 更快更干净，但断边后更容易补不回来。
+#ifndef BW_RECOG_TRACK_WHITE_FALLBACK_HALF_WINDOW
+#define BW_RECOG_TRACK_WHITE_FALLBACK_HALF_WINDOW 24
+#endif
+
+// [先调] 白赛道边界向外扩张多少像素后仍视为“红砖带”
+// 作用：
+// - 红色代表点若落在左/右边界外侧、但仍在这段外扩带内，直接判定为红砖。
+// - 落在左右边界之间则判定为标识块并进入识别。
+#ifndef BW_RECOG_TRACK_BRICK_OUTER_EXPAND_PIXELS
+#define BW_RECOG_TRACK_BRICK_OUTER_EXPAND_PIXELS 8
+#endif
+
+// [谨慎调] 白赛道边界判定时，要求边界内侧至少连续多少个白像素
+// 作用：
+// - 用于压掉单点高亮噪声，把真正的赛道白边和零碎白点区分开。
+// 调大效果：
+// - 更稳，但细窄白边更容易漏。
+// 调小效果：
+// - 更容易搜到边，但噪声也更容易被当成边界。
+#ifndef BW_RECOG_TRACK_WHITE_MIN_INSIDE_RUN
+#define BW_RECOG_TRACK_WHITE_MIN_INSIDE_RUN 4
+#endif
+
+// [谨慎调] 白边判定的最小相对白参考亮度比例
+// 作用：
+// - 越大，越要求“像真正的白赛道”。
+// - 越小，越容易把暗白/灰白也收进来。
+#ifndef BW_RECOG_TRACK_WHITE_MIN_LUMA_RATIO
+#define BW_RECOG_TRACK_WHITE_MIN_LUMA_RATIO 0.72f
+#endif
+
+// [谨慎调] 白边判定的最小相对白参考 RGB 比例
+#ifndef BW_RECOG_TRACK_WHITE_MIN_RGB_RATIO
+#define BW_RECOG_TRACK_WHITE_MIN_RGB_RATIO 0.68f
+#endif
+
+// [谨慎调] 白边判定允许的最大相对白参考通道差比例
+#ifndef BW_RECOG_TRACK_WHITE_MAX_CHANNEL_DIFF_RATIO
+#define BW_RECOG_TRACK_WHITE_MAX_CHANNEL_DIFF_RATIO 0.18f
+#endif
+
+// [先调] 白带版迷宫法最大爬线步数
+// 作用：
+// - 限制识别板边界爬线的最长步数，防止跑飞。
+// - 断边后仍会继续走“小窗口保底 / 全行保底”。
+#ifndef BW_RECOG_TRACK_MAZE_MAX_STEPS
+#define BW_RECOG_TRACK_MAZE_MAX_STEPS 800
+#endif
+
+// [先调] 用候选红块所在 y 查边界时，允许向上下借边界的最大行差
+// 作用：
+// - 若该 y 行恰好断边，可借最近几行的左右边界做 x 内外判定。
+#ifndef BW_RECOG_TRACK_BOUNDARY_NEAREST_ROW_GAP
+#define BW_RECOG_TRACK_BOUNDARY_NEAREST_ROW_GAP 6
+#endif
+
+// [谨慎调] 严格红判定的相对白参考 red_score 比例
+#ifndef BW_RECOG_TASK_RED_SCORE_RELATIVE_RATIO
+#define BW_RECOG_TASK_RED_SCORE_RELATIVE_RATIO 0.66f
+#endif
+
+// [谨慎调] 严格红判定的相对白参考最小 R 比例
+#ifndef BW_RECOG_TASK_RED_MIN_R_RELATIVE_RATIO
+#define BW_RECOG_TASK_RED_MIN_R_RELATIVE_RATIO 0.42f
+#endif
+
+// [谨慎调] 严格红判定的相对白参考 red dominance 比例
+#ifndef BW_RECOG_TASK_RED_DOM_RELATIVE_RATIO
+#define BW_RECOG_TASK_RED_DOM_RELATIVE_RATIO 0.34f
+#endif
+
+// [谨慎调] 相对红阈值的最低保护值
+#ifndef BW_RECOG_TASK_RED_SCORE_MIN_FLOOR
+#define BW_RECOG_TASK_RED_SCORE_MIN_FLOOR 96
+#endif
+
+#ifndef BW_RECOG_TASK_RED_MIN_R_FLOOR
+#define BW_RECOG_TASK_RED_MIN_R_FLOOR 70
+#endif
+
+#ifndef BW_RECOG_TASK_RED_DOM_MIN_FLOOR
+#define BW_RECOG_TASK_RED_DOM_MIN_FLOOR 56
+#endif
+
+// [谨慎调] 相对红阈值的最高保护值
+#ifndef BW_RECOG_TASK_RED_SCORE_MAX_CEIL
+#define BW_RECOG_TASK_RED_SCORE_MAX_CEIL 180
+#endif
+
+#ifndef BW_RECOG_TASK_RED_MIN_R_MAX_CEIL
+#define BW_RECOG_TASK_RED_MIN_R_MAX_CEIL 140
+#endif
+
+#ifndef BW_RECOG_TASK_RED_DOM_MAX_CEIL
+#define BW_RECOG_TASK_RED_DOM_MAX_CEIL 120
 #endif
 
 // [一般别动] 逆透视横向长方形约束总开关

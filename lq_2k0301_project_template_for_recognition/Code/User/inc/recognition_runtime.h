@@ -1,6 +1,8 @@
 #pragma once
 
 #include "common.h"
+#include <cstdint>
+#include <opencv2/opencv.hpp>
 
 // ==================== 识别板视觉运行时接口 ====================
 namespace recognition_runtime {
@@ -10,6 +12,17 @@ namespace recognition_runtime {
 constexpr int kRecognitionFrameWidth = BW_RECOG_CAMERA_FRAME_WIDTH;
 constexpr int kRecognitionFrameHeight = BW_RECOG_CAMERA_FRAME_HEIGHT;
 constexpr int kRecognitionFrameFps = BW_RECOG_CAMERA_FPS;
+
+// 识别板统一毫秒时间戳接口。
+uint64_t now_ms();
+
+// 对单帧执行识别板统一预处理：
+// 1) 按配置裁掉上下无效 y 区域
+// 2) 按白参考带做轻量亮度/白平衡归一化
+void prepare_frame_for_processing(cv::Mat* frame_bgr, bool allow_adapt);
+
+// 图传发布前统一裁剪视图。
+cv::Mat build_publish_view(const cv::Mat& source_view);
 
 } // namespace recognition_runtime
 

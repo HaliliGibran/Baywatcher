@@ -64,7 +64,7 @@
 // - 变大：绕行更贴外侧，避让更激进。
 // - 变小：更接近原边线，动作更保守。
 #ifndef BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.25f
+#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.05f
 #endif
 
 // 普通路段宽度趋势异常时，是否强制退回 MIXED。
@@ -264,6 +264,19 @@
 // 要求：必须严格大于 PUREANGLE_RAW_LIMIT_THRESHOLD_DEG。
 #ifndef PUREANGLE_PROGRESSIVE_MAX_ABS_DEG
 #define PUREANGLE_PROGRESSIVE_MAX_ABS_DEG 45.0f
+#endif
+
+// 双板 w/s 锁边绕行时，差速防反转保留裕量：
+// 使用位置：PID.cc / 仅 remote_follow_locked 分支。
+// 作用：
+// - 当前差速链里，factor=+1 时右轮目标速度会刚好压到 0，factor=-1 时左轮会刚好压到 0。
+// - 本参数会把绕行态 factor 限到 [- (1-margin), +(1-margin)]，避免内侧轮被打成负速反转。
+// 调小：
+// - 更接近极限，绕行更激进。
+// 调大：
+// - 留量更大，更稳，但内侧减速不会那么狠。
+#ifndef BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN
+#define BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN 0.02f
 #endif
 #pragma endregion
 

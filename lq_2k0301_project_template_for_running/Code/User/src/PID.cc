@@ -5,7 +5,6 @@
 float big_langd_add = 0.0f;
 
 
-
 #pragma region Ackerman
 
 const float PI_VAL = 3.14159265f;
@@ -15,6 +14,38 @@ const float ACKERMAN_CONST = 1450.0f;  // Ackerman越小,差速就越大
 // const float STEER_LIMIT = 1030.0f;      // 转向输出限幅
 const float STEER_LIMIT = 530.0f;      // 转向输出限幅
 const float FACTOR_LIMIT = 1.23f;        // 差速比例输出限幅
+
+static inline bool remote_follow_no_reverse_limit_active()
+{
+    FollowLine forced_mode = FollowLine::MIXED;
+    return image_remote_recognition_get_forced_follow_mode(&forced_mode);
+}
+
+static inline float clamp_remote_follow_factor_no_reverse(float factor,
+                                                          float forward_base_speed)
+{
+    if (!remote_follow_no_reverse_limit_active())
+    {
+        return factor;
+    }
+
+    if (forward_base_speed <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    const float no_reverse_limit = 1.0f - BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN;
+    const float factor_limit = (FACTOR_LIMIT < no_reverse_limit) ? FACTOR_LIMIT : no_reverse_limit;
+    if (factor > factor_limit)
+    {
+        return factor_limit;
+    }
+    if (factor < -factor_limit)
+    {
+        return -factor_limit;
+    }
+    return factor;
+}
 
 #pragma endregion
 
@@ -1069,6 +1100,13 @@ void BayWatcher_Control_Loop(void* arg) {
         safe_speed_adjust = 0.0f;
     }
 
+    // 直道加速加成
+    if (cfg_straight_accel_enable == false || (PID.startup_state >= 1 && PID.startup_state <= 3)) {
+        big_langd_add = 0.0f;
+    } else {
+        big_langd_add = update_straight_acceleration(pure_angle, preview_curve_angle_deg);
+    }
+
     float factor = tanf(safe_speed_adjust * PI_VAL / ACKERMAN_CONST) * 0.55f;
 
     if (cfg_vofa_remote_enable) {
@@ -1078,14 +1116,11 @@ void BayWatcher_Control_Loop(void* arg) {
     if( factor>= FACTOR_LIMIT) factor = FACTOR_LIMIT;
     if( factor<= -FACTOR_LIMIT) factor = -FACTOR_LIMIT;
 
-    esc_sys.current_factor = factor; // 给电调传递当前的 factor，用于动态负压
+    factor = clamp_remote_follow_factor_no_reverse(
+        factor,
+        effective_base_speed + big_langd_add);
 
-    // 直道加速加成
-    if (cfg_straight_accel_enable == false || (PID.startup_state >= 1 && PID.startup_state <= 3)) {
-        big_langd_add = 0.0f;
-    } else {
-        big_langd_add = update_straight_acceleration(pure_angle, preview_curve_angle_deg);
-    }
+    esc_sys.current_factor = factor; // 给电调传递当前的 factor，用于动态负压
 
     // 0.5
     // if (PID.speed_adjust >= 0) {

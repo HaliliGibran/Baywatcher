@@ -190,6 +190,101 @@ bool lq_camera_ex::set_exposure_manual(int16_t expo)
     return ok;
 }
 
+bool lq_camera_ex::set_exposure_auto()
+{
+    std::lock_guard<std::mutex> lock(pImpl->mutex);
+    if (!pImpl->opened || !pImpl->capture.isOpened())
+    {
+        return false;
+    }
+
+    bool ok = false;
+    ok = pImpl->capture.set(cv::CAP_PROP_AUTO_EXPOSURE, 0.75) || ok;
+    ok = pImpl->capture.set(cv::CAP_PROP_AUTO_EXPOSURE, 1.0) || ok;
+    return ok;
+}
+
+bool lq_camera_ex::set_gain_manual(double gain)
+{
+    std::lock_guard<std::mutex> lock(pImpl->mutex);
+    if (!pImpl->opened || !pImpl->capture.isOpened())
+    {
+        return false;
+    }
+
+    bool ok = false;
+    ok = pImpl->capture.set(cv::CAP_PROP_GAIN, gain) || ok;
+    return ok;
+}
+
+bool lq_camera_ex::set_white_balance_manual(double blue_u, double red_v)
+{
+    std::lock_guard<std::mutex> lock(pImpl->mutex);
+    if (!pImpl->opened || !pImpl->capture.isOpened())
+    {
+        return false;
+    }
+
+    bool ok = false;
+    ok = pImpl->capture.set(cv::CAP_PROP_AUTO_WB, 0.0) || ok;
+    ok = pImpl->capture.set(cv::CAP_PROP_WHITE_BALANCE_BLUE_U, blue_u) || ok;
+    ok = pImpl->capture.set(cv::CAP_PROP_WHITE_BALANCE_RED_V, red_v) || ok;
+    return ok;
+}
+
+bool lq_camera_ex::set_white_balance_auto()
+{
+    std::lock_guard<std::mutex> lock(pImpl->mutex);
+    if (!pImpl->opened || !pImpl->capture.isOpened())
+    {
+        return false;
+    }
+
+    bool ok = false;
+    ok = pImpl->capture.set(cv::CAP_PROP_AUTO_WB, 1.0) || ok;
+    return ok;
+}
+
+double lq_camera_ex::get_exposure_value() const
+{
+    std::lock_guard<std::mutex> lock(pImpl->mutex);
+    if (!pImpl->opened || !pImpl->capture.isOpened())
+    {
+        return 0.0;
+    }
+    return pImpl->capture.get(cv::CAP_PROP_EXPOSURE);
+}
+
+double lq_camera_ex::get_gain_value() const
+{
+    std::lock_guard<std::mutex> lock(pImpl->mutex);
+    if (!pImpl->opened || !pImpl->capture.isOpened())
+    {
+        return 0.0;
+    }
+    return pImpl->capture.get(cv::CAP_PROP_GAIN);
+}
+
+double lq_camera_ex::get_white_balance_blue_u_value() const
+{
+    std::lock_guard<std::mutex> lock(pImpl->mutex);
+    if (!pImpl->opened || !pImpl->capture.isOpened())
+    {
+        return 0.0;
+    }
+    return pImpl->capture.get(cv::CAP_PROP_WHITE_BALANCE_BLUE_U);
+}
+
+double lq_camera_ex::get_white_balance_red_v_value() const
+{
+    std::lock_guard<std::mutex> lock(pImpl->mutex);
+    if (!pImpl->opened || !pImpl->capture.isOpened())
+    {
+        return 0.0;
+    }
+    return pImpl->capture.get(cv::CAP_PROP_WHITE_BALANCE_RED_V);
+}
+
 bool lq_camera_ex::save_image_picture(const cv::Mat& frame, const std::string& filename)
 {
     if (frame.empty() || filename.empty())
