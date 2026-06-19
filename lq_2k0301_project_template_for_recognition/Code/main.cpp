@@ -13,6 +13,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <termios.h>
 #include <unistd.h>
 #include <vector>
 
@@ -135,6 +136,11 @@ char read_blocking_command_char()
         }
         return static_cast<char>(ch);
     }
+}
+
+void flush_stdin_pending_input()
+{
+    tcflush(STDIN_FILENO, TCIFLUSH);
 }
 
 bool compute_startup_white_reference_stats(const cv::Mat& frame_bgr,
@@ -460,11 +466,11 @@ bool run_startup_five_point_lighting(CameraManualSettings* out_settings)
 
     printf("[Lighting] 启动五点采光模式。按 c 采当前点，按 q 读取已保存配置并跳过重采，按 s 跳过并直接进入正常流程。\n");
     printf("[Lighting] 持久化配置文件路径：%s\n", get_startup_lighting_config_path().c_str());
-
-    set_camera_auto_sampling_mode();
+    flush_stdin_pending_input();
 
     std::vector<StartupLightingSample> samples;
     samples.reserve(BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_POINT_COUNT);
+    bool auto_sampling_mode_armed = false;
 
     while (static_cast<int>(samples.size()) < BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_POINT_COUNT)
     {
@@ -492,6 +498,19 @@ bool run_startup_five_point_lighting(CameraManualSettings* out_settings)
         if (cmd != 'c' && cmd != 'C')
         {
             continue;
+        }
+
+        if (!auto_sampling_mode_armed)
+        {
+            if (!set_camera_auto_sampling_mode())
+            {
+                printf("[Lighting] 自动曝光/自动白平衡切换失败，继续按当前相机状态采样。\n");
+            }
+            else
+            {
+                printf("[Lighting] 已切入自动采光模式，从第 1 个点开始采样。\n");
+            }
+            auto_sampling_mode_armed = true;
         }
 
         const cv::Mat frame =
