@@ -21,6 +21,7 @@ const float FACTOR_LIMIT = 1.23f;        // 差速比例输出限幅
 #pragma region 长直道加速
 
 bool cfg_straight_accel_enable = true;      // 是否开启直道加速
+// bool cfg_straight_accel_enable = false;      // 是否开启直道加速
 
 float cfg_straight_accel_max_add = 4.0f;    // 作用上限：直道加速最大补偿速度
 // float cfg_straight_accel_max_add = 2.0f;    

@@ -64,7 +64,7 @@
 // - 变大：绕行更贴外侧，避让更激进。
 // - 变小：更接近原边线，动作更保守。
 #ifndef BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.25f
+#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.05f
 #endif
 
 // 普通路段宽度趋势异常时，是否强制退回 MIXED。
