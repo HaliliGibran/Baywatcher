@@ -7,6 +7,7 @@ from pathlib import Path
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 5001
 DEFAULT_OUTPUT_DIR = r"D:\aaa走马观碑代码\yolo\灵眼pro320\板端实拍传输ROI"
+DEFAULT_FRAME_OUTPUT_DIR = r"D:\aaa走马观碑代码\yolo\灵眼pro320\板端实拍全帧图"
 PROTOCOL_MAGIC = "BWROI1"
 
 
@@ -59,7 +60,14 @@ def unique_output_path(output_dir, name):
         index += 1
 
 
-def handle_connection(conn, output_dir):
+def choose_output_dir(filename, roi_output_dir, frame_output_dir):
+    safe_name = sanitize_filename(filename)
+    if safe_name.startswith("frame_"):
+        return frame_output_dir
+    return roi_output_dir
+
+
+def handle_connection(conn, roi_output_dir, frame_output_dir):
     magic = recv_line(conn)
     if magic != PROTOCOL_MAGIC:
         raise ValueError(f"unexpected magic: {magic!r}")
@@ -79,6 +87,7 @@ def handle_connection(conn, output_dir):
         raise ValueError("invalid payload size")
 
     payload = recv_exact(conn, payload_size)
+    output_dir = choose_output_dir(filename, roi_output_dir, frame_output_dir)
     output_path = unique_output_path(output_dir, filename)
     output_path.write_bytes(payload)
     ack = f"OK saved {output_path.name}\n".encode("utf-8")
@@ -87,13 +96,18 @@ def handle_connection(conn, output_dir):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Receive ROI JPEGs pushed from recognition board.")
+    parser = argparse.ArgumentParser(description="Receive ROI/full-frame JPEGs pushed from recognition board.")
     parser.add_argument("--host", default=DEFAULT_HOST, help="listen host, default: %(default)s")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="listen port, default: %(default)s")
     parser.add_argument(
         "--output",
         default=DEFAULT_OUTPUT_DIR,
-        help="save directory, default: %(default)s",
+        help="ROI save directory, default: %(default)s",
+    )
+    parser.add_argument(
+        "--frame-output",
+        default=DEFAULT_FRAME_OUTPUT_DIR,
+        help="full-frame save directory, default: %(default)s",
     )
     return parser.parse_args()
 
@@ -101,10 +115,13 @@ def parse_args():
 def main():
     args = parse_args()
     output_dir = Path(args.output)
+    frame_output_dir = Path(args.frame_output)
     output_dir.mkdir(parents=True, exist_ok=True)
+    frame_output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[ROI RX] listen={args.host}:{args.port}")
-    print(f"[ROI RX] output={output_dir}")
+    print(f"[ROI RX] roi_output={output_dir}")
+    print(f"[ROI RX] frame_output={frame_output_dir}")
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -116,7 +133,7 @@ def main():
             with conn:
                 peer = f"{addr[0]}:{addr[1]}"
                 try:
-                    saved_path = handle_connection(conn, output_dir)
+                    saved_path = handle_connection(conn, output_dir, frame_output_dir)
                     print(f"[ROI RX] {peer} -> {saved_path}")
                 except Exception as exc:
                     message = f"ERR {exc}\n"

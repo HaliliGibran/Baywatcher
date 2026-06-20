@@ -43,6 +43,12 @@ struct RoiSendFeedback
     uint64_t valid_until_ms = 0;
 };
 
+static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
+                                       const cv::Mat& image_bgr,
+                                       const char* name_prefix,
+                                       uint64_t t_ms,
+                                       std::string* out_message);
+
 static bool send_all_bytes(int fd, const void* data, size_t size)
 {
     const unsigned char* ptr = static_cast<const unsigned char*>(data);
@@ -175,16 +181,25 @@ static bool send_roi_to_pc(const RoiCaptureTransferConfig& config,
                            uint64_t t_ms,
                            std::string* out_message)
 {
+    return send_named_bgr_image_to_pc(config, roi_bgr, "roi", t_ms, out_message);
+}
+
+static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
+                                       const cv::Mat& image_bgr,
+                                       const char* name_prefix,
+                                       uint64_t t_ms,
+                                       std::string* out_message)
+{
     if (out_message != nullptr)
     {
         out_message->clear();
     }
 
-    if (roi_bgr.empty())
+    if (image_bgr.empty())
     {
         if (out_message != nullptr)
         {
-            *out_message = "empty roi";
+            *out_message = "empty image";
         }
         return false;
     }
@@ -193,7 +208,7 @@ static bool send_roi_to_pc(const RoiCaptureTransferConfig& config,
     std::vector<int> jpeg_params;
     jpeg_params.push_back(cv::IMWRITE_JPEG_QUALITY);
     jpeg_params.push_back(BW_RECOG_ROI_CAPTURE_JPEG_QUALITY);
-    if (!cv::imencode(".jpg", roi_bgr, jpeg_bytes, jpeg_params) || jpeg_bytes.empty())
+    if (!cv::imencode(".jpg", image_bgr, jpeg_bytes, jpeg_params) || jpeg_bytes.empty())
     {
         if (out_message != nullptr)
         {
@@ -213,8 +228,9 @@ static bool send_roi_to_pc(const RoiCaptureTransferConfig& config,
         return false;
     }
 
+    const char* prefix = (name_prefix != nullptr && name_prefix[0] != '\0') ? name_prefix : "capture";
     std::ostringstream name;
-    name << "roi_" << t_ms << ".jpg";
+    name << prefix << "_" << t_ms << ".jpg";
     std::ostringstream header;
     header << "BWROI1\n";
     header << "name " << name.str() << "\n";
@@ -256,6 +272,23 @@ static bool send_roi_to_pc(const RoiCaptureTransferConfig& config,
     return true;
 }
 
+static cv::Mat build_fullframe_capture_crop(const cv::Mat& frame_bgr)
+{
+    if (frame_bgr.empty())
+    {
+        return cv::Mat();
+    }
+
+    const int y0 = std::max(0, std::min(BW_RECOG_PROCESS_KEEP_Y_MIN, frame_bgr.rows));
+    const int y1 = std::max(y0, std::min(BW_RECOG_PROCESS_KEEP_Y_MAX, frame_bgr.rows));
+    if (y1 <= y0)
+    {
+        return cv::Mat();
+    }
+
+    return frame_bgr.rowRange(y0, y1).clone();
+}
+
 static void draw_roi_preview_panel(cv::Mat& view, const cv::Mat& roi_bgr)
 {
     if (view.empty() || roi_bgr.empty())
@@ -290,7 +323,7 @@ static void draw_roi_capture_idle_view(const cv::Mat& frame_bgr,
     view = frame_bgr.clone();
     cv::putText(view, "ROI Capture Idle", cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX,
                 0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
-    cv::putText(view, "Press 1: preview ROI | 2: send current ROI | 3: exit preview",
+    cv::putText(view, "Press 1: preview ROI | 2: send ROI | 3: send frame(y30-160) | 0: idle",
                 cv::Point(10, 52), cv::FONT_HERSHEY_SIMPLEX,
                 0.50, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
     std::ostringstream host_info;
@@ -316,7 +349,7 @@ static void draw_roi_capture_overlay(cv::Mat& view,
 
     cv::putText(view, "ROI Capture Preview", cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX,
                 0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
-    cv::putText(view, "1: preview  2: send current ROI  3: idle", cv::Point(10, 52),
+    cv::putText(view, "1: preview  2: send ROI  3: send frame(y30-160)  0: idle", cv::Point(10, 52),
                 cv::FONT_HERSHEY_SIMPLEX, 0.50, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
 
     std::ostringstream roi_info;
@@ -328,7 +361,8 @@ static void draw_roi_capture_overlay(cv::Mat& view,
     std::ostringstream host_info;
     host_info << "target=" << (config.host.empty() ? "<unset>" : config.host)
               << ":" << config.port
-              << " roi=" << BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE << "x" << BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE;
+              << " roi=" << BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE << "x" << BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE
+              << " frame_y=[" << BW_RECOG_PROCESS_KEEP_Y_MIN << "," << (BW_RECOG_PROCESS_KEEP_Y_MAX - 1) << "]";
     cv::putText(view, host_info.str(), cv::Point(10, 108), cv::FONT_HERSHEY_SIMPLEX,
                 0.48, cv::Scalar(255, 220, 0), 2, cv::LINE_AA);
 
@@ -584,6 +618,40 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
                 }
             }
             else if (key == '3')
+            {
+                const cv::Mat fullframe_crop = build_fullframe_capture_crop(img);
+                if (fullframe_crop.empty())
+                {
+                    feedback.text = "no valid frame crop";
+                    feedback.color = cv::Scalar(0, 0, 255);
+                    feedback.valid_until_ms = t_ms + 1500;
+                }
+                else
+                {
+                    std::ostringstream prefix;
+                    prefix << "frame_y" << BW_RECOG_PROCESS_KEEP_Y_MIN
+                           << "_" << (BW_RECOG_PROCESS_KEEP_Y_MAX - 1);
+                    std::string send_message;
+                    if (send_named_bgr_image_to_pc(
+                            transfer_config,
+                            fullframe_crop,
+                            prefix.str().c_str(),
+                            t_ms,
+                            &send_message))
+                    {
+                        feedback.text = "frame send ok: " + send_message;
+                        feedback.color = cv::Scalar(0, 255, 0);
+                        feedback.valid_until_ms = t_ms + 2000;
+                    }
+                    else
+                    {
+                        feedback.text = "frame send fail: " + send_message;
+                        feedback.color = cv::Scalar(0, 0, 255);
+                        feedback.valid_until_ms = t_ms + 2500;
+                    }
+                }
+            }
+            else if (key == '0')
             {
                 mode = RoiCaptureModeState::IDLE;
                 feedback.text = "preview off";
