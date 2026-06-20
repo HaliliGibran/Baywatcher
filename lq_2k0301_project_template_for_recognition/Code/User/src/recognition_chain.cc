@@ -51,14 +51,14 @@ constexpr const char* kRecognitionModelRootDir =
         ? "./model_subclass320_mlp_gray_256_rank1"
         :
     kRecognitionUseRgb32SubclassModel
-        ? "./model_subclass320_mlp_rgb_256_128_rank3"
+        ? "./model_boardroi_transfer_mlp_rgb_128_s32_rank1"
         :
     kRecognitionUseGrayRed32Model
         ? "./model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1"
         : "./model";
 constexpr const char* kRecognitionModelVariantName =
     kRecognitionUseGray32SubclassModel ? "gray32_subclass_mlp_256" :
-    (kRecognitionUseRgb32SubclassModel ? "rgb32_subclass_mlp_256_128" :
+    (kRecognitionUseRgb32SubclassModel ? "rgb32_boardroi8_mlp_128" :
      (kRecognitionUseGrayRed32Model ? "grayred32_mlp_wider" : "rgb64_classic"));
 constexpr size_t kRecognitionMaxClasses = RecognitionChain::kMaxModelClasses;
 
@@ -701,7 +701,7 @@ static std::vector<std::string> load_class_names_from_json(const std::string& pa
     const auto default_class_names = []() -> std::vector<std::string> {
         if (kRecognitionUseSubclassModel)
         {
-            return {"急救包", "望远镜", "救护车", "装甲车", "枪支", "炸药包"};
+            return {"急救包", "急救包（空白）", "急救车", "望远镜", "手枪", "步枪", "炸药包", "装甲车"};
         }
         return {"weapon", "supply", "vehicle"};
     };
@@ -762,7 +762,10 @@ static uint8_t parse_target_class_code(const std::string& name)
     s.resize(name.size());
     std::transform(name.begin(), name.end(), s.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (name.find("枪支") != std::string::npos || name.find("炸药包") != std::string::npos)
+    if (name.find("枪支") != std::string::npos ||
+        name.find("手枪") != std::string::npos ||
+        name.find("步枪") != std::string::npos ||
+        name.find("炸药包") != std::string::npos)
     {
         return 1;
     }
@@ -770,7 +773,9 @@ static uint8_t parse_target_class_code(const std::string& name)
     {
         return 2;
     }
-    if (name.find("救护车") != std::string::npos || name.find("装甲车") != std::string::npos)
+    if (name.find("急救车") != std::string::npos ||
+        name.find("救护车") != std::string::npos ||
+        name.find("装甲车") != std::string::npos)
     {
         return 3;
     }

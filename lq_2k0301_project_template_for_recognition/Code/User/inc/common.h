@@ -70,12 +70,12 @@
 #define BW_RECOG_MODEL_VARIANT_GRAYRED32 1
 #endif
 
-// [先调] 识别板模型模式枚举：新 32x32 gray 单通道 6 子类模型
+// [先调] 识别板模型模式枚举：新 32x32 gray 单通道子类模型
 #ifndef BW_RECOG_MODEL_VARIANT_GRAY32_SUBCLASS
 #define BW_RECOG_MODEL_VARIANT_GRAY32_SUBCLASS 2
 #endif
 
-// [先调] 识别板模型模式枚举：新 32x32 RGB 三通道 6 子类模型
+// [先调] 识别板模型模式枚举：新 32x32 RGB 三通道子类模型
 #ifndef BW_RECOG_MODEL_VARIANT_RGB32_SUBCLASS
 #define BW_RECOG_MODEL_VARIANT_RGB32_SUBCLASS 3
 #endif
@@ -87,7 +87,7 @@
 // - 2：子类模型，ROI 输出 32x32，手工构造 1x1x32x32 的 gray 单通道 blob。
 // - 3：子类模型，ROI 输出 32x32，手工构造 1x3x32x32 的 RGB 三通道 blob。
 // 调参建议：
-// - 当前默认切到 `gray32 subclass` 版。
+// - 当前默认切到 `rgb32 subclass` 版。
 // - 切换到其他模型时，同步确认板端对应模型目录已部署。
 #ifndef BW_RECOG_MODEL_VARIANT
 #define BW_RECOG_MODEL_VARIANT BW_RECOG_MODEL_VARIANT_RGB32_SUBCLASS

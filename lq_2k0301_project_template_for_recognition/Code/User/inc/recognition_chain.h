@@ -11,7 +11,7 @@
 class RecognitionChain
 {
 public:
-    static constexpr size_t kMaxModelClasses = 6;
+    static constexpr size_t kMaxModelClasses = 8;
 
     struct PerfSample
     {
