@@ -678,15 +678,15 @@
 // [一般别动] 红块搜索带上边界
 // 作用：
 // - 与《红带分类与ROI提取流程320.md》保持一致。
-// - 当前固定流程要求基础搜索带为 y=80..160。
+// - 当前固定流程要求基础搜索带为 y=40..160。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MIN
-#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 80
+#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 40
 #endif
 
 // [一般别动] 红块搜索带下边界（开区间）
 // 作用：
 // - 与《红带分类与ROI提取流程320.md》保持一致。
-// - 当前固定流程要求基础搜索带为 y=80..160。
+// - 当前固定流程要求基础搜索带为 y=40..160。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MAX
 #define BW_RECOG_TRIGGER_SEARCH_Y_MAX 160
 #endif
@@ -694,10 +694,10 @@
 // [谨慎调] 仅用于触发减速/NO_RESULT 的前置红色检测上边界
 // 作用：
 // - 这条带只用于更早地发出 `u`，让运行板先减速。
-// - 不改变正式进入识别链的 ROI 搜索带；正式识别仍使用 y=80..160。
+// - 不改变正式进入识别链的 ROI 搜索带；当前正式识别也使用 y=40..160。
 // 当前默认：
 // - slowdown 预触发带为 y=40..160
-// - 正式识别带为 y=80..160
+// - 正式识别带为 y=40..160
 #ifndef BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN
 #define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN 40
 #endif
@@ -835,17 +835,17 @@
 // - 越大，越要求“像真正的白赛道”。
 // - 越小，越容易把暗白/灰白也收进来。
 #ifndef BW_RECOG_TRACK_WHITE_MIN_LUMA_RATIO
-#define BW_RECOG_TRACK_WHITE_MIN_LUMA_RATIO 0.72f
+#define BW_RECOG_TRACK_WHITE_MIN_LUMA_RATIO 0.70f
 #endif
 
 // [谨慎调] 白边判定的最小相对白参考 RGB 比例
 #ifndef BW_RECOG_TRACK_WHITE_MIN_RGB_RATIO
-#define BW_RECOG_TRACK_WHITE_MIN_RGB_RATIO 0.68f
+#define BW_RECOG_TRACK_WHITE_MIN_RGB_RATIO 0.66f
 #endif
 
 // [谨慎调] 白边判定允许的最大相对白参考通道差比例
 #ifndef BW_RECOG_TRACK_WHITE_MAX_CHANNEL_DIFF_RATIO
-#define BW_RECOG_TRACK_WHITE_MAX_CHANNEL_DIFF_RATIO 0.18f
+#define BW_RECOG_TRACK_WHITE_MAX_CHANNEL_DIFF_RATIO 0.16f
 #endif
 
 // [先调] 白带版迷宫法最大爬线步数
@@ -865,30 +865,30 @@
 
 // [谨慎调] 严格红判定的相对白参考 red_score 比例
 #ifndef BW_RECOG_TASK_RED_SCORE_RELATIVE_RATIO
-#define BW_RECOG_TASK_RED_SCORE_RELATIVE_RATIO 0.66f
+#define BW_RECOG_TASK_RED_SCORE_RELATIVE_RATIO 0.36f
 #endif
 
 // [谨慎调] 严格红判定的相对白参考最小 R 比例
 #ifndef BW_RECOG_TASK_RED_MIN_R_RELATIVE_RATIO
-#define BW_RECOG_TASK_RED_MIN_R_RELATIVE_RATIO 0.42f
+#define BW_RECOG_TASK_RED_MIN_R_RELATIVE_RATIO 0.36f
 #endif
 
 // [谨慎调] 严格红判定的相对白参考 red dominance 比例
 #ifndef BW_RECOG_TASK_RED_DOM_RELATIVE_RATIO
-#define BW_RECOG_TASK_RED_DOM_RELATIVE_RATIO 0.34f
+#define BW_RECOG_TASK_RED_DOM_RELATIVE_RATIO 0.14f
 #endif
 
 // [谨慎调] 相对红阈值的最低保护值
 #ifndef BW_RECOG_TASK_RED_SCORE_MIN_FLOOR
-#define BW_RECOG_TASK_RED_SCORE_MIN_FLOOR 96
+#define BW_RECOG_TASK_RED_SCORE_MIN_FLOOR 40
 #endif
 
 #ifndef BW_RECOG_TASK_RED_MIN_R_FLOOR
-#define BW_RECOG_TASK_RED_MIN_R_FLOOR 70
+#define BW_RECOG_TASK_RED_MIN_R_FLOOR 40
 #endif
 
 #ifndef BW_RECOG_TASK_RED_DOM_MIN_FLOOR
-#define BW_RECOG_TASK_RED_DOM_MIN_FLOOR 56
+#define BW_RECOG_TASK_RED_DOM_MIN_FLOOR 12
 #endif
 
 // [谨慎调] 相对红阈值的最高保护值

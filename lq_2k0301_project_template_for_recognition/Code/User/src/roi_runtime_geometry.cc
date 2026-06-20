@@ -33,9 +33,10 @@ constexpr int kTaskRedMinR = 90;
 constexpr int kTaskRedDomThreshold = 80;
 constexpr int kTaskEdgeExpandStep = 4;
 constexpr int kTaskEdgeExpandMaxSteps = 12;
-constexpr int kTaskMinBandArea = 80;
-constexpr int kTaskMinBandWidth = 12;
-constexpr int kTaskMinBandHeight = 3;
+constexpr int kTaskMinBandArea = 12;
+constexpr int kTaskMinBandWidth = 3;
+constexpr int kTaskMinBandHeight = 2;
+constexpr double kTaskMinBandAspectRatio = 1.4;
 constexpr int kStripRejectMaxHeight = 34;
 constexpr double kStripRejectMinAspectRatio = 1.55;
 constexpr double kStripSupportMinAreaRatio = 1.25;
@@ -3125,7 +3126,11 @@ static bool ChooseLowestTaskRedBand(const cv::Mat& mask,
         const int top = stats.at<int>(label, cv::CC_STAT_TOP);
         const int width = stats.at<int>(label, cv::CC_STAT_WIDTH);
         const int height = stats.at<int>(label, cv::CC_STAT_HEIGHT);
-        if (area < kTaskMinBandArea || width < kTaskMinBandWidth || height < kTaskMinBandHeight)
+        const double aspect_ratio = static_cast<double>(width) / std::max(1, height);
+        if (area < kTaskMinBandArea ||
+            width < kTaskMinBandWidth ||
+            height < kTaskMinBandHeight ||
+            aspect_ratio < kTaskMinBandAspectRatio)
         {
             continue;
         }
