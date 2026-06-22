@@ -1056,7 +1056,7 @@ static void TraceTaskWhiteBoundaryLeftMaze(const cv::Mat& white_mask,
     int turn = 0;
     while (step < kTrackMazeMaxSteps && turn < 4)
     {
-        if (!(w > 1 && w < white_mask.cols - 2 && h > 1 && h < white_mask.rows - 2))
+        if (!(w > 0 && w < white_mask.cols - 1 && h > 0 && h < white_mask.rows - 1))
         {
             break;
         }
@@ -1089,10 +1089,7 @@ static void TraceTaskWhiteBoundaryLeftMaze(const cv::Mat& white_mask,
 
         ++step;
         turn = 0;
-        if (w > 5 && w < white_mask.cols - 5)
-        {
-            out_points->push_back(cv::Point(w, h));
-        }
+        out_points->push_back(cv::Point(w, h));
 
         if (h < kTaskTrackTraceTopY)
         {
@@ -1123,7 +1120,7 @@ static void TraceTaskWhiteBoundaryRightMaze(const cv::Mat& white_mask,
     int turn = 0;
     while (step < kTrackMazeMaxSteps && turn < 4)
     {
-        if (!(w > 1 && w < white_mask.cols - 2 && h > 1 && h < white_mask.rows - 2))
+        if (!(w > 0 && w < white_mask.cols - 1 && h > 0 && h < white_mask.rows - 1))
         {
             break;
         }
@@ -1156,10 +1153,7 @@ static void TraceTaskWhiteBoundaryRightMaze(const cv::Mat& white_mask,
 
         ++step;
         turn = 0;
-        if (w > 5 && w < white_mask.cols - 5)
-        {
-            out_points->push_back(cv::Point(w, h));
-        }
+        out_points->push_back(cv::Point(w, h));
 
         if (h < kTaskTrackTraceTopY)
         {
