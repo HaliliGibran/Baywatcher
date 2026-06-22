@@ -28,6 +28,7 @@ constexpr double kMinBackprojectedQuadArea = 6.0;
 constexpr int kTaskSearchYMin = BW_RECOG_TRIGGER_SEARCH_Y_MIN;
 constexpr int kTaskSearchYMax = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr int kTaskTrackBoundaryYMin = BW_RECOG_TRACK_BOUNDARY_Y_MIN;
+constexpr int kTaskTrackTraceTopY = BW_RECOG_PROCESS_KEEP_Y_MIN;
 constexpr int kTaskRedScoreThreshold = 140;
 constexpr int kTaskRedMinR = 90;
 constexpr int kTaskRedDomThreshold = 80;
@@ -169,6 +170,7 @@ struct TaskTrackBoundaryState
     int top_y = 0;
     int bottom_y = 0;
     int seed_y = 0;
+    int seed_center_x = -1;
     int seed_left_x = -1;
     int seed_right_x = -1;
     int envelope_x_min = 0;
@@ -728,7 +730,7 @@ static cv::Mat BuildTaskWhiteTrackMask(const cv::Mat& frame_bgr)
     cv::Mat hsv;
     cv::cvtColor(frame_bgr, hsv, cv::COLOR_BGR2HSV);
 
-    const int y0 = std::max(0, std::min(kTaskTrackBoundaryYMin, frame_bgr.rows - 1));
+    const int y0 = std::max(0, std::min(kTaskTrackTraceTopY, frame_bgr.rows - 1));
     const int y1 = std::max(y0, std::min(kWhiteReferenceRowY, frame_bgr.rows - 1));
     for (int y = y0; y <= y1; ++y)
     {
@@ -744,6 +746,142 @@ static cv::Mat BuildTaskWhiteTrackMask(const cv::Mat& frame_bgr)
         }
     }
     return mask;
+}
+
+static bool IsSimpleLeftBoundaryPixel(const unsigned char* row, int cols, int x)
+{
+    return row != nullptr &&
+           x > 0 &&
+           x < cols &&
+           row[x] == kTrackWhitePixel &&
+           row[x - 1] == kTrackNonWhitePixel;
+}
+
+static bool IsSimpleRightBoundaryPixel(const unsigned char* row, int cols, int x)
+{
+    return row != nullptr &&
+           x >= 0 &&
+           x < cols - 1 &&
+           row[x] == kTrackWhitePixel &&
+           row[x + 1] == kTrackNonWhitePixel;
+}
+
+static bool FindLeftTrackBoundarySeedFromCenter(const unsigned char* row,
+                                                int cols,
+                                                int center_x,
+                                                int* out_x)
+{
+    if (out_x == nullptr || row == nullptr || cols <= 2)
+    {
+        return false;
+    }
+
+    const int x_start = std::max(1, std::min(center_x, cols - 2));
+    for (int x = x_start; x >= 1; --x)
+    {
+        if (IsSimpleLeftBoundaryPixel(row, cols, x))
+        {
+            *out_x = x;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool FindRightTrackBoundarySeedFromCenter(const unsigned char* row,
+                                                 int cols,
+                                                 int center_x,
+                                                 int* out_x)
+{
+    if (out_x == nullptr || row == nullptr || cols <= 2)
+    {
+        return false;
+    }
+
+    const int x_start = std::max(1, std::min(center_x, cols - 2));
+    for (int x = x_start; x < cols - 1; ++x)
+    {
+        if (IsSimpleRightBoundaryPixel(row, cols, x))
+        {
+            *out_x = x;
+            return true;
+        }
+    }
+    return false;
+}
+
+static void RemoveOverlappingTrackBoundaryPoints(std::vector<cv::Point>* left_points,
+                                                 std::vector<cv::Point>* right_points)
+{
+    if (left_points == nullptr || right_points == nullptr || left_points->empty() || right_points->empty())
+    {
+        return;
+    }
+
+    std::vector<cv::Point> filtered_right;
+    filtered_right.reserve(right_points->size());
+    for (size_t i = 0; i < right_points->size(); ++i)
+    {
+        if (std::find(left_points->begin(), left_points->end(), (*right_points)[i]) == left_points->end())
+        {
+            filtered_right.push_back((*right_points)[i]);
+        }
+    }
+    right_points->swap(filtered_right);
+}
+
+static std::vector<cv::Point> BuildTrackBoundaryDisplayPoints(int seed_x,
+                                                              int seed_y,
+                                                              const std::vector<cv::Point>& trace_points)
+{
+    std::vector<cv::Point> points;
+    if (seed_x < 0 || seed_y < 0)
+    {
+        return points;
+    }
+
+    points.reserve(trace_points.size() + 1);
+    points.push_back(cv::Point(seed_x, seed_y));
+    points.insert(points.end(), trace_points.begin(), trace_points.end());
+    return points;
+}
+
+static std::vector<cv::Point> BuildTrackRegionPolygon(const TaskTrackBoundaryState& state)
+{
+    std::vector<cv::Point> polygon;
+    if (!state.valid || state.seed_left_x < 0 || state.seed_right_x < 0)
+    {
+        return polygon;
+    }
+
+    const cv::Point bottom_left(state.seed_left_x, state.seed_y);
+    const cv::Point bottom_right(state.seed_right_x, state.seed_y);
+    const cv::Point top_left =
+        state.left_points.empty() ? bottom_left : state.left_points.back();
+    const cv::Point top_right =
+        state.right_points.empty() ? bottom_right : state.right_points.back();
+
+    polygon.reserve(state.left_points.size() + state.right_points.size() + 4);
+    polygon.push_back(bottom_left);
+    polygon.insert(polygon.end(), state.left_points.begin(), state.left_points.end());
+    if (polygon.empty() || polygon.back() != top_right)
+    {
+        polygon.push_back(top_right);
+    }
+    for (std::vector<cv::Point>::const_reverse_iterator it = state.right_points.rbegin();
+         it != state.right_points.rend();
+         ++it)
+    {
+        if (polygon.empty() || polygon.back() != *it)
+        {
+            polygon.push_back(*it);
+        }
+    }
+    if (polygon.empty() || polygon.back() != bottom_right)
+    {
+        polygon.push_back(bottom_right);
+    }
+    return polygon;
 }
 
 static bool IsValidLeftTrackBoundaryTransition(const unsigned char* row, int cols, int x)
@@ -951,11 +1089,15 @@ static void TraceTaskWhiteBoundaryLeftMaze(const cv::Mat& white_mask,
 
         ++step;
         turn = 0;
-        if (h < kTaskTrackBoundaryYMin)
+        if (w > 5 && w < white_mask.cols - 5)
+        {
+            out_points->push_back(cv::Point(w, h));
+        }
+
+        if (h < kTaskTrackTraceTopY)
         {
             break;
         }
-        out_points->push_back(cv::Point(w, h));
     }
 }
 
@@ -1014,11 +1156,15 @@ static void TraceTaskWhiteBoundaryRightMaze(const cv::Mat& white_mask,
 
         ++step;
         turn = 0;
-        if (h < kTaskTrackBoundaryYMin)
+        if (w > 5 && w < white_mask.cols - 5)
+        {
+            out_points->push_back(cv::Point(w, h));
+        }
+
+        if (h < kTaskTrackTraceTopY)
         {
             break;
         }
-        out_points->push_back(cv::Point(w, h));
     }
 }
 
@@ -1101,6 +1247,10 @@ static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
                                         bool has_reference_x_range,
                                         TaskTrackBoundaryState* out_state)
 {
+    (void)reference_x_min;
+    (void)reference_x_max;
+    (void)has_reference_x_range;
+
     if (out_state == nullptr)
     {
         return false;
@@ -1113,9 +1263,16 @@ static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
 
     const int rows = frame_bgr.rows;
     const int cols = frame_bgr.cols;
-    const int top_y = std::max(0, std::min(kTaskTrackBoundaryYMin, rows - 1));
+    const int top_y = std::max(0, std::min(kTaskTrackTraceTopY, rows - 1));
     const int bottom_y = std::max(top_y, std::min(kWhiteReferenceRowY, rows - 1));
     if (bottom_y <= top_y)
+    {
+        return false;
+    }
+
+    int white_x_min = 0;
+    int white_x_max = 0;
+    if (!ComputeWhiteEnvelopeXRangeOnReferenceRow(frame_bgr, &white_x_min, &white_x_max, nullptr))
     {
         return false;
     }
@@ -1123,21 +1280,12 @@ static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
     cv::Mat white_mask = BuildTaskWhiteTrackMask(frame_bgr);
     int left_seed_x = -1;
     int right_seed_x = -1;
+    const int seed_center_x = (white_x_min + white_x_max) / 2;
     const unsigned char* seed_row = white_mask.ptr<unsigned char>(bottom_y);
-    if (has_reference_x_range &&
-        IsValidLeftTrackBoundaryTransition(seed_row, cols, reference_x_min) &&
-        IsValidRightTrackBoundaryTransition(seed_row, cols, reference_x_max))
-    {
-        left_seed_x = reference_x_min;
-        right_seed_x = reference_x_max;
-    }
-    else
-    {
-        FindLeftTrackBoundaryOnRowFull(seed_row, cols, &left_seed_x);
-        FindRightTrackBoundaryOnRowFull(seed_row, cols, &right_seed_x);
-    }
+    FindLeftTrackBoundarySeedFromCenter(seed_row, cols, seed_center_x, &left_seed_x);
+    FindRightTrackBoundarySeedFromCenter(seed_row, cols, seed_center_x, &right_seed_x);
 
-    if (left_seed_x < 0 || right_seed_x < 0 || left_seed_x >= right_seed_x)
+    if (left_seed_x < 0 && right_seed_x < 0)
     {
         return false;
     }
@@ -1145,49 +1293,74 @@ static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
     out_state->top_y = top_y;
     out_state->bottom_y = bottom_y;
     out_state->seed_y = bottom_y;
+    out_state->seed_center_x = seed_center_x;
     out_state->seed_left_x = left_seed_x;
     out_state->seed_right_x = right_seed_x;
     out_state->left_x_by_row.assign(rows, -1);
     out_state->right_x_by_row.assign(rows, -1);
-    out_state->left_x_by_row[bottom_y] = left_seed_x;
-    out_state->right_x_by_row[bottom_y] = right_seed_x;
+    if (left_seed_x >= 0)
+    {
+        out_state->left_x_by_row[bottom_y] = left_seed_x;
+        TraceTaskWhiteBoundaryLeftMaze(white_mask, bottom_y, left_seed_x, &out_state->left_points);
+    }
+    if (right_seed_x >= 0)
+    {
+        out_state->right_x_by_row[bottom_y] = right_seed_x;
+        TraceTaskWhiteBoundaryRightMaze(white_mask, bottom_y, right_seed_x, &out_state->right_points);
+    }
+    RemoveOverlappingTrackBoundaryPoints(&out_state->left_points, &out_state->right_points);
 
-    TraceTaskWhiteBoundaryLeftMaze(white_mask, bottom_y, left_seed_x, &out_state->left_points);
-    TraceTaskWhiteBoundaryRightMaze(white_mask, bottom_y, right_seed_x, &out_state->right_points);
-
-    RasterizeTaskTrackBoundaryPoints(out_state->left_points, true, &out_state->left_x_by_row);
-    RasterizeTaskTrackBoundaryPoints(out_state->right_points, false, &out_state->right_x_by_row);
-
-    FillTaskTrackBoundaryRows(
-        white_mask, true, top_y, bottom_y, left_seed_x, &out_state->left_x_by_row);
-    FillTaskTrackBoundaryRows(
-        white_mask, false, top_y, bottom_y, right_seed_x, &out_state->right_x_by_row);
+    if (!out_state->left_points.empty())
+    {
+        RasterizeTaskTrackBoundaryPoints(out_state->left_points, true, &out_state->left_x_by_row);
+    }
+    if (!out_state->right_points.empty())
+    {
+        RasterizeTaskTrackBoundaryPoints(out_state->right_points, false, &out_state->right_x_by_row);
+    }
 
     int envelope_x_min = cols - 1;
     int envelope_x_max = 0;
-    int valid_rows = 0;
-    for (int y = top_y; y <= bottom_y; ++y)
+    bool has_any_envelope_point = false;
+    if (left_seed_x >= 0)
     {
-        const int left_x = out_state->left_x_by_row[y];
-        const int right_x = out_state->right_x_by_row[y];
-        if (left_x < 0 || right_x < 0 || left_x >= right_x)
-        {
-            continue;
-        }
-        envelope_x_min = std::min(envelope_x_min, left_x);
-        envelope_x_max = std::max(envelope_x_max, right_x);
-        ++valid_rows;
+        envelope_x_min = std::min(envelope_x_min, left_seed_x);
+        envelope_x_max = std::max(envelope_x_max, left_seed_x);
+        has_any_envelope_point = true;
+    }
+    if (right_seed_x >= 0)
+    {
+        envelope_x_min = std::min(envelope_x_min, right_seed_x);
+        envelope_x_max = std::max(envelope_x_max, right_seed_x);
+        has_any_envelope_point = true;
+    }
+    for (size_t i = 0; i < out_state->left_points.size(); ++i)
+    {
+        envelope_x_min = std::min(envelope_x_min, out_state->left_points[i].x);
+        envelope_x_max = std::max(envelope_x_max, out_state->left_points[i].x);
+        has_any_envelope_point = true;
+    }
+    for (size_t i = 0; i < out_state->right_points.size(); ++i)
+    {
+        envelope_x_min = std::min(envelope_x_min, out_state->right_points[i].x);
+        envelope_x_max = std::max(envelope_x_max, out_state->right_points[i].x);
+        has_any_envelope_point = true;
     }
 
-    if (valid_rows <= 0)
+    if (!has_any_envelope_point)
     {
         return false;
     }
 
     out_state->envelope_x_min = envelope_x_min;
     out_state->envelope_x_max = envelope_x_max;
-    out_state->valid = true;
-    return true;
+    out_state->valid =
+        left_seed_x >= 0 &&
+        right_seed_x >= 0 &&
+        left_seed_x < right_seed_x &&
+        !out_state->left_points.empty() &&
+        !out_state->right_points.empty();
+    return out_state->valid;
 }
 
 static cv::Rect BuildTaskTrackSearchRect(const TaskTrackBoundaryState& state,
@@ -1259,32 +1432,25 @@ static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(
 
     const int classify_x = candidate_box.x + candidate_box.width / 2;
     const int classify_y = candidate_box.y + candidate_box.height - 1;
-    const int boundary_y = FindNearestTaskTrackBoundaryRow(state, classify_y);
-    if (boundary_y < 0)
+    result.classify_point = cv::Point(classify_x, classify_y);
+
+    const std::vector<cv::Point> polygon = BuildTrackRegionPolygon(state);
+    if (polygon.size() < 4)
     {
         return result;
     }
 
-    const int left_x = state.left_x_by_row[boundary_y];
-    const int right_x = state.right_x_by_row[boundary_y];
-    result.classify_point = cv::Point(classify_x, classify_y);
-    result.left_boundary_x = left_x;
-    result.right_boundary_x = right_x;
-    result.boundary_row_y = boundary_y;
-
-    if (classify_x >= left_x && classify_x <= right_x)
+    result.left_boundary_x = state.seed_left_x;
+    result.right_boundary_x = state.seed_right_x;
+    result.boundary_row_y = state.seed_y;
+    const double inside = cv::pointPolygonTest(polygon, cv::Point2f((float)classify_x, (float)classify_y), false);
+    if (inside >= 0.0)
     {
         result.type = TaskTrackCandidateType::MARKER;
         return result;
     }
 
-    if ((classify_x >= left_x - kTrackBrickOuterExpandPixels && classify_x < left_x) ||
-        (classify_x > right_x && classify_x <= right_x + kTrackBrickOuterExpandPixels))
-    {
-        result.type = TaskTrackCandidateType::ROADBLOCK;
-        return result;
-    }
-
+    result.type = TaskTrackCandidateType::ROADBLOCK;
     return result;
 }
 
@@ -3243,23 +3409,16 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
         reference_x_max,
         has_reference_x_range,
         &track_state);
+    result.track_left_boundary =
+        BuildTrackBoundaryDisplayPoints(track_state.seed_left_x, track_state.seed_y, track_state.left_points);
+    result.track_right_boundary =
+        BuildTrackBoundaryDisplayPoints(track_state.seed_right_x, track_state.seed_y, track_state.right_points);
+    result.has_track_left_boundary = !result.track_left_boundary.empty();
+    result.has_track_right_boundary = !result.track_right_boundary.empty();
     if (has_track_boundaries)
     {
-        result.track_left_boundary.clear();
-        result.track_right_boundary.clear();
-        for (int y = track_state.top_y; y <= track_state.bottom_y; ++y)
-        {
-            if (track_state.left_x_by_row[y] >= 0)
-            {
-                result.track_left_boundary.push_back(cv::Point(track_state.left_x_by_row[y], y));
-            }
-            if (track_state.right_x_by_row[y] >= 0)
-            {
-                result.track_right_boundary.push_back(cv::Point(track_state.right_x_by_row[y], y));
-            }
-        }
-        result.has_track_left_boundary = true;
-        result.has_track_right_boundary = true;
+        result.track_region_polygon = BuildTrackRegionPolygon(track_state);
+        result.has_track_region_polygon = (result.track_region_polygon.size() >= 4);
         result.search_rect = BuildTaskTrackSearchRect(track_state, image_width, image_height);
     }
     else
@@ -3329,11 +3488,6 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     {
         track_classification = ClassifyTaskCandidateByTrackBoundary(track_state, candidate_box);
     }
-    else if (has_reference_x_range)
-    {
-        track_classification =
-            ClassifyTaskCandidateByReferenceEnvelope(reference_x_min, reference_x_max, candidate_box);
-    }
 
     if (track_classification.classify_point.x >= 0 && track_classification.classify_point.y >= 0)
     {
@@ -3356,8 +3510,7 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     }
     if (track_classification.type != TaskTrackCandidateType::MARKER)
     {
-        result.status = has_track_boundaries ? "track_classify_miss" :
-                        (has_reference_x_range ? "reference_x_classify_miss" : "track_boundary_miss");
+        result.status = has_track_boundaries ? "track_classify_miss" : "track_boundary_miss";
         return result;
     }
     result.target_type = "marker";
@@ -3515,6 +3668,16 @@ void DrawRoiDebugOverlay(cv::Mat& image_bgr, const RoiExtractionResult& result)
             false,
             cv::Scalar(0, 255, 255),
             2,
+            cv::LINE_AA);
+    }
+    if (result.has_track_region_polygon && result.track_region_polygon.size() >= 4)
+    {
+        cv::polylines(
+            image_bgr,
+            std::vector<std::vector<cv::Point>>(1, result.track_region_polygon),
+            true,
+            cv::Scalar(255, 0, 255),
+            1,
             cv::LINE_AA);
     }
     if (result.has_track_classify_bounds)

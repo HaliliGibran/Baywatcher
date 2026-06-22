@@ -70,6 +70,9 @@ struct RoiExtractionResult
     bool has_track_right_boundary = false;
     std::vector<cv::Point> track_right_boundary;
 
+    bool has_track_region_polygon = false;
+    std::vector<cv::Point> track_region_polygon;
+
     bool has_track_classify_point = false;
     cv::Point track_classify_point;
 

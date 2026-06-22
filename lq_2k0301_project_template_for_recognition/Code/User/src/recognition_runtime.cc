@@ -233,6 +233,13 @@ void ApplyRecognitionProcessingMask(cv::Mat* frame_bgr)
     {
         frame_bgr->rowRange(keep_y_max, rows).setTo(cv::Scalar::all(0));
     }
+
+    const int cols = frame_bgr->cols;
+    if (cols > 0)
+    {
+        frame_bgr->colRange(0, 1).setTo(cv::Scalar::all(0));
+        frame_bgr->colRange(cols - 1, cols).setTo(cv::Scalar::all(0));
+    }
 }
 
 const char* VisionCodeText(BoardVisionCode code)
