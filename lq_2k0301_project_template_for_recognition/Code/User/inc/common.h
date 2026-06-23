@@ -850,10 +850,10 @@
 
 // [先调] 白带版迷宫法最大爬线步数
 // 作用：
-// - 限制识别板边界爬线的最长步数，防止跑飞。
-// - 断边后仍会继续走“小窗口保底 / 全行保底”。
+// - 限制识别板左右边线独立爬线的最长步数，防止绕顶边跑飞。
+// - 当前识别板爬边不走窗口/全行退化保底，纯按迷宫法步进。
 #ifndef BW_RECOG_TRACK_MAZE_MAX_STEPS
-#define BW_RECOG_TRACK_MAZE_MAX_STEPS 800
+#define BW_RECOG_TRACK_MAZE_MAX_STEPS 300
 #endif
 
 // [先调] 用候选红块所在 y 查边界时，允许向上下借边界的最大行差

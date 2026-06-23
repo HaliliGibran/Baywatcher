@@ -1091,7 +1091,7 @@ static void TraceTaskWhiteBoundaryLeftMaze(const cv::Mat& white_mask,
         turn = 0;
         out_points->push_back(cv::Point(w, h));
 
-        if (h < kTaskTrackTraceTopY)
+        if (h <= kTaskTrackTraceTopY)
         {
             break;
         }
@@ -1155,7 +1155,7 @@ static void TraceTaskWhiteBoundaryRightMaze(const cv::Mat& white_mask,
         turn = 0;
         out_points->push_back(cv::Point(w, h));
 
-        if (h < kTaskTrackTraceTopY)
+        if (h <= kTaskTrackTraceTopY)
         {
             break;
         }
