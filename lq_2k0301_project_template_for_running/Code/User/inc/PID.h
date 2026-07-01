@@ -111,4 +111,18 @@ void BayWatcher_Sequence_Start(uint32_t delay_ms, float esc_target, float esc_st
 
 extern bool cfg_vofa_remote_enable;
 extern float vofa_target_speed_adjust;
+extern bool cfg_start_delay;
+extern bool cfg_esc_soft_start;
+extern bool cfg_motor_soft_start;
+extern uint32_t g_startup_delay_ms;
+extern float g_startup_esc_target;
+extern float g_startup_esc_step;
+extern float g_startup_speed_step;
+extern bool cfg_straight_accel_enable;
+extern float cfg_straight_accel_max_add;
+extern float cfg_straight_accel_curve_min_th;
+extern float cfg_straight_accel_yaw_min_th;
+extern float cfg_straight_accel_curve_max_th;
+extern float cfg_straight_accel_yaw_max_th;
+extern float cfg_straight_accel_intensity;
 #endif

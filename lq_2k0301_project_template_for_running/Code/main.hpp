@@ -103,6 +103,7 @@ QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 #include "Communication.h"
 #include "Buzzer.h"
 #include "runtime_feedback.h"
+#include "Strategies.h"
 
 //////////////////全局变量声明//////////////////////
 extern BayWatcher_Encoder  encoder_sys;

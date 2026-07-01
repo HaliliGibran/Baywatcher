@@ -31,7 +31,7 @@ void BayWatcher_Menu::show() {
                     if(PID.is_running) TFTSPI_dir_P8X16Str(0, 3, "> 3.Stop Car", u16YELLOW, u16BLACK);
                     else               TFTSPI_dir_P8X16Str(0, 3, "> 3.Start Car", u16YELLOW, u16BLACK);
                     break;
-                case 4: TFTSPI_dir_P8X16Str(0, 4, "> 4.ESC Config", u16YELLOW, u16BLACK); break;
+                case 4: TFTSPI_dir_P8X16Str(0, 4, "> 4.Strategies", u16YELLOW, u16BLACK); break;
             }
             
             if(highlight_num != 1) TFTSPI_dir_P8X16Str(0, 1, "  1.Monitor", u16WHITE, u16BLACK);
@@ -40,7 +40,7 @@ void BayWatcher_Menu::show() {
                 if(PID.is_running) TFTSPI_dir_P8X16Str(0, 3, "  3.Stop Car", u16WHITE, u16BLACK);
                 else               TFTSPI_dir_P8X16Str(0, 3, "  3.Start Car", u16WHITE, u16BLACK);
             }
-            if(highlight_num != 4) TFTSPI_dir_P8X16Str(0, 4, "  4.ESC Config", u16WHITE, u16BLACK);
+            if(highlight_num != 4) TFTSPI_dir_P8X16Str(0, 4, "  4.Strategies", u16WHITE, u16BLACK);
             break;
 
         case 1: // ================= 监控页 =================
@@ -135,18 +135,23 @@ void BayWatcher_Menu::show() {
             if(highlight_num == 4) TFTSPI_dir_P8X16Str(0, 5, "> BACK", u16YELLOW, u16BLACK);
             else                   TFTSPI_dir_P8X16Str(0, 5, "  BACK", u16WHITE, u16BLACK);
             break;
-        case 6: // ================= ESC/Startup Config =================
-            TFTSPI_dir_P8X16Str(0, 0, "=== ESC Config ===", u16GREEN, u16BLACK);
-            if(write_ena) TFTSPI_dir_P8X16Str(14, 0, "[E]", u16RED, u16BLACK);
+        case 6: // ================= 策略方案 =================
+            TFTSPI_dir_P8X16Str(0, 0, "=== Strategies ===", u16GREEN, u16BLACK);
 
-            sprintf(buf, "%sESCDiff:%d", highlight_num == 1 ? "> ":"  ", esc_sys.enable_esc_diff ? 1 : 0);
-            TFTSPI_dir_P8X16Str(0, 1, buf, (highlight_num == 1) ? (write_ena ? u16RED : u16YELLOW) : u16WHITE, u16BLACK);
+            sprintf(buf, "%sP1 Race%s", highlight_num == 1 ? "> ":"  ",
+                    BayWatcher_Strategy_Active() == 1 ? "*" : " ");
+            TFTSPI_dir_P8X16Str(0, 1, buf, (highlight_num == 1) ? u16YELLOW : u16WHITE, u16BLACK);
 
-            sprintf(buf, "%sDiffRt:%.2f", highlight_num == 2 ? "> ":"  ", esc_sys.esc_diff_ratio);
-            TFTSPI_dir_P8X16Str(0, 2, buf, (highlight_num == 2) ? (write_ena ? u16RED : u16YELLOW) : u16WHITE, u16BLACK);
+            sprintf(buf, "%sP2 Safe%s", highlight_num == 2 ? "> ":"  ",
+                    BayWatcher_Strategy_Active() == 2 ? "*" : " ");
+            TFTSPI_dir_P8X16Str(0, 2, buf, (highlight_num == 2) ? u16YELLOW : u16WHITE, u16BLACK);
 
-            if(highlight_num == 3) TFTSPI_dir_P8X16Str(0, 3, "> BACK", u16YELLOW, u16BLACK);
-            else                   TFTSPI_dir_P8X16Str(0, 3, "  BACK", u16WHITE, u16BLACK);
+            sprintf(buf, "%sP3 Fast%s", highlight_num == 3 ? "> ":"  ",
+                    BayWatcher_Strategy_Active() == 3 ? "*" : " ");
+            TFTSPI_dir_P8X16Str(0, 3, buf, (highlight_num == 3) ? u16YELLOW : u16WHITE, u16BLACK);
+
+            if(highlight_num == 4) TFTSPI_dir_P8X16Str(0, 4, "> BACK", u16YELLOW, u16BLACK);
+            else                   TFTSPI_dir_P8X16Str(0, 4, "  BACK", u16WHITE, u16BLACK);
             break;
     }
 }
@@ -220,11 +225,8 @@ void BayWatcher_Menu::refresh_menu(KeyOp Key) {
                         else if(highlight_num == 3) { write_pointer = &PID_Speed_R.Kd; write_step = 0.1f; data_max = 50.0f; }
                         break;
                     case 6: 
-                        if(highlight_num == 3) { menu_num = 0; highlight_num = 4; break; }
-                        write_ena = 1;
-                        data_min = 0.0f;
-                        if(highlight_num == 1) { write_pointer_b = &esc_sys.enable_esc_diff; write_pointer = NULL; } 
-                        else if(highlight_num == 2) { write_pointer = &esc_sys.esc_diff_ratio; write_pointer_b = NULL; write_step = 0.1f; data_max = 10.0f; }
+                        if(highlight_num == 4) { menu_num = 0; highlight_num = 4; break; }
+                        BayWatcher_Apply_Strategy(highlight_num);
                         break;
                 }
             }
@@ -237,7 +239,8 @@ void BayWatcher_Menu::refresh_menu(KeyOp Key) {
                 write_pointer = NULL;
                 write_pointer_b = NULL;
             } else {
-                if(menu_num == 1 || menu_num == 2 || menu_num == 6) { menu_num = 0; highlight_num = 1; }
+                if(menu_num == 1 || menu_num == 2) { menu_num = 0; highlight_num = 1; }
+                else if(menu_num == 6) { menu_num = 0; highlight_num = 4; }
                 else if(menu_num >= 3 && menu_num <= 5) { menu_num = 2; highlight_num = 1; }
             }
             break;
@@ -274,7 +277,7 @@ void BayWatcher_Menu::refresh_menu(KeyOp Key) {
                 else if(menu_num == 2) max_items = 4;
                 else if(menu_num == 3) max_items = 6;
                 else if(menu_num == 4 || menu_num == 5) max_items = 4;
-                else if(menu_num == 6) max_items = 3;
+                else if(menu_num == 6) max_items = 4;
                 
                 if(highlight_num < max_items) highlight_num++; 
             }

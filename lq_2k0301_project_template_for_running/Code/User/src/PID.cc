@@ -15,10 +15,21 @@ const float ACKERMAN_CONST = 1450.0f;  // Ackerman越小,差速就越大
 const float STEER_LIMIT = 530.0f;      // 转向输出限幅
 const float FACTOR_LIMIT = 1.23f;        // 差速比例输出限幅
 
-static inline bool remote_follow_no_reverse_limit_active()
+static inline bool remote_bypass_active()
 {
     FollowLine forced_mode = FollowLine::MIXED;
-    return image_remote_recognition_get_forced_follow_mode(&forced_mode);
+    if (!image_remote_recognition_get_forced_follow_mode(&forced_mode))
+    {
+        return false;
+    }
+
+    return forced_mode == FollowLine::MIDLEFT ||
+           forced_mode == FollowLine::MIDRIGHT;
+}
+
+static inline bool remote_follow_no_reverse_limit_active()
+{
+    return remote_bypass_active();
 }
 
 static inline float clamp_remote_follow_factor_no_reverse(float factor,
@@ -51,19 +62,20 @@ static inline float clamp_remote_follow_factor_no_reverse(float factor,
 
 #pragma region 长直道加速
 
-bool cfg_straight_accel_enable = true;      // 是否开启直道加速
-// bool cfg_straight_accel_enable = false;      // 是否开启直道加速
+// bool cfg_straight_accel_enable = true;      // 是否开启直道加速
+bool cfg_straight_accel_enable = false;      // 是否开启直道加速
 
-float cfg_straight_accel_max_add = 4.0f;    // 作用上限：直道加速最大补偿速度
+float cfg_straight_accel_max_add = 8.0f;    // 作用上限：直道加速最大补偿速度
+// float cfg_straight_accel_max_add = 4.0f;    
 // float cfg_straight_accel_max_add = 2.0f;    
 
 //  最小阈值：在此范围内视为绝对直道，补偿拉满 (100% max_add)
-float cfg_straight_accel_curve_min_th = 22.0f; // 适应取最大曲率算法，垫高底线容忍直道毛刺
-float cfg_straight_accel_yaw_min_th = 3.5f;    // 直道 yaw 控制在 -5 到 5，满分阈值设为 3.5
+float cfg_straight_accel_curve_min_th = 5.4f; // 适应取最大曲率算法，垫高底线容忍直道毛刺
+float cfg_straight_accel_yaw_min_th = 3.6f;    // 直道 yaw 控制在 -5 到 5，满分阈值设为 3.5
 
 // 3. 最大阈值：超过此值视为入弯，一票否决，加速清零
-float cfg_straight_accel_curve_max_th = 30.0f; // 相应拉高最高阈值
-float cfg_straight_accel_yaw_max_th = 7.0f;    // 超过 7 度绝对不是直道
+float cfg_straight_accel_curve_max_th = 6.5f; // 相应拉高最高阈值
+float cfg_straight_accel_yaw_max_th = 6.8f;    // 超过 7 度绝对不是直道
 
 // 4. 剧烈程度 (保持 0.4 激进模式)
 float cfg_straight_accel_intensity = 0.4f;  
@@ -95,7 +107,10 @@ static float update_straight_acceleration(float pure_angle, float preview_curve)
     // ================== 核心元素拦截区 ==================
     // 元素互斥逻辑：只要不在普通赛道 (NORMAL)，立刻清零直道状态机并断油
     // 完美实现环岛和十字路口内部不进行任何直道加速
-    if (!cfg_straight_accel_enable || element_type != ElementType::NORMAL) {
+    if (!cfg_straight_accel_enable ||
+        element_type != ElementType::NORMAL ||
+        std::fabs(PID.base_target_speed) <= 1e-4f ||
+        remote_bypass_active()) {
         reset_straight_acceleration_state();
         return 0.0f;
     }
