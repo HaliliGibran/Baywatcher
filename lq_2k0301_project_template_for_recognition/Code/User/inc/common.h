@@ -144,6 +144,14 @@
 #define BW_RECOG_ROI_CAPTURE_SEND_PORT 5001
 #endif
 
+// [先调] ROI 拍摄模式单次批量发送的成功 ROI 张数
+// 作用：
+// - 按 2 后，不再只发 1 张，而是连续发送这么多张“成功提取且成功传输”的 ROI。
+// - 只有 `status=rotated_roi` 且 socket 发送成功的帧才计数。
+#ifndef BW_RECOG_ROI_CAPTURE_BURST_COUNT
+#define BW_RECOG_ROI_CAPTURE_BURST_COUNT 10
+#endif
+
 // [先调] ROI 发送 JPEG 质量
 #ifndef BW_RECOG_ROI_CAPTURE_JPEG_QUALITY
 #define BW_RECOG_ROI_CAPTURE_JPEG_QUALITY 95
