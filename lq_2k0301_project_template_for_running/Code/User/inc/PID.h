@@ -114,6 +114,7 @@ extern float vofa_target_speed_adjust;
 extern bool cfg_start_delay;
 extern bool cfg_esc_soft_start;
 extern bool cfg_motor_soft_start;
+extern bool cfg_closed_loop_stop_enable;
 extern uint32_t g_startup_delay_ms;
 extern float g_startup_esc_target;
 extern float g_startup_esc_step;

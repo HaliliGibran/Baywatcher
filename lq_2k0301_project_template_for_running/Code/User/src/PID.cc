@@ -4,6 +4,8 @@
 
 float big_langd_add = 0.0f;
 
+static float Calc_Inc_PID(Bay_IncPID_t *pid, float target, float measured);
+
 
 #pragma region Ackerman
 
@@ -62,10 +64,11 @@ static inline float clamp_remote_follow_factor_no_reverse(float factor,
 
 #pragma region 长直道加速
 
-// bool cfg_straight_accel_enable = true;      // 是否开启直道加速
-bool cfg_straight_accel_enable = false;      // 是否开启直道加速
+bool cfg_straight_accel_enable = true;      // 是否开启直道加速
+// bool cfg_straight_accel_enable = false;      // 是否开启直道加速
 
-float cfg_straight_accel_max_add = 8.0f;    // 作用上限：直道加速最大补偿速度
+// float cfg_straight_accel_max_add = 8.0f;    // 作用上限：直道加速最大补偿速度
+float cfg_straight_accel_max_add = 6.0f;    
 // float cfg_straight_accel_max_add = 4.0f;    
 // float cfg_straight_accel_max_add = 2.0f;    
 
@@ -74,7 +77,7 @@ float cfg_straight_accel_curve_min_th = 5.4f; // 适应取最大曲率算法，�
 float cfg_straight_accel_yaw_min_th = 3.6f;    // 直道 yaw 控制在 -5 到 5，满分阈值设为 3.5
 
 // 3. 最大阈值：超过此值视为入弯，一票否决，加速清零
-float cfg_straight_accel_curve_max_th = 6.5f; // 相应拉高最高阈值
+float cfg_straight_accel_curve_max_th = 7.5f; // 相应拉高最高阈值
 float cfg_straight_accel_yaw_max_th = 6.8f;    // 超过 7 度绝对不是直道
 
 // 4. 剧烈程度 (保持 0.4 激进模式)
@@ -430,6 +433,21 @@ static float update_curve_slowdown_base_speed(float manual_base_speed)
 
 static bool g_zebra_control_latched = false;
 
+static constexpr uint32_t CLOSED_LOOP_STOP_PERIOD_MS = 5;
+static constexpr uint32_t CLOSED_LOOP_STOP_TIMEOUT_MS = 700;
+static constexpr uint32_t CLOSED_LOOP_STOP_TIMEOUT_TICKS =
+    (CLOSED_LOOP_STOP_TIMEOUT_MS + CLOSED_LOOP_STOP_PERIOD_MS - 1) / CLOSED_LOOP_STOP_PERIOD_MS;
+static constexpr uint32_t CLOSED_LOOP_STOP_STABLE_TICKS = 8;
+static constexpr float CLOSED_LOOP_STOP_SPEED_EPS = 0.05f;
+
+struct ClosedLoopStopState {
+    bool active = false;
+    uint32_t ticks = 0;
+    uint32_t stable_ticks = 0;
+};
+
+static ClosedLoopStopState g_closed_loop_stop;
+
 static void reset_pid_runtime_state_to_idle()
 {
     PID.is_running = 0;
@@ -498,11 +516,156 @@ static void reset_pid_runtime_state_to_idle()
     reset_straight_acceleration_state();
 }
 
+static bool closed_loop_stop_active()
+{
+    return g_closed_loop_stop.active;
+}
+
+static void reset_direction_pid_for_stop()
+{
+    PID_Angle.error = 0.0f;
+    PID_Angle.integral = 0.0f;
+    PID_Angle.last_error = 0.0f;
+    PID_Angle.output = 0.0f;
+
+    PID_YawSpeed.error = 0.0f;
+    PID_YawSpeed.integral = 0.0f;
+    PID_YawSpeed.last_error = 0.0f;
+    PID_YawSpeed.output = 0.0f;
+
+    PID_Cube.error = 0.0f;
+    PID_Cube.integral = 0.0f;
+    PID_Cube.last_error = 0.0f;
+    PID_Cube.gyro = 0.0f;
+    PID_Cube.output = 0.0f;
+}
+
+static void begin_closed_loop_stop()
+{
+    esc_sys.stop();
+    esc_sys.is_running = false;
+
+    g_closed_loop_stop.active = true;
+    g_closed_loop_stop.ticks = 0;
+    g_closed_loop_stop.stable_ticks = 0;
+
+    PID.is_running = 1;
+    PID.startup_state = 4;
+    PID.startup_delay_cnt = 0;
+    PID.startup_delay_target = 0;
+    PID.startup_esc_target = 0.0f;
+    PID.startup_esc_step = 0.0f;
+    PID.startup_speed_target = 0.0f;
+    PID.startup_speed_step = 0.0f;
+
+    PID.base_target_speed = 0.0f;
+    PID.target_angle = 0.0f;
+    PID.target_yaw_speed = 0.0f;
+    PID.speed_adjust = 0.0f;
+    PID.target_speed_L = 0.0f;
+    PID.target_speed_R = 0.0f;
+    PID.yaw_control_base_speed = 0.0f;
+    big_langd_add = 0.0f;
+
+    PID_Speed_L.error = 0.0f;
+    PID_Speed_L.prev_error = 0.0f;
+    PID_Speed_L.last_error = 0.0f;
+    PID_Speed_L.error_i = 0.0f;
+    PID_Speed_L.output = 0.0f;
+
+    PID_Speed_R.error = 0.0f;
+    PID_Speed_R.prev_error = 0.0f;
+    PID_Speed_R.last_error = 0.0f;
+    PID_Speed_R.error_i = 0.0f;
+    PID_Speed_R.output = 0.0f;
+
+    PID_Speed_F_L.error = 0.0f;
+    PID_Speed_F_L.integral = 0.0f;
+    PID_Speed_F_L.last_error = 0.0f;
+    PID_Speed_F_L.output = 0.0f;
+
+    PID_Speed_F_R.error = 0.0f;
+    PID_Speed_F_R.integral = 0.0f;
+    PID_Speed_F_R.last_error = 0.0f;
+    PID_Speed_F_R.output = 0.0f;
+
+    reset_direction_pid_for_stop();
+    reset_curve_slowdown_state(0.0f);
+    reset_straight_acceleration_state();
+}
+
+static void finish_closed_loop_stop()
+{
+    g_closed_loop_stop.active = false;
+    g_closed_loop_stop.ticks = 0;
+    g_closed_loop_stop.stable_ticks = 0;
+
+    motor_sys.Stop();
+    reset_pid_runtime_state_to_idle();
+}
+
+static bool process_closed_loop_stop_if_active()
+{
+    if (!g_closed_loop_stop.active)
+    {
+        return false;
+    }
+
+    vL = encoder_sys.getSpeedL();
+    vR = encoder_sys.getSpeedR();
+
+    if (std::fabs(vL) <= CLOSED_LOOP_STOP_SPEED_EPS &&
+        std::fabs(vR) <= CLOSED_LOOP_STOP_SPEED_EPS)
+    {
+        g_closed_loop_stop.stable_ticks++;
+    }
+    else
+    {
+        g_closed_loop_stop.stable_ticks = 0;
+    }
+
+    g_closed_loop_stop.ticks++;
+
+    if (g_closed_loop_stop.stable_ticks >= CLOSED_LOOP_STOP_STABLE_TICKS ||
+        g_closed_loop_stop.ticks >= CLOSED_LOOP_STOP_TIMEOUT_TICKS)
+    {
+        finish_closed_loop_stop();
+        return true;
+    }
+
+    PID.is_running = 1;
+    PID.startup_state = 4;
+    PID.base_target_speed = 0.0f;
+    PID.target_angle = 0.0f;
+    PID.target_yaw_speed = 0.0f;
+    PID.speed_adjust = 0.0f;
+    PID.target_speed_L = 0.0f;
+    PID.target_speed_R = 0.0f;
+    PID.yaw_control_base_speed = 0.0f;
+    big_langd_add = 0.0f;
+    esc_sys.current_factor = 0.0f;
+
+    const int32_t pid_out_L = (int32_t)Calc_Inc_PID(&PID_Speed_L, 0.0f, vL);
+    const int32_t pid_out_R = (int32_t)Calc_Inc_PID(&PID_Speed_R, 0.0f, vR);
+
+    PID.pwm_out_L = pid_out_L;
+    PID.pwm_out_R = pid_out_R;
+
+    motor_sys.Motor2_Set(PID.pwm_out_L);
+    motor_sys.Motor1_Set(PID.pwm_out_R);
+    return true;
+}
+
 static bool handle_zebra_stop_request()
 {
     if (!zebra_stop)
     {
         g_zebra_control_latched = false;
+        return false;
+    }
+
+    if (g_closed_loop_stop.active)
+    {
         return false;
     }
 
@@ -513,10 +676,17 @@ static bool handle_zebra_stop_request()
     {
         BayWatcher_Stop_Car();
         g_zebra_control_latched = true;
-        printf("[ZEBRA] control stop -> reset to idle\r\n");
+        if (g_closed_loop_stop.active)
+        {
+            printf("[ZEBRA] control stop -> closed-loop stop\r\n");
+        }
+        else
+        {
+            printf("[ZEBRA] control stop -> reset to idle\r\n");
+        }
     }
 
-    return true;
+    return !g_closed_loop_stop.active;
 }
 
 } // namespace
@@ -817,8 +987,14 @@ void BayWatcher_Control_Init(void) {
     // // 有负压 21.25 0.35 60%
     // PID_Cube.Kp_a = 6.5685f ;  PID_Cube.Kp_b = 0.4846f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 410.10f ; PID_Cube.Kd_b = 0.00100f;
 
-    // 有负压 19.92 - 20.10 0.40 70%
-    PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4844f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.10f ; PID_Cube.Kd_b = 0.00100f;
+    // // 有负压 19.92 - 20.10 0.40 70%
+    // PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4844f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // // 有负压 20.42 - 20.80 0.40 70%
+    // PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4846f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // 有负压 21.00 0.40 70%
+    PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4853f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 303.10f ; PID_Cube.Kd_b = 0.00100f;
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
     reset_curve_slowdown_state(0.0f);
@@ -850,12 +1026,12 @@ static int32_t Add_Dead_Zone(int32_t pwm) {
 
 
 void BayWatcher_Middle_Loop(void* arg){
-    if (handle_zebra_stop_request()) {
+    if (handle_zebra_stop_request() || closed_loop_stop_active()) {
         return;
     }
 }
 void BayWatcher_Outter_Loop(void* arg){
-    if (handle_zebra_stop_request()) {
+    if (handle_zebra_stop_request() || closed_loop_stop_active()) {
         return;
     }
     if (PID.is_running == 0) {
@@ -890,6 +1066,9 @@ void BayWatcher_Outter_Loop(void* arg){
 
 void BayWatcher_Inner_Loop(void* arg){
     if (handle_zebra_stop_request()) {
+        return;
+    }
+    if (process_closed_loop_stop_if_active()) {
         return;
     }
     if (PID.is_running == 0) {
@@ -962,6 +1141,7 @@ bool cfg_esc_soft_start = true;    // true=开启电调(负压)发车延时与�
 // bool cfg_esc_soft_start = false;    // true=开启电调(负压)发车延时与软启，false=跳过
 bool cfg_motor_soft_start = false;  // true=开启底盘电机软启，false=跳过直接输出给定速度
 // bool cfg_motor_soft_start = true;  // true=开启底盘电机软启，false=跳过直接输出给定速度
+bool cfg_closed_loop_stop_enable = false; // true=速度闭环降到0后再断PWM，false=原急停
 // bool cfg_esc_diff_enable = true;   // true=开启负压差速，false=关闭 (同步给菜单控制)
 bool cfg_esc_diff_enable = false;   // true=开启负压差速，false=关闭 (同步给菜单控制)
 float cfg_esc_diff_limit = 0.0f;  // 负压差速补偿最大限幅值 (百分比，支持在菜单中设置)
@@ -976,6 +1156,9 @@ float g_startup_speed_step = 0.05f;       // [发车阶段3]：底盘电机软�
 
 void BayWatcher_Control_Loop(void* arg) {
     if (handle_zebra_stop_request()) {
+        return;
+    }
+    if (process_closed_loop_stop_if_active()) {
         return;
     }
     //底盘速度环翻车拦截
@@ -1191,7 +1374,7 @@ void BayWatcher_Control_Loop(void* arg) {
 }
 
 void BayWatcher_Cube_Loop(void* arg){
-    if (handle_zebra_stop_request()) {
+    if (handle_zebra_stop_request() || closed_loop_stop_active()) {
         return;
     }
     //底盘方向环翻车拦截
@@ -1268,6 +1451,16 @@ void BayWatcher_Start_Car(void) {
 
 
 void BayWatcher_Stop_Car(void) {
+    if (cfg_closed_loop_stop_enable && PID.is_running != 0) {
+        if (!closed_loop_stop_active()) {
+            begin_closed_loop_stop();
+        }
+        return;
+    }
+
+    g_closed_loop_stop.active = false;
+    g_closed_loop_stop.ticks = 0;
+    g_closed_loop_stop.stable_ticks = 0;
     motor_sys.Stop();
     esc_sys.stop();
     esc_sys.is_running = false;
