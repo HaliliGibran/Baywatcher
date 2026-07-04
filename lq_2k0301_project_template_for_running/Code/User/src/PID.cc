@@ -844,6 +844,180 @@ static float Feedforward_PID(Bay_FforwardPID_t *pid, float target, float measure
 }
 #pragma endregion
 
+#pragma region Circle PIDs
+// ============================ 环岛分段 PID 参数 ============================
+// 作用对象：PID_Cube，也就是当前活跃的转向环。
+// 设计思路：
+// 1. 普通巡线参数不写死在切换逻辑里，而是在 BayWatcher_Control_Init() 初始化完成后保存。
+// 2. 只对“左入环/右入环/左出环/右出环”四段特调，其余环岛阶段沿用普通巡线参数。
+// 3. 只有进入/退出特调段时才写 PID 参数并清历史，避免 BEGIN/RUNNING/END 白白扰动控制环。
+// 调参建议：
+// - 入环切不进去：优先增大 left/right_circle_in_pid 的 Kp_b / Kd_a。
+// - 出环拉不出来：优先增大 left/right_circle_out_pid 的 Kp_b / Kd_a。
+// - BEGIN/RUNNING/END 默认使用普通巡线参数，避免环内稳态被额外参数扰动。
+
+struct Cube_PID_Param_t {
+    float Kp_a;
+    float Kp_b;
+    float Ki;
+    float Kd_a;
+    float Kd_b;
+    float output_limit;
+    float integral_limit;
+};
+
+// bool cfg_circle_pid_enable = true; // true=启用环岛入环/出环特调PID，false=完全使用普通巡线PID
+bool cfg_circle_pid_enable = false; // true=启用环岛入环/出环特调PID，false=完全使用普通巡线PID
+
+static Cube_PID_Param_t cube_pid_normal_param;
+
+// 是否已经把“普通巡线 PID 参数”保存下来。
+// false：说明 BayWatcher_Control_Init() 还没保存过，不能恢复普通参数。
+// true ：说明 cube_pid_normal_param 里已经有初始化后的普通巡线参数。
+static bool if_cube_pid_normal_saved = false;
+
+// 当前 PID_Cube 是否正在使用环岛特调参数。
+// false：当前就是普通巡线参数，BEGIN/RUNNING/END 这些普通段不用重复写 PID，也不用清历史。
+// true ：当前是 IN/OUT 特调参数，离开 IN/OUT 时必须恢复普通参数，并清一次历史。
+static bool if_cube_pid_special_active = false;
+
+static CircleState last_circle_pid_state = CircleState::CIRCLE_NONE;
+static CircleDirection last_circle_pid_direction = CircleDirection::CIRCLE_DIR_NONE;
+
+// 左环岛特调参数：只区分入环和出环。
+static const Cube_PID_Param_t left_circle_in_pid  = {6.70f, 0.510f, 0.0f, 340.0f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t left_circle_out_pid = {6.65f, 0.500f, 0.0f, 330.0f, 0.00100f, STEER_LIMIT, 100.0f};
+
+// 右环岛特调参数：初值与左环岛相同，后续按实车表现分开修。
+static const Cube_PID_Param_t right_circle_in_pid  = {6.70f, 0.510f, 0.0f, 340.0f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t right_circle_out_pid = {6.65f, 0.500f, 0.0f, 330.0f, 0.00100f, STEER_LIMIT, 100.0f};
+
+static void circle_pid_save_normal_param()
+{
+    cube_pid_normal_param.Kp_a = PID_Cube.Kp_a;
+    cube_pid_normal_param.Kp_b = PID_Cube.Kp_b;
+    cube_pid_normal_param.Ki = PID_Cube.Ki;
+    cube_pid_normal_param.Kd_a = PID_Cube.Kd_a;
+    cube_pid_normal_param.Kd_b = PID_Cube.Kd_b;
+    cube_pid_normal_param.output_limit = PID_Cube.output_limit;
+    cube_pid_normal_param.integral_limit = PID_Cube.integral_limit;
+
+    if_cube_pid_normal_saved = true;
+    if_cube_pid_special_active = false;
+}
+
+static void circle_pid_clear_cube_state()
+{
+    PID_Cube.error = 0.0f;
+    PID_Cube.integral = 0.0f;
+    PID_Cube.last_error = 0.0f;
+    PID_Cube.output = 0.0f;
+}
+
+static void circle_pid_apply_param(const Cube_PID_Param_t& param)
+{
+    PID_Cube.Kp_a = param.Kp_a;
+    PID_Cube.Kp_b = param.Kp_b;
+    PID_Cube.Ki = param.Ki;
+    PID_Cube.Kd_a = param.Kd_a;
+    PID_Cube.Kd_b = param.Kd_b;
+    PID_Cube.output_limit = param.output_limit;
+    PID_Cube.integral_limit = param.integral_limit;
+
+    circle_pid_clear_cube_state();
+}
+
+static void circle_pid_update_last_state()
+{
+    last_circle_pid_state = circle_state;
+    last_circle_pid_direction = circle_direction;
+}
+
+static const Cube_PID_Param_t& circle_pid_get_left_param(CircleState state)
+{
+    switch (state) {
+        case CircleState::CIRCLE_IN:      return left_circle_in_pid;
+        case CircleState::CIRCLE_OUT:     return left_circle_out_pid;
+        default:                          return cube_pid_normal_param;
+    }
+}
+
+static const Cube_PID_Param_t& circle_pid_get_right_param(CircleState state)
+{
+    switch (state) {
+        case CircleState::CIRCLE_IN:      return right_circle_in_pid;
+        case CircleState::CIRCLE_OUT:     return right_circle_out_pid;
+        default:                          return cube_pid_normal_param;
+    }
+}
+
+static void circle_pid_update_by_state()
+{
+    if (!if_cube_pid_normal_saved) {
+        circle_pid_save_normal_param();
+    }
+
+    // 环岛 PID 总开关。
+    // false：不使用任何环岛特调参数，效果等同于旧代码一直使用初始化的 PID_Cube。
+    // 如果关闭开关时正处在特调参数里，先恢复普通巡线参数，避免把 IN/OUT 参数留在车上。
+    if (!cfg_circle_pid_enable) {
+        if (if_cube_pid_special_active) {
+            circle_pid_apply_param(cube_pid_normal_param);
+            if_cube_pid_special_active = false;
+        }
+
+        circle_pid_update_last_state();
+        return;
+    }
+
+    // 当前环岛状态/方向有没有变。
+    // false：状态没变，PID 参数也不需要动，直接返回。
+    // true ：可能进入 IN/OUT，也可能离开 IN/OUT，需要往下判断是否切参数。
+    const bool if_circle_pid_state_changed =
+        circle_state != last_circle_pid_state ||
+        circle_direction != last_circle_pid_direction;
+
+    if (!if_circle_pid_state_changed) {
+        return;
+    }
+
+    const Cube_PID_Param_t* target_param = &cube_pid_normal_param;
+
+    // 当前这一帧是否应该使用环岛特调参数。
+    // false：当前不在左/右入环、左/右出环，目标参数就是普通巡线参数。
+    // true ：当前正处于左/右入环或左/右出环，需要切到对应的特调参数。
+    bool if_use_circle_special_pid = false;
+
+    if ((element_type == ElementType::CIRCLE ||
+         circle_state != CircleState::CIRCLE_NONE) &&
+        circle_direction == CircleDirection::CIRCLE_DIR_LEFT) {
+        if (circle_state == CircleState::CIRCLE_IN || circle_state == CircleState::CIRCLE_OUT) {
+            target_param = &circle_pid_get_left_param(circle_state);
+            if_use_circle_special_pid = true;
+        }
+    } else if ((element_type == ElementType::CIRCLE ||
+                circle_state != CircleState::CIRCLE_NONE) &&
+               circle_direction == CircleDirection::CIRCLE_DIR_RIGHT) {
+        if (circle_state == CircleState::CIRCLE_IN || circle_state == CircleState::CIRCLE_OUT) {
+            target_param = &circle_pid_get_right_param(circle_state);
+            if_use_circle_special_pid = true;
+        }
+    }
+
+    // 只有两种情况才真正写 PID：
+    // 1. if_use_circle_special_pid=true：进入 IN/OUT 特调段，要写入特调参数。
+    // 2. if_cube_pid_special_active=true：上一段还在用特调参数，现在离开了，要恢复普通巡线参数。
+    // 如果一直在 BEGIN/RUNNING/END 这些普通段，这里不会反复写普通参数，也不会反复清 PID 历史。
+    if (if_use_circle_special_pid || if_cube_pid_special_active) {
+        circle_pid_apply_param(*target_param);
+        if_cube_pid_special_active = if_use_circle_special_pid;
+    }
+
+    circle_pid_update_last_state();
+}
+
+#pragma endregion
+
 #pragma region Init & Loop
 //============================ 控制算法分区 ==============================
 
@@ -1011,6 +1185,7 @@ void BayWatcher_Control_Init(void) {
     PID_Cube.Kp_a = 6.57f ;  PID_Cube.Kp_b = 0.4848f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.10f ; PID_Cube.Kd_b = 0.00100f; 
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
+    circle_pid_save_normal_param();
     reset_curve_slowdown_state(0.0f);
 
     // // 同步全局配置给电调系统
@@ -1409,6 +1584,7 @@ void BayWatcher_Cube_Loop(void* arg){
     // imu_sys.raw_gz =PID_Cube.gyro ;
     PID_Cube.gyro = imu_sys.raw_gz ;
     // PID_Cube.gyro = 0;
+    circle_pid_update_by_state();
 
 #if DEBUG_IMU_TEST
     // ==================== IMU Z轴数据测试 ====================
