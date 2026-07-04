@@ -18,6 +18,7 @@
 // - 若车在入环或环内贴边不够，保留开启。
 #ifndef BW_CIRCLE_OFFSET_ENABLE
 #define BW_CIRCLE_OFFSET_ENABLE 0
+// #define BW_CIRCLE_OFFSET_ENABLE 1
 #endif
 
 // pure_angle 预瞄“速度反馈前推”总开关：

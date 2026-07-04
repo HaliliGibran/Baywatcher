@@ -16,6 +16,8 @@ const float ACKERMAN_CONST = 1450.0f;  // Ackerman越小,差速就越大
 // const float STEER_LIMIT = 1030.0f;      // 转向输出限幅
 const float STEER_LIMIT = 530.0f;      // 转向输出限幅
 const float FACTOR_LIMIT = 1.23f;        // 差速比例输出限幅
+// const float FACTOR_LIMIT = 1.25f;        // 差速比例输出限幅
+// const float FACTOR_LIMIT = 1.2f;        // 差速比例输出限幅
 
 static inline bool remote_bypass_active()
 {
@@ -68,7 +70,8 @@ bool cfg_straight_accel_enable = true;      // 是否开启直道加速
 // bool cfg_straight_accel_enable = false;      // 是否开启直道加速
 
 // float cfg_straight_accel_max_add = 8.0f;    // 作用上限：直道加速最大补偿速度
-float cfg_straight_accel_max_add = 6.0f;    
+// float cfg_straight_accel_max_add = 6.0f; 
+float cfg_straight_accel_max_add = 5.6f;    
 // float cfg_straight_accel_max_add = 4.0f;    
 // float cfg_straight_accel_max_add = 2.0f;    
 
@@ -899,17 +902,31 @@ void BayWatcher_Control_Init(void) {
     // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
-    // 有负压 19-21.20
+    // // 有负压 19-21.20
+    // // 左轮速度环PID
+    // // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
+    // PID_Speed_L.Kp = 113.32f; PID_Speed_L.Ki = 26.00f; PID_Speed_L.Kd = 0.00f;
+    // // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
+    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
+
+
+    // // 右轮速度环PID
+    // // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
+    // PID_Speed_R.Kp = 113.00f; PID_Speed_R.Ki = 26.00f; PID_Speed_R.Kd = 0.00f;
+    // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
+    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
+
+        // 有负压 19-21.20
     // 左轮速度环PID
     // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
-    PID_Speed_L.Kp = 113.32f; PID_Speed_L.Ki = 26.00f; PID_Speed_L.Kd = 0.00f;
+    PID_Speed_L.Kp = 122.32f; PID_Speed_L.Ki = 27.50f; PID_Speed_L.Kd = 0.00f;
     // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
     PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
 
     // 右轮速度环PID
     // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
-    PID_Speed_R.Kp = 113.00f; PID_Speed_R.Ki = 26.00f; PID_Speed_R.Kd = 0.00f;
+    PID_Speed_R.Kp = 122.00f; PID_Speed_R.Ki = 27.55f; PID_Speed_R.Kd = 0.00f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
     PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
@@ -942,15 +959,6 @@ void BayWatcher_Control_Init(void) {
     ERROR_MAX = 40.0f; KP_Fuzzy = 0.0f; KD_Fuzzy = 0.0f;
 
     // // 三次拟位式PID
-     // // 无负压 17.22 0.4
-    // PID_Cube.Kp_a = 6.55f ;  PID_Cube.Kp_b = 0.475f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 814.10f ; PID_Cube.Kd_b = 0.00000f;
-
-    // // 无负压 17.52 0.4
-    // PID_Cube.Kp_a = 6.85f ;  PID_Cube.Kp_b = 0.488f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 825.10f ; PID_Cube.Kd_b = 0.00000f;
-
-    // // 无负压 17.66 0.4
-    // PID_Cube.Kp_a = 6.985f ;  PID_Cube.Kp_b = 0.488f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 820.10f ; PID_Cube.Kd_b = 0.00000f;
-
     // // 无负压 17.66 0.4
     // PID_Cube.Kp_a = 6.588f ;  PID_Cube.Kp_b = 0.493f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 833.10f ; PID_Cube.Kd_b = 0.00000f;
 
@@ -993,8 +1001,14 @@ void BayWatcher_Control_Init(void) {
     // // 有负压 20.42 - 20.80 0.40 70%
     // PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4846f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.10f ; PID_Cube.Kd_b = 0.00100f;
 
-    // 有负压 21.00 0.40 70%
-    PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4853f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 303.10f ; PID_Cube.Kd_b = 0.00100f;
+    // // 有负压 21.00 0.40 70% abandaned
+    // PID_Cube.Kp_a = 6.605f ;  PID_Cube.Kp_b = 0.4848f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.50f ; PID_Cube.Kd_b = 0.00100f;
+
+    // // 有负压 20.42 - 20.80 0.40 70%
+    // PID_Cube.Kp_a = 6.565f ;  PID_Cube.Kp_b = 0.4846f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // 有负压 20.42 - 20.80 0.40 70% 燕大
+    PID_Cube.Kp_a = 6.57f ;  PID_Cube.Kp_b = 0.4848f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.10f ; PID_Cube.Kd_b = 0.00100f; 
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
     reset_curve_slowdown_state(0.0f);
@@ -1142,6 +1156,7 @@ bool cfg_esc_soft_start = true;    // true=开启电调(负压)发车延时与�
 bool cfg_motor_soft_start = false;  // true=开启底盘电机软启，false=跳过直接输出给定速度
 // bool cfg_motor_soft_start = true;  // true=开启底盘电机软启，false=跳过直接输出给定速度
 bool cfg_closed_loop_stop_enable = false; // true=速度闭环降到0后再断PWM，false=原急停
+// bool cfg_closed_loop_stop_enable = true; // true=速度闭环降到0后再断PWM，false=原急停
 // bool cfg_esc_diff_enable = true;   // true=开启负压差速，false=关闭 (同步给菜单控制)
 bool cfg_esc_diff_enable = false;   // true=开启负压差速，false=关闭 (同步给菜单控制)
 float cfg_esc_diff_limit = 0.0f;  // 负压差速补偿最大限幅值 (百分比，支持在菜单中设置)
