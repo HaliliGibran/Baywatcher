@@ -43,6 +43,13 @@ struct RoiSendFeedback
     uint64_t valid_until_ms = 0;
 };
 
+struct RoiBurstSendState
+{
+    bool active = false;
+    int success_count = 0;
+    int target_count = BW_RECOG_ROI_CAPTURE_BURST_COUNT;
+};
+
 static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
                                        const cv::Mat& image_bgr,
                                        const char* name_prefix,
@@ -323,7 +330,7 @@ static void draw_roi_capture_idle_view(const cv::Mat& frame_bgr,
     view = frame_bgr.clone();
     cv::putText(view, "ROI Capture Idle", cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX,
                 0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
-    cv::putText(view, "Press 1: preview ROI | 2: send ROI | 3: send frame(y30-160) | 0: idle",
+    cv::putText(view, "Press 1: preview ROI | 2: send 10 ROI | 3: send frame(y30-160) | 0: idle",
                 cv::Point(10, 52), cv::FONT_HERSHEY_SIMPLEX,
                 0.50, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
     std::ostringstream host_info;
@@ -337,6 +344,7 @@ static void draw_roi_capture_overlay(cv::Mat& view,
                                      const RoiExtractionResult& roi_result,
                                      const RoiCaptureTransferConfig& config,
                                      const RoiSendFeedback& feedback,
+                                     const RoiBurstSendState& burst_state,
                                      uint64_t t_ms)
 {
     if (view.empty())
@@ -349,7 +357,7 @@ static void draw_roi_capture_overlay(cv::Mat& view,
 
     cv::putText(view, "ROI Capture Preview", cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX,
                 0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
-    cv::putText(view, "1: preview  2: send ROI  3: send frame(y30-160)  0: idle", cv::Point(10, 52),
+    cv::putText(view, "1: preview  2: send 10 ROI  3: send frame(y30-160)  0: idle", cv::Point(10, 52),
                 cv::FONT_HERSHEY_SIMPLEX, 0.50, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
 
     std::ostringstream roi_info;
@@ -366,9 +374,16 @@ static void draw_roi_capture_overlay(cv::Mat& view,
     cv::putText(view, host_info.str(), cv::Point(10, 108), cv::FONT_HERSHEY_SIMPLEX,
                 0.48, cv::Scalar(255, 220, 0), 2, cv::LINE_AA);
 
+    std::ostringstream burst_info;
+    burst_info << "burst_roi="
+               << (burst_state.active ? "RUN " : "IDLE ")
+               << burst_state.success_count << "/" << std::max(0, burst_state.target_count);
+    cv::putText(view, burst_info.str(), cv::Point(10, 136), cv::FONT_HERSHEY_SIMPLEX,
+                0.50, burst_state.active ? cv::Scalar(0, 255, 0) : cv::Scalar(255, 220, 0), 2, cv::LINE_AA);
+
     if (feedback.valid_until_ms > t_ms && !feedback.text.empty())
     {
-        cv::putText(view, feedback.text, cv::Point(10, 136), cv::FONT_HERSHEY_SIMPLEX,
+        cv::putText(view, feedback.text, cv::Point(10, 164), cv::FONT_HERSHEY_SIMPLEX,
                     0.55, feedback.color, 2, cv::LINE_AA);
     }
 }
@@ -505,6 +520,7 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
     uint64_t last_consumed_frame_seq = 0;
     RoiCaptureModeState mode = RoiCaptureModeState::IDLE;
     RoiSendFeedback feedback;
+    RoiBurstSendState burst_state;
 
     stream.Initialize(stream_enabled);
 
@@ -582,6 +598,8 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             if (key == '1')
             {
                 mode = RoiCaptureModeState::PREVIEW;
+                burst_state.active = false;
+                burst_state.success_count = 0;
                 feedback.text = "preview on";
                 feedback.color = cv::Scalar(0, 255, 255);
                 feedback.valid_until_ms = t_ms + 1200;
@@ -594,27 +612,14 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
                     feedback.color = cv::Scalar(0, 165, 255);
                     feedback.valid_until_ms = t_ms + 1500;
                 }
-                else if (roi_result.status != "rotated_roi" || roi_result.roi_bgr.empty())
-                {
-                    feedback.text = "no valid roi";
-                    feedback.color = cv::Scalar(0, 0, 255);
-                    feedback.valid_until_ms = t_ms + 1500;
-                }
                 else
                 {
-                    std::string send_message;
-                    if (send_roi_to_pc(transfer_config, roi_result.roi_bgr, t_ms, &send_message))
-                    {
-                        feedback.text = "send ok: " + send_message;
-                        feedback.color = cv::Scalar(0, 255, 0);
-                        feedback.valid_until_ms = t_ms + 2000;
-                    }
-                    else
-                    {
-                        feedback.text = "send fail: " + send_message;
-                        feedback.color = cv::Scalar(0, 0, 255);
-                        feedback.valid_until_ms = t_ms + 2500;
-                    }
+                    burst_state.active = true;
+                    burst_state.success_count = 0;
+                    burst_state.target_count = std::max(1, BW_RECOG_ROI_CAPTURE_BURST_COUNT);
+                    feedback.text = "burst send start";
+                    feedback.color = cv::Scalar(0, 255, 255);
+                    feedback.valid_until_ms = t_ms + 1500;
                 }
             }
             else if (key == '3')
@@ -654,9 +659,55 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             else if (key == '0')
             {
                 mode = RoiCaptureModeState::IDLE;
+                burst_state.active = false;
+                burst_state.success_count = 0;
                 feedback.text = "preview off";
                 feedback.color = cv::Scalar(0, 255, 255);
                 feedback.valid_until_ms = t_ms + 1200;
+            }
+        }
+
+        if (mode == RoiCaptureModeState::PREVIEW && burst_state.active)
+        {
+            if (roi_result.status == "rotated_roi" && !roi_result.roi_bgr.empty())
+            {
+                std::string send_message;
+                if (send_roi_to_pc(transfer_config, roi_result.roi_bgr, t_ms, &send_message))
+                {
+                    ++burst_state.success_count;
+                    std::ostringstream ok_text;
+                    ok_text << "burst send ok " << burst_state.success_count
+                            << "/" << burst_state.target_count << ": " << send_message;
+                    feedback.text = ok_text.str();
+                    feedback.color = cv::Scalar(0, 255, 0);
+                    feedback.valid_until_ms = t_ms + 1200;
+
+                    if (burst_state.success_count >= burst_state.target_count)
+                    {
+                        burst_state.active = false;
+                        feedback.text = "burst done";
+                        feedback.color = cv::Scalar(0, 255, 0);
+                        feedback.valid_until_ms = t_ms + 2000;
+                    }
+                }
+                else
+                {
+                    std::ostringstream fail_text;
+                    fail_text << "burst send fail " << burst_state.success_count
+                              << "/" << burst_state.target_count << ": " << send_message;
+                    feedback.text = fail_text.str();
+                    feedback.color = cv::Scalar(0, 0, 255);
+                    feedback.valid_until_ms = t_ms + 1200;
+                }
+            }
+            else
+            {
+                std::ostringstream wait_text;
+                wait_text << "waiting valid roi " << burst_state.success_count
+                          << "/" << burst_state.target_count;
+                feedback.text = wait_text.str();
+                feedback.color = cv::Scalar(0, 165, 255);
+                feedback.valid_until_ms = t_ms + 500;
             }
         }
 
@@ -665,7 +716,7 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             if (mode == RoiCaptureModeState::PREVIEW)
             {
                 view = img.clone();
-                draw_roi_capture_overlay(view, roi_result, transfer_config, feedback, t_ms);
+                draw_roi_capture_overlay(view, roi_result, transfer_config, feedback, burst_state, t_ms);
             }
             else
             {

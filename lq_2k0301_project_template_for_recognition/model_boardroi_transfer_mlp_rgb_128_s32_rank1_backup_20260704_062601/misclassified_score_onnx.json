@@ -1,0 +1,32 @@
+[
+  {
+    "file": "D:\\aaa走马观碑代码\\yolo\\灵眼pro320\\板端实拍传输ROI\\望远镜\\roi_3516654.jpg",
+    "target": "望远镜",
+    "pred": "装甲车"
+  },
+  {
+    "file": "D:\\aaa走马观碑代码\\yolo\\灵眼pro320\\板端实拍传输ROI\\望远镜\\roi_3534353.jpg",
+    "target": "望远镜",
+    "pred": "装甲车"
+  },
+  {
+    "file": "D:\\aaa走马观碑代码\\yolo\\灵眼pro320\\板端实拍传输ROI\\望远镜\\roi_3632491.jpg",
+    "target": "望远镜",
+    "pred": "装甲车"
+  },
+  {
+    "file": "D:\\aaa走马观碑代码\\yolo\\灵眼pro320\\板端实拍传输ROI\\望远镜\\roi_3646909.jpg",
+    "target": "望远镜",
+    "pred": "装甲车"
+  },
+  {
+    "file": "D:\\aaa走马观碑代码\\yolo\\灵眼pro320\\板端实拍传输ROI\\炸药包\\roi_4564550.jpg",
+    "target": "炸药包",
+    "pred": "步枪"
+  },
+  {
+    "file": "D:\\aaa走马观碑代码\\yolo\\灵眼pro320\\板端实拍传输ROI\\炸药包\\roi_4566634.jpg",
+    "target": "炸药包",
+    "pred": "装甲车"
+  }
+]
