@@ -1,0 +1,284 @@
+{
+  "run_dir": "D:\\aaa走马观碑代码\\yolo\\project_root\\out_torch_boardroi_transfer\\mlp_rgb_128_s32_trainval_noaug_seed7",
+  "candidate": {
+    "name": "mlp_rgb_128_s32_trainval_noaug_seed7",
+    "feature_mode": "rgb",
+    "input_channels": 3,
+    "hidden_dims": [
+      128
+    ],
+    "cnn_channels": null,
+    "image_size": null,
+    "exposure_factors": [
+      1.0
+    ],
+    "shift_pixels": 0,
+    "rotate_degrees": 0.0,
+    "scale_jitter": 0.0,
+    "blur_prob": 0.0,
+    "train_on_trainval": true,
+    "epochs": 40,
+    "label_smoothing": 0.0,
+    "lr": 0.0003,
+    "weight_decay": 0.0001,
+    "seed": 7
+  },
+  "class_names": [
+    "急救包",
+    "急救包（空白）",
+    "急救车",
+    "望远镜",
+    "手枪",
+    "步枪",
+    "炸药包",
+    "装甲车"
+  ],
+  "image_size": 32,
+  "score_standard": "full_boardroi_transfer_roi",
+  "best_epoch": 37,
+  "best_val_metrics": {
+    "accuracy": 1.0,
+    "macro_f1": 1.0,
+    "correct": 171,
+    "total": 171,
+    "per_class": {
+      "急救包": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 27
+      },
+      "急救包（空白）": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 16
+      },
+      "急救车": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 26
+      },
+      "望远镜": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 27
+      },
+      "手枪": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 9
+      },
+      "步枪": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 14
+      },
+      "炸药包": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 24
+      },
+      "装甲车": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 28
+      }
+    },
+    "loss": 0.073042
+  },
+  "test_metrics_torch": {
+    "accuracy": 0.860465,
+    "macro_f1": 0.878216,
+    "correct": 37,
+    "total": 43,
+    "per_class": {
+      "急救包": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 7
+      },
+      "急救包（空白）": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      },
+      "急救车": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 6
+      },
+      "望远镜": {
+        "precision": 1.0,
+        "recall": 0.428571,
+        "f1": 0.6,
+        "support": 7
+      },
+      "手枪": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 2
+      },
+      "步枪": {
+        "precision": 0.8,
+        "recall": 1.0,
+        "f1": 0.888889,
+        "support": 4
+      },
+      "炸药包": {
+        "precision": 1.0,
+        "recall": 0.666667,
+        "f1": 0.8,
+        "support": 6
+      },
+      "装甲车": {
+        "precision": 0.583333,
+        "recall": 1.0,
+        "f1": 0.736842,
+        "support": 7
+      }
+    },
+    "loss": 0.514697
+  },
+  "test_metrics_onnx": {
+    "accuracy": 0.860465,
+    "macro_f1": 0.878216,
+    "correct": 37,
+    "total": 43,
+    "per_class": {
+      "急救包": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 7
+      },
+      "急救包（空白）": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      },
+      "急救车": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 6
+      },
+      "望远镜": {
+        "precision": 1.0,
+        "recall": 0.428571,
+        "f1": 0.6,
+        "support": 7
+      },
+      "手枪": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 2
+      },
+      "步枪": {
+        "precision": 0.8,
+        "recall": 1.0,
+        "f1": 0.888889,
+        "support": 4
+      },
+      "炸药包": {
+        "precision": 1.0,
+        "recall": 0.666667,
+        "f1": 0.8,
+        "support": 6
+      },
+      "装甲车": {
+        "precision": 0.583333,
+        "recall": 1.0,
+        "f1": 0.736842,
+        "support": 7
+      }
+    }
+  },
+  "score_metrics_onnx": {
+    "accuracy": 0.971963,
+    "macro_f1": 0.976165,
+    "correct": 208,
+    "total": 214,
+    "per_class": {
+      "急救包": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 34
+      },
+      "急救包（空白）": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 20
+      },
+      "急救车": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 32
+      },
+      "望远镜": {
+        "precision": 1.0,
+        "recall": 0.882353,
+        "f1": 0.9375,
+        "support": 34
+      },
+      "手枪": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 11
+      },
+      "步枪": {
+        "precision": 0.947368,
+        "recall": 1.0,
+        "f1": 0.972973,
+        "support": 18
+      },
+      "炸药包": {
+        "precision": 1.0,
+        "recall": 0.933333,
+        "f1": 0.965517,
+        "support": 30
+      },
+      "装甲车": {
+        "precision": 0.875,
+        "recall": 1.0,
+        "f1": 0.933333,
+        "support": 35
+      }
+    }
+  },
+  "benchmark": {
+    "samples": 43,
+    "total_ms_mean": 0.0268,
+    "total_ms_median": 0.0265,
+    "forward_ms_mean": 0.0252
+  },
+  "predicted_time_ms": 12.4339,
+  "score": {
+    "discarded": false,
+    "accuracy_pct": 97.2,
+    "accuracy_score": 85.98,
+    "time_score": 75.13,
+    "total_score": 80.56
+  },
+  "elapsed_seconds": 2.15,
+  "train_size": 171,
+  "val_size": 171,
+  "test_size": 43,
+  "score_size": 214
+}

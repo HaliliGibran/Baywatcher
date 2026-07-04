@@ -1,5 +1,5 @@
 {
-  "arch": "mlp_rgb_128_s32_trainval_mild_seed42",
+  "arch": "mlp_rgb_128_s32_trainval_noaug_seed7",
   "feature_mode": "rgb",
   "input_channels": 3,
   "hidden_dims": [
@@ -10,8 +10,8 @@
     "急救包",
     "急救包（空白）",
     "急救车",
-    "手枪",
     "望远镜",
+    "手枪",
     "步枪",
     "炸药包",
     "装甲车"
@@ -27,5 +27,5 @@
     0.224,
     0.225
   ],
-  "onnx_path": "D:\\aaa走马观碑代码\\yolo\\project_root\\out_torch_boardroi_transfer_balanced_n300\\mlp_rgb_128_s32_trainval_mild_seed42\\cls_torch.onnx"
+  "onnx_path": "D:\\aaa走马观碑代码\\yolo\\project_root\\out_torch_boardroi_transfer\\mlp_rgb_128_s32_trainval_noaug_seed7\\cls_torch.onnx"
 }
