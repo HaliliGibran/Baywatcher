@@ -542,7 +542,7 @@
 // - 通常与 MIN_VALID_FRAMES 配套调。
 // - 若设得更大，必须同时关注识别态停留时间和重复进入的风险。
 #ifndef BW_RECOG_MAX_VALID_FRAMES
-#define BW_RECOG_MAX_VALID_FRAMES 2
+#define BW_RECOG_MAX_VALID_FRAMES 1
 #endif
 
 // [谨慎调] 分类 top1 平均概率阈值
