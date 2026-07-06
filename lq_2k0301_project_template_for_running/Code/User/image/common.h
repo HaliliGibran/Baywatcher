@@ -148,7 +148,7 @@
 #define WHITE_IN_GRAY         (255)   // 二值图白色像素值
 
 // 物理参数（全局宏）
-#define PIXPERMETER           (65.13f) // 逆透视后每米像素数
+#define PIXPERMETER           (66.45f) // 逆透视后每米像素数
 #define ROADWIDTH             (0.45f)  // 赛道宽度（米）
 
 #define PT_MAXLEN             (80)     // 点列最大长度（左右线/中线/路径均使用）

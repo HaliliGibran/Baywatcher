@@ -688,7 +688,7 @@
 // - 与《红带分类与ROI提取流程320.md》保持一致。
 // - 当前固定流程要求基础搜索带为 y=40..160。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MIN
-#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 40
+#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 60
 #endif
 
 // [一般别动] 红块搜索带下边界（开区间）

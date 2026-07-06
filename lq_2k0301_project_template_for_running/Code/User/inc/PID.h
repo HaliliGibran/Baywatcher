@@ -126,4 +126,5 @@ extern float cfg_straight_accel_yaw_min_th;
 extern float cfg_straight_accel_curve_max_th;
 extern float cfg_straight_accel_yaw_max_th;
 extern float cfg_straight_accel_intensity;
+extern bool cfg_crossing_pid_enable;
 #endif
