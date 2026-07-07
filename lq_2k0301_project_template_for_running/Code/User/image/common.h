@@ -7,54 +7,6 @@
 // - 当前“绕行/远端接管”只以 image_data.cc + image_process.cc 这条活跃双板链为准。
 
 #pragma region 图像总开关与模式切换
-// 环岛单边中线特殊推移总开关：
-// 使用位置：image_handle.cc / get_single_side_mid_offset_pixels()。
-// 作用：
-// - 0：单边中线永远使用默认“半个赛道宽”的偏移，不再区分环岛入环/环内阶段。
-// - 1：环岛时允许按 circle_state / circle_direction 使用
-//      BW_CIRCLE_IN_OFFSET_RATIO、BW_CIRCLE_RUNNING_OFFSET_RATIO 做特殊推中线。
-// 调参建议：
-// - 环岛已经很稳且不想再引入额外几何偏置时可关。
-// - 若车在入环或环内贴边不够，保留开启。
-#ifndef BW_CIRCLE_OFFSET_ENABLE
-#define BW_CIRCLE_OFFSET_ENABLE 0
-// #define BW_CIRCLE_OFFSET_ENABLE 1
-#endif
-
-// pure_angle 预瞄“速度反馈前推”总开关：
-// 使用位置：image_handle.cc / preview_shift_from_speed_feedback()。
-// 作用：
-// - 0：预瞄前推只看当前中线几何，不额外参考目标速度。
-// - 1：车速越高，允许在几何前推之外再额外向远处看一点，提升高速提前量。
-// 说明：
-// - 这里只看 base_target_speed，不直接改控制输出，只改预瞄点位置。
-// - 若你想把 pure_angle 手感调得更“纯几何”，先关这个。
-#ifndef PUREANGLE_PREVIEW_SPEED_FEEDBACK_ENABLE
-#define PUREANGLE_PREVIEW_SPEED_FEEDBACK_ENABLE 0
-#endif
-
-// 双板 w/s 是否允许在“锁左/锁右巡线”之外，再短时叠加激进固定 pure_angle。
-// 当前主链：
-// - 1：收到 w/s 后，先锁单边，再在短窗口内用更激进的固定角覆盖几何输出。
-// - 0：收到 w/s 后只锁单边，不再额外打固定角。
-// 调参建议：
-// - 车已经能靠单边锁线稳定绕行时，可先关掉让动作更顺。
-// - 车在目标板前转向不够坚决时，再打开。
-#ifndef BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE
-#define BW_REMOTE_SIGN_AGGRESSIVE_TURN_ENABLE 0
-#endif
-
-// 双板 w/s 激进转角结束后，是否立刻接一个同样时长的反向回摆角。
-// 当前行为：
-// - 1：主激进角结束后，自动进入反向回摆角。
-// - 0：主激进角结束后直接退出固定角覆盖，回到几何 pure_angle。
-// 说明：
-// - 这里只控制 w/s 绕行动作，不影响 v/u。
-// - 回摆仍然会被新远端状态、stale timeout、n/b 覆盖或清空。
-#ifndef BW_REMOTE_SIGN_REBOUND_TURN_ENABLE
-#define BW_REMOTE_SIGN_REBOUND_TURN_ENABLE 1
-#endif
-
 // 双板 w/s 锁边绕行时，强制 path 相对锁定边线“向外”偏移的赛道宽比例。
 // 使用位置：image_handle.cc / BuildRemoteFollowOuterLine()。
 // 当前语义：
@@ -66,14 +18,6 @@
 // - 变小：更接近原边线，动作更保守。
 #ifndef BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO
 #define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.05f
-#endif
-
-// 普通路段宽度趋势异常时，是否强制退回 MIXED。
-// 使用位置：image_midline_process.cc。
-// - 1：检测到左右候选中线间距沿前向持续增大/减小，就锁 MIXED。
-// - 0：保持当前单边/混合决策，不做这层保护。
-#ifndef BW_NORMAL_FORCE_MIXED_BY_WIDTH_TREND_ENABLE
-#define BW_NORMAL_FORCE_MIXED_BY_WIDTH_TREND_ENABLE 1
 #endif
 
 // pure_angle 预瞄图像行过渡总开关。
@@ -90,14 +34,6 @@
 // - 0：一旦缺测就更快回保守策略。
 #ifndef PUREANGLE_LOST_TREND_ENABLE
 #define PUREANGLE_LOST_TREND_ENABLE 1
-#endif
-
-// pure_angle 趋势前馈总开关。
-// 使用位置：image_process.cc / pure_angle_apply_pre_control()。
-// - 1：当转向趋势还在同向加强时，额外补一点前馈角。
-// - 0：只用原始 pure_angle。
-#ifndef PUREANGLE_PRE_CTRL_ENABLE
-#define PUREANGLE_PRE_CTRL_ENABLE 0
 #endif
 
 // 斑马线冲线模式。
@@ -135,8 +71,7 @@
 
 #define PI32                  (3.1415926535898f) // 圆周率（float）
 
-// 绘图参数（全局宏）
-#define DRAWRADIUS            (1)     // 绘图半径（像素）
+// 二值图像素值（全局宏）
 #define BLACK_IN_GRAY         (0)     // 二值图黑色像素值
 #define WHITE_IN_GRAY         (255)   // 二值图白色像素值
 
@@ -153,77 +88,36 @@
 #define SET_IMAGE_CORE_Y      (115)  // 图像核心点Y（像素）
 
 #define SEARCH_LINE_START_OFFSET  (20) // 寻线起点横向偏移（像素）
-#define SELFADAPT_KERNELSIZE      (7)  // 自适应滤波核尺寸（奇数）
 #define FILTER_KERNELSIZE         (7)  // 边线滤波核尺寸（奇数）
-#define SELFADAPT_OFFSET          (8)  // 自适应阈值偏移
 #define RESAMPLEDIST              (0.02f) // 重采样间距（米）
 #define ANGLEDIST                 (0.2f)  // 角度计算“跨度”（米）
 #pragma endregion
 
-#pragma region 中线融合基础参数
-// 中线（全局宏）
-#define MIXED_LINE_DIFF_THRESHOLD_PIX    (0.1f) // 左右中线混合差异阈值（像素）
-#define MIXED_POINT_NUM_THRESHOLD        (5)    // 混合中线最少重合点数
-
-// 参与 x 差趋势判定的最少有效配对点数。
-#ifndef BW_NORMAL_FORCE_MIXED_MIN_COMMON_POINTS
-#define BW_NORMAL_FORCE_MIXED_MIN_COMMON_POINTS 8
-#endif
-#pragma endregion
-
 #pragma region pure_angle预瞄与路径参数
-// -------------------- pure_angle 预瞄与路径 --------------------
-// 正常状态默认看 y=90 附近；前方弯越急，会动态把该值往更小处推，形成更强前瞻。
-// 当前动态预瞄行的有效工作区间固定收口为 90~70，避免前推过远导致行为过激。
+// pure_angle 默认预瞄图像行；数值越大越看近，越小越看远。
 #define PUREANGLE_PREVIEW_BASE_IMAGE_Y    (90)
-// pure_angle 预瞄图像行允许推到的最远位置（越小越看远，也越激进）。
-// 这里固定到 y=70，不再允许继续推到更远处。
+
+// pure_angle 预瞄允许前推到的最远图像行。
 #define PUREANGLE_PREVIEW_MIN_IMAGE_Y     (70)
-// 预瞄曲率链的局部曲率计算跨度（点数）。
+
+// 用中线局部转角决定预瞄前推量：跨度越大越抗噪，但响应越慢。
 #define PUREANGLE_PREVIEW_CURV_DIST       (10)
-// 预瞄曲率链历史 NMS 窗口大小（点数）：
-// 当前 MidLineSuggestPureAnglePreviewImageY 已不再使用 NMS，保留该宏仅为兼容旧调参记录。
-#define PUREANGLE_PREVIEW_CURV_NMS_KERNEL (5)
-// 预瞄局部转角阈值下限（角度域，单位：deg）：
-// 使用 local_curvature_points 得到 1-cos(theta) 后，会先还原成 theta 再参与后续判断。
-// 小于该角度时，视为普通直道/缓弯，不触发明显前推。
+
+// 局部转角小于该值时不明显前推；达到 HIGH 后前推到最大。
 #define PUREANGLE_PREVIEW_CURVE_LOW       (10.0f)
-// 预瞄局部转角阈值上限（角度域，单位：deg）：
-// 达到该角度后，认为前方已有明显弯道，预瞄前推到最大。
 #define PUREANGLE_PREVIEW_CURVE_HIGH      (25.0f)
-// 局部转角单点的物理合理上限（角度域，单位：deg）：
-// 预瞄判断只关心“是否已经明显弯起来”，超过该值时对预瞄前推已无额外意义；
-// 先做限幅，可压掉边线/中线抖动带来的离谱尖峰。
+
+// 单点局部转角限幅，压掉边线/中线抖动造成的离谱尖峰。
 #define PUREANGLE_PREVIEW_ANGLE_CLAMP_MAX (60.0f)
-// 预瞄局部转角链的稳健窗口大小（点数，建议奇数）：
-// 不再直接取单点最大值，而是对角度链做短窗平均，只保留“连续一小段都在转”的几何证据。
+
+// 局部转角稳健窗口；建议奇数。窗口内取中位数，再取整段最大值。
 #define PUREANGLE_PREVIEW_ROBUST_WINDOW   (5)
-// 纯局部几何连续映射所允许的最大前推量（图像行）。
+
+// 局部转角映射到预瞄图像行的最大前推量。
 #define PUREANGLE_PREVIEW_SHIFT_MAX       (20)
-// 特殊几何形态下的附加前推量：连续弯通常比普通弯更需要提前切入。
-#define PUREANGLE_PREVIEW_S_CURVE_SHIFT   (12)
-// 直角弯/大角度弯下的附加前推量。
-#define PUREANGLE_PREVIEW_ANGLE_SHIFT     (18)
-// 环岛或长圆弧下的附加前推量。
-#define PUREANGLE_PREVIEW_ROUND_SHIFT     (10)
-// 中线几何分类里的“最小环岛半径”阈值（逆透视像素）：
-// 只用于 pure_angle 动态预瞄的粗粒度赛道判别。
-#define MID_TRACK_ROUNDABOUT_MIN_RADIUS_PIX (10.0f)
-// 中线几何分类里的“S 弯最小弧段长度”阈值（逆透视像素）：
-// 太短的弧段通常只是噪声分段，不参与 S 弯判定。
-#define MID_TRACK_S_CURVE_MIN_ARC_LEN_PIX (14.0f)
-// 用于“路径并轨到中线”的参考图像行（越小越看远，越大越看近）
+
+// path 从 core 渐进并入中线时，选择并轨完成点的参考图像行。
 #define PATH_BLEND_REF_IMAGE_Y            (80)
-#pragma endregion
-
-#pragma region 环岛单边中线偏移参数
-#ifndef BW_CIRCLE_IN_OFFSET_RATIO
-#define BW_CIRCLE_IN_OFFSET_RATIO 0.3f
-#endif
-
-#ifndef BW_CIRCLE_RUNNING_OFFSET_RATIO
-#define BW_CIRCLE_RUNNING_OFFSET_RATIO 0.7f
-#endif
 #pragma endregion
 
 #pragma region pure_angle预瞄过渡参数
@@ -328,44 +222,6 @@
 #endif
 #pragma endregion
 
-#pragma region pure_angle趋势前馈参数
-// 趋势前馈启动角阈值（deg）：
-// 使用位置：image_process.cc / pure_angle_apply_pre_control。
-// 作用：只有已经进入明显转弯区时才允许前馈。
-// 调大：介入更晚。
-// 调小：介入更早，也更容易放大轻微抖动。
-#ifndef PUREANGLE_PRE_CTRL_START_DEG
-#define PUREANGLE_PRE_CTRL_START_DEG 6.0f
-#endif
-
-// 趋势前馈启动的最小角度增量阈值（deg/frame）：
-// 使用位置：image_process.cc / pure_angle_apply_pre_control。
-// 作用：判断当前转向趋势是否还在加强。
-// 调大：更难触发。
-// 调小：更易触发，但更容易把噪声当趋势。
-#ifndef PUREANGLE_PRE_CTRL_DELTA_START_DEG
-#define PUREANGLE_PRE_CTRL_DELTA_START_DEG 1.0f
-#endif
-
-// 趋势前馈增益：
-// 使用位置：image_process.cc / pure_angle_apply_pre_control。
-// 作用：extra = gain * delta。
-// 调大：转向更猛。
-// 调小：更稳，更接近原始 pure_angle。
-#ifndef PUREANGLE_PRE_CTRL_GAIN
-#define PUREANGLE_PRE_CTRL_GAIN 0.7f
-#endif
-
-// 趋势前馈最大额外补偿角（deg）：
-// 使用位置：image_process.cc / pure_angle_apply_pre_control。
-// 作用：限制单帧趋势前馈的最大放大量。
-// 调大：连续急弯更激进。
-// 调小：整体更稳，代价是补偿上限更低。
-#ifndef PUREANGLE_PRE_CTRL_MAX_EXTRA_DEG
-#define PUREANGLE_PRE_CTRL_MAX_EXTRA_DEG 4.0f
-#endif
-#pragma endregion
-
 #pragma region 斑马线检测与停车参数
 // -------------------- 斑马线检测与停车 --------------------
 // 近距离检测长度（点数）：
@@ -459,11 +315,6 @@
 #define BW_ZEBRA_DOUBLE_FIRST_SLEEP_MS 5000
 #endif
 
-// 历史保留：曾用特殊 pure_angle 表达停车。
-// 当前不再使用，仅保留兼容外部旧引用。
-#ifndef ZEBRA_STOP_ANGLE
-#define ZEBRA_STOP_ANGLE 111.11f
-#endif
 #pragma endregion
 
 #pragma region 双板通信与绕行动作参数
@@ -471,88 +322,14 @@
 // - 状态适配：image_data.cc / image_remote_recognition_apply_state()
 // - 图像接管：image_process.cc / img_processing()
 // 当前真实行为不是旧 TargetHandler 分阶段 pure_angle 绕行，而是：
-// - w：锁左巡线 + 可选短时激进左转 pure_angle
-// - s：锁右巡线 + 可选短时激进右转 pure_angle
+// - w：锁左巡线
+// - s：锁右巡线
 // - v：vehicle 特殊巡线，短时保持收到包当下 pure_angle
 // - u：进入 vehicle 特殊巡线并减速，但不冻结运行板元素状态机
 // - b：若正处于 CIRCLE_BEGIN / CIRCLE_IN，则打掉环岛状态机并回到 MIXED
 //
 // 下列参数只服务于这条“当前活跃”的双板接管链。
 // 旧 TargetHandler 分阶段绕行参数已移出 common.h，不再作为公共调参入口暴露。
-
-// 收到 w/s 后，当“进入激进角当下的 pure_angle”与“绕行方向”同向时，额外叠加的激进角（度）。
-// 例子：
-// - 当前已经左拐(positive) + 继续左绕(w) -> 用这组
-// - 当前已经右拐(negative) + 继续右绕(s) -> 也用这组
-// 说明：
-// - 这里只作用于主激进角，不作用于反向回摆角。
-#ifndef BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE
-#define BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE 5.0f
-#endif
-
-// 收到 w/s 后，当“进入激进角当下的 pure_angle”与“绕行方向”反向时，额外叠加的激进角（度）。
-// 例子：
-// - 当前已经左拐(positive) + 右绕(s) -> 用这组
-// - 当前已经右拐(negative) + 左绕(w) -> 也用这组
-#ifndef BW_REMOTE_SIGN_AGGRESSIVE_OPPOSITE_ABS_PURE_ANGLE
-#define BW_REMOTE_SIGN_AGGRESSIVE_OPPOSITE_ABS_PURE_ANGLE 20.0f
-#endif
-
-// 主激进角叠加完成后的统一限幅（度）。
-// 作用：
-// - 主激进角 = entry_yaw + route_sign * add_deg
-// - 上式算完后再夹到 [-limit, +limit]
-// - 仅限制主激进角，不限制反向回摆固定角
-#ifndef BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG
-#define BW_REMOTE_SIGN_AGGRESSIVE_OUTPUT_LIMIT_DEG 25.0f
-#endif
-
-// 当进入激进角当下的原始偏航角绝对值不大于该阈值时，不使用“entry_yaw + 叠加量”。
-// 而是直接切到固定主激进角，见 BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_FIXED_DEG。
-#ifndef BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_THRESHOLD_DEG
-#define BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_THRESHOLD_DEG 10.0f
-#endif
-
-// 小偏航场景下使用的固定主激进角（度）。
-// 输出形式：
-// - 左绕(w) 固定为 +本值
-// - 右绕(s) 固定为 -本值
-// 说明：
-// - 这条规则只作用于主激进角，不作用于反向回摆角。
-#ifndef BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_FIXED_DEG
-#define BW_REMOTE_SIGN_AGGRESSIVE_SMALL_YAW_FIXED_DEG 20.0f
-#endif
-
-// w/s 激进角阶段的基础速度倍率。
-// 作用：
-// - 只要当前还处在“主激进角 / 反向回摆角”任一阶段，PID 基础速度都会乘这个比例。
-// - 作用对象仅限 w/s 激进角链，不影响 u 的慢速、v 的 hold_yaw、斑马线冲线倍率。
-// 调参建议：
-// - 太小：绕行动作更稳，但速度掉得太狠可能导致动作发钝。
-// - 太大：激进角期间速度保留更多，但更容易甩尾或推过头。
-#ifndef BW_REMOTE_SIGN_AGGRESSIVE_SPEED_RATIO
-#define BW_REMOTE_SIGN_AGGRESSIVE_SPEED_RATIO 1.0f
-#endif
-
-// 反向回摆角相对于“主激进角基准值”的幅度比例。
-// 当前语义：
-// - 反向回摆角绝对值 = BW_REMOTE_SIGN_AGGRESSIVE_ABS_PURE_ANGLE * 本比例。
-// - 回摆仍然是固定角，不叠加入场偏航角。
-// 说明：
-// - 这里只改“反向回摆角”幅度，不改主激进角幅度。
-// - 若回摆明显过猛，可继续调小；若回摆几乎没有拉回效果，可略微调大。
-#ifndef BW_REMOTE_SIGN_REBOUND_RATIO
-#define BW_REMOTE_SIGN_REBOUND_RATIO 1.0f
-#endif
-
-// 收到 w/s 后，激进固定转角允许持续的最长时间（毫秒）。
-// 当前退出语义：
-// - 正向激进角：当几何 pure_angle 已经反向、或当前锁定侧边线丢失、或超时，就结束。
-// - 反向回摆角：当当前锁定侧边线重新找回、或超时，就结束。
-// - 任一阶段都可能被新远端状态、n/b 覆盖，或 stale timeout 整体复位提前打断。
-#ifndef BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS
-#define BW_REMOTE_SIGN_AGGRESSIVE_MAX_MS 10000
-#endif
 
 // 远端识别状态总过期时间（毫秒）。
 // 作用：
@@ -593,19 +370,9 @@
 #endif
 #pragma endregion
 
-#pragma region 图传开关与图传模式切换
-#pragma endregion
-
-#pragma region 历史保留切换参数
-#define FRAMENONE             (3) // 预留：状态保持帧数（未使用/保留）
-#define FRAMETOLEFT           (5) // 预留：左切换保护帧（未使用/保留）
-#define FRAMETORIGHT          (5) // 预留：右切换保护帧（未使用/保留）
-#pragma endregion
-
 #pragma region 车辆属性参数
 // 车辆属性（全局宏）
 #define DISTANCE_FROM_VIEW_TO_CAR   (0.23f) // 图像(SET_IMAGE_CORE)到车轴距离（米）
-#define WIDTH_OF_CAR                (0.18f) // 车体宽度（米）
 #pragma endregion
 
 #pragma region 图像特征量参数
@@ -613,16 +380,10 @@
 // 角点
 #define ANGLE_THRESHOLD_get_corners_conf_max  (120.0f) // 角点检测置信度上限（度）
 #define ANGLE_THRESHOLD_get_corners_conf_min  (60.0f)  // 角点检测置信度下限（度）
-#define ID_THRESHOLD_get_corners_near_detect  (15)     // 角点近距离索引上限
 // 曲线
 #define CURVE_THRESHOLD                        (10.0f * PI32 / 180.0f) // 曲线判断角度阈值（弧度）
 // 直线
 #define ANGLE_THRESHOLD_is_straight            (8.0f) // 直线判断角度阈值（度）
-#pragma endregion
-
-#pragma region 左右线切换保留参数
-// 左右线切换点数差阈值（全局宏）
-#define PTS_THRESHOLD_follow_left (0) // 左跟线点数差阈值（保留）
 #pragma endregion
 
 #pragma region 元素判定参数
@@ -655,14 +416,4 @@
 #define FRAME_THRESHOLD_roundabout_end_found_line_counter (2) // END 退出找线阈值
 #pragma endregion
 
-#pragma region 赛道类型角度阈值参数
-// 赛道类型角度阈值（全局宏）
-// 曲线判断角度
-#define ANGLE_THRESHOLD_track_type_curve       (15.0f) // 曲线判定阈值（度）
-// 急弯判断角度
-#define ANGLE_THRESHOLD_track_type_sharp_curve (35.0f) // 急弯判定阈值（度）
-// 急弯保护
-#define FRAME_THRESHOLD_sharp_curve_protect_frame (25) // 急弯保护帧
-#pragma endregion
-
-#endif /* USER_CAMERA_COMMON_H_ */
+#endif /* _USER_COMMON_H_ */

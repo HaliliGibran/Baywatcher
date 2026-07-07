@@ -9,7 +9,6 @@
 #include "element/zebra.h"
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <opencv2/core.hpp>
@@ -29,58 +28,12 @@ typedef struct
 // 作用域：文件内静态，全局共享一份丢线补偿状态
 static pure_angle_lost_state_t g_pure_angle_lost = {0};
 
-// 纯跟踪角趋势前馈的状态缓存（文件内静态，全局复用）
-typedef struct
-{
-    float last_angle;     // 上一帧最终角度
-    uint8_t had_last;     // 是否已有历史角度
-} pure_angle_pre_ctrl_state_t;
-
-// 作用域：文件内静态，全局共享一份趋势前馈状态
-static pure_angle_pre_ctrl_state_t g_pure_angle_pre = {0};
-
 // 功能: 限幅单步变化量（用于丢线趋势外推的步长夹紧）
 // 类型: 局部功能函数
 // 关键参数: v-待限幅值, max_abs-允许的最大绝对值
 static inline float clip_step(float v, float max_abs)
 {
     return fclip(v, -max_abs, max_abs);
-}
-
-// 功能: pure_angle 趋势前馈补偿
-// 类型: 图像处理函数
-// 关键参数: angle-当前最终角度, enable_comp-当前帧是否允许启用前馈补偿
-static float pure_angle_apply_pre_control(float angle, bool enable_comp)
-{
-    if (!g_pure_angle_pre.had_last)
-    {
-        g_pure_angle_pre.last_angle = angle;
-        g_pure_angle_pre.had_last = 1;
-        return angle;
-    }
-
-    const float delta = angle - g_pure_angle_pre.last_angle;
-    g_pure_angle_pre.last_angle = angle;
-
-    if (!PUREANGLE_PRE_CTRL_ENABLE || !enable_comp)
-    {
-        return angle;
-    }
-
-    // 仅在“当前已经明显在转弯 + 当前帧角度仍朝同一方向继续增大”时补偿：
-    // - abs(angle) 太小：多半还是直道/轻微抖动，不补
-    // - abs(delta) 太小：当前没有明显增长趋势，不补
-    // - angle*delta <= 0：说明正在回正或换向，不补
-    if (std::fabs(angle) < PUREANGLE_PRE_CTRL_START_DEG ||
-        std::fabs(delta) < PUREANGLE_PRE_CTRL_DELTA_START_DEG ||
-        angle * delta <= 0.0f)
-    {
-        return angle;
-    }
-
-    float extra = PUREANGLE_PRE_CTRL_GAIN * delta;
-    extra = fclip(extra, -PUREANGLE_PRE_CTRL_MAX_EXTRA_DEG, PUREANGLE_PRE_CTRL_MAX_EXTRA_DEG);
-    return fclip(angle + extra, -80.0f, 80.0f);
 }
 
 // 功能: pure_angle 丢线补偿（趋势外推+回线软切换）
@@ -239,7 +192,6 @@ static void reset_image_processing_outputs()
     image_reset_midline_path_state();
     image_reset_tracking_observation_state();
     g_pure_angle_lost = {0};
-    g_pure_angle_pre = {0};
     ResetPureAnglePreviewTransitionState();
 }
 
@@ -731,7 +683,6 @@ static float finalize_pure_angle_output(float measured_angle, bool has_valid_mea
 void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 {
     const uint64_t t_ms = image_now_ms();
-    g_force_mixed_slope_active = false;
     image_remote_recognition_tick(t_ms);
     if (handle_zebra_stop_lifecycle(t_ms))
     {
@@ -747,8 +698,6 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 
     // follow_mode 由上层策略决定，这里只消费，不在主链入口硬重置。
     const track_search_result_t track_search = process_track_edges(img, vehicle_active);
-    image_remote_recognition_update_line_visibility(pts_left.pts_resample_count > 0,
-                                                    pts_right.pts_resample_count > 0);
     const bool zebra_special_lock = update_zebra_rush_state(img, t_ms);
     if (track_search == TRACK_SEARCH_VEHICLE_FALLBACK_HOLD)
     {
@@ -852,18 +801,6 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 
     const bool has_valid_measure = (midline.mid_count > 0 && midline.path_count > 0);
     pure_angle = finalize_pure_angle_output(pure_angle, has_valid_measure);
-
-    // 趋势前馈只在存在有效测量时启用，避免把纯外推/纯保护输出继续放大。
-    pure_angle = pure_angle_apply_pre_control(pure_angle, has_valid_measure);
-
-    const float raw_pure_angle = pure_angle;
-    float aggressive_override_angle = 0.0f;
-    if (image_remote_recognition_get_aggressive_turn_override(raw_pure_angle,
-                                                              &aggressive_override_angle))
-    {
-        pure_angle = aggressive_override_angle;
-    }
-
 }
 
 // 功能: OpenCV Mat 版本图像处理入口（进行合法性/连续性校验后转调）

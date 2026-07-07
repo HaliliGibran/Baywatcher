@@ -2,9 +2,6 @@
 #include "image_data.h"
 #include "image_math.h"
 #include "image_midline_process.h"
-// #include "Encoder.h"
-#include "main.hpp"
-#include "PID.h"
 #include "transform_table.h"
 #include <cmath>
 
@@ -69,33 +66,6 @@ static int preview_shift_from_img_y(int preview_img_y_target)
     if (shift < 0) shift = 0;
     if (shift > PUREANGLE_PREVIEW_SHIFT_MAX) shift = PUREANGLE_PREVIEW_SHIFT_MAX;
     return shift;
-}
-
-static int preview_shift_from_speed_feedback()
-{
-    if (!PUREANGLE_PREVIEW_SPEED_FEEDBACK_ENABLE)
-    {
-        return 0;
-    }
-
-    const float target_speed = std::fabs(BayWatcher_GetBaseTargetSpeed());
-    if (target_speed <= 1e-3f)
-    {
-        return 0;
-    }
-
-    float actual_speed =
-        (BayWatcher_GetLeftWheelSpeed() + BayWatcher_GetRightWheelSpeed()) * 0.5f;
-    if (actual_speed < 0.0f)
-    {
-        actual_speed = 0.0f;
-    }
-
-    const float speed_ratio = fclip(actual_speed / target_speed, 0.0f, 1.0f);
-    int speed_shift = (int)std::lroundf((float)PUREANGLE_PREVIEW_SHIFT_MAX * speed_ratio);
-    if (speed_shift < 0) speed_shift = 0;
-    if (speed_shift > PUREANGLE_PREVIEW_SHIFT_MAX) speed_shift = PUREANGLE_PREVIEW_SHIFT_MAX;
-    return speed_shift;
 }
 
 static float pure_angle_apply_progressive_limit(float raw_angle_deg)
@@ -1364,37 +1334,8 @@ void get_corner(
 
 static float get_single_side_mid_offset_pixels(bool is_left)
 {
-    const float default_ratio = 0.5f;
-#if BW_CIRCLE_OFFSET_ENABLE
-    float offset_ratio = default_ratio;
-
-    if (circle_direction == CircleDirection::CIRCLE_DIR_LEFT)
-    {
-        if (circle_state == CircleState::CIRCLE_IN && is_left)
-        {
-            offset_ratio = BW_CIRCLE_IN_OFFSET_RATIO;
-        }
-        else if (circle_state == CircleState::CIRCLE_RUNNING && !is_left)
-        {
-            offset_ratio = BW_CIRCLE_RUNNING_OFFSET_RATIO;
-        }
-    }
-    else if (circle_direction == CircleDirection::CIRCLE_DIR_RIGHT)
-    {
-        if (circle_state == CircleState::CIRCLE_IN && !is_left)
-        {
-            offset_ratio = BW_CIRCLE_IN_OFFSET_RATIO;
-        }
-        else if (circle_state == CircleState::CIRCLE_RUNNING && is_left)
-        {
-            offset_ratio = BW_CIRCLE_RUNNING_OFFSET_RATIO;
-        }
-    }
-
-    return PIXPERMETER * ROADWIDTH * offset_ratio;
-#else
-    return PIXPERMETER * ROADWIDTH * default_ratio;
-#endif
+    (void)is_left;
+    return PIXPERMETER * ROADWIDTH * 0.5f;
 }
 
 void BuildRemoteFollowOuterLine(bool is_left,
@@ -1620,9 +1561,7 @@ void CalculatePureAngleFromPath(const float (&path)[PT_MAXLEN][2], int32_t path_
                                                                                 PUREANGLE_PREVIEW_BASE_IMAGE_Y,
                                                                                 midline.preview_curve_split_index);
     const int angle_shift = preview_shift_from_img_y(preview_img_y_angle_target);
-    const int speed_shift = preview_shift_from_speed_feedback();
-    const int final_shift = (speed_shift > angle_shift) ? speed_shift : angle_shift;
-    int preview_img_y_target = PUREANGLE_PREVIEW_BASE_IMAGE_Y - final_shift;
+    int preview_img_y_target = PUREANGLE_PREVIEW_BASE_IMAGE_Y - angle_shift;
     if (preview_img_y_target < PUREANGLE_PREVIEW_MIN_IMAGE_Y)
     {
         preview_img_y_target = PUREANGLE_PREVIEW_MIN_IMAGE_Y;

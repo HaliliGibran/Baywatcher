@@ -130,9 +130,6 @@ enum class FollowLine:uint8_t
 // 作用域: 全局变量，跟线模式（MIXED/MIDLEFT/MIDRIGHT）
 extern FollowLine follow_mode;
 
-// 作用域: 全局变量，普通道路因坡道/起伏趋势而强制退回 MIXED 的帧级标志
-extern bool g_force_mixed_slope_active;
-
 // -------------------- 元素状态机 --------------------
 // 元素类型（作用域: 全局枚举类型）
 enum class ElementType:uint8_t
@@ -231,14 +228,6 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
 // - t_ms: 当前时间戳（毫秒）
 void image_remote_recognition_tick(uint64_t t_ms);
 
-// 功能: 把当前帧左右边线可见性同步给远端绕行动作状态机
-// 类型: 全局状态更新函数
-// 关键参数:
-// - left_found/right_found: 当前帧左右边线是否成功建立
-// 说明：
-// - 仅服务于 w/s 激进角链的“丢线停主动作 / 寻线停回摆”逻辑。
-void image_remote_recognition_update_line_visibility(bool left_found, bool right_found);
-
 // 功能: 查询当前是否处于远端 v/u 的 vehicle 特殊巡线窗口
 // 类型: 全局状态查询函数
 // 关键参数:
@@ -251,14 +240,6 @@ bool image_remote_recognition_is_vehicle_active(uint64_t t_ms);
 // - t_ms: 当前时间戳（毫秒）
 // - hold_yaw: 输出锁存航向角
 bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw);
-
-// 功能: 查询当前是否需要用激进固定转角覆盖几何 pure_angle
-// 类型: 全局状态查询函数
-// 关键参数:
-// - raw_pure_angle: 当前几何/补偿后的 pure_angle
-// - out_override: 输出覆盖角度
-bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
-                                                           float* out_override);
 
 // 功能: 查询当前远端状态对基础速度的比例覆盖
 // 类型: 全局状态查询函数

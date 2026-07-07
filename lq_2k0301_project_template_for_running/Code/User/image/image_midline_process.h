@@ -13,11 +13,11 @@ void MID(float (&mid_left)[PT_MAXLEN][2], int32_t* mid_left_count,
          float (&mid)[PT_MAXLEN][2], int32_t* mid_count,
          FollowLine& mode);
 
-// 功能: 生成“路径点列”（从 core 以圆弧并轨到中线）
+// 功能: 生成“路径点列”（从 core 渐进融合并轨到中线）
 // 类型: 图像处理函数
 // 关键参数: mid/mid_count-中线点列, step-路径点间距(像素)
-// 生成“路径点列”：从 IMAGE_CORE（做过逆透视后的世界坐标点）用一段圆弧切入 mid 中线，
-// 然后继续沿 mid 前进。
+// 生成“路径点列”：从 IMAGE_CORE（做过逆透视后的世界坐标点）逐步逼近 mid 中线，
+// 在参考前视点处完全并入中线，然后继续沿 mid 前进。
 // - mid/path 坐标约定同工程其他点列：pts[i][0]=y, pts[i][1]=x（逆透视后的俯视图像素坐标）
 // - step 为路径点间距（像素单位），建议用 RESAMPLEDIST*PIXPERMETER
 // - 连接点默认选择 mid 上“离 core 足够远”的一个点，避免太短导致数值不稳定
