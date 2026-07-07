@@ -29,6 +29,12 @@ constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
 constexpr bool kRecognitionVerboseLog = kRecognitionTextLog && (BW_RECOG_VERBOSE_LOG != 0);
 constexpr float kRecognitionDecisionTop1Threshold = BW_RECOG_DECISION_TOP1_THRESHOLD;
 constexpr float kRecognitionDecisionMarginThreshold = BW_RECOG_DECISION_MARGIN_THRESHOLD;
+constexpr bool kRecognitionAdaptiveTwoFrameEnable = (BW_RECOG_ADAPTIVE_TWO_FRAME_ENABLE != 0);
+constexpr float kRecognitionSingleFrameHighConfTop1Threshold =
+    BW_RECOG_SINGLE_FRAME_HIGH_CONF_TOP1_THRESHOLD;
+constexpr float kRecognitionSingleFrameHighConfMarginThreshold =
+    BW_RECOG_SINGLE_FRAME_HIGH_CONF_MARGIN_THRESHOLD;
+constexpr int kRecognitionOnnxWarmupRuns = BW_RECOG_ONNX_WARMUP_RUNS;
 constexpr int kRecognitionModelVariant = BW_RECOG_MODEL_VARIANT;
 constexpr bool kRecognitionUseGrayRed32Model =
     (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_GRAYRED32);
@@ -60,6 +66,14 @@ struct RoiClassificationResult
 {
     int predicted_index = -1;
     std::array<float, kRecognitionMaxClasses> probabilities = {};
+};
+
+struct RoiClassificationTiming
+{
+    double preprocess_ms = 0.0;
+    double set_input_ms = 0.0;
+    double forward_ms = 0.0;
+    double postprocess_ms = 0.0;
 };
 
 struct DeployCalibration
@@ -799,8 +813,10 @@ static uint8_t runtime_decision_target_code(int decision_index,
 static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
                                                   const cv::Mat& roi_bgr,
                                                   float calibration_temperature,
-                                                  const std::array<float, kRecognitionMaxClasses>& logit_bias)
+                                                  const std::array<float, kRecognitionMaxClasses>& logit_bias,
+                                                  RoiClassificationTiming* timing = nullptr)
 {
+    const auto preprocess_begin = std::chrono::steady_clock::now();
     cv::Mat blob;
 
     if (kRecognitionUseGray32SubclassModel)
@@ -916,11 +932,59 @@ static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
         }
     }
 
+    const auto preprocess_end = std::chrono::steady_clock::now();
+    const auto set_input_begin = preprocess_end;
     net.setInput(blob);
+    const auto set_input_end = std::chrono::steady_clock::now();
+    const auto forward_begin = set_input_end;
     cv::Mat out = net.forward().reshape(1, 1);
+    const auto forward_end = std::chrono::steady_clock::now();
+    const auto postprocess_begin = forward_end;
     cv::Mat out_f;
     out.convertTo(out_f, CV_32F);
-    return finalize_logits_to_result(out_f, calibration_temperature, logit_bias);
+    RoiClassificationResult result =
+        finalize_logits_to_result(out_f, calibration_temperature, logit_bias);
+    const auto postprocess_end = std::chrono::steady_clock::now();
+
+    if (timing != nullptr)
+    {
+        timing->preprocess_ms =
+            std::chrono::duration<double, std::milli>(preprocess_end - preprocess_begin).count();
+        timing->set_input_ms =
+            std::chrono::duration<double, std::milli>(set_input_end - set_input_begin).count();
+        timing->forward_ms =
+            std::chrono::duration<double, std::milli>(forward_end - forward_begin).count();
+        timing->postprocess_ms =
+            std::chrono::duration<double, std::milli>(postprocess_end - postprocess_begin).count();
+    }
+
+    return result;
+}
+
+static void warmup_recognition_net(cv::dnn::Net& net,
+                                   float calibration_temperature,
+                                   const std::array<float, kRecognitionMaxClasses>& logit_bias)
+{
+    if (net.empty() || kRecognitionOnnxWarmupRuns <= 0)
+    {
+        return;
+    }
+
+    cv::Mat dummy_roi(kRecognitionModelInputSize, kRecognitionModelInputSize, CV_8UC3,
+                      cv::Scalar(128, 128, 128));
+    for (int i = 0; i < kRecognitionOnnxWarmupRuns; ++i)
+    {
+        const auto begin = std::chrono::steady_clock::now();
+        (void)classify_roi_index(net, dummy_roi, calibration_temperature, logit_bias);
+        const auto end = std::chrono::steady_clock::now();
+        if (kRecognitionResultLog)
+        {
+            const double warmup_ms = std::chrono::duration<double, std::milli>(end - begin).count();
+            std::cout << "[ONNX] warmup " << (i + 1) << "/" << kRecognitionOnnxWarmupRuns
+                      << ", infer_ms=" << std::fixed << std::setprecision(2) << warmup_ms
+                      << std::endl;
+        }
+    }
 }
 
 static bool detect_red_candidate_for_early_slowdown(const cv::Mat& frame_bgr,
@@ -1128,6 +1192,9 @@ RecognitionChain::RecognitionChain()
       latched_release_pending_(false),
       current_blob_area_(0.0),
       recent_red_candidate_until_ms_(0),
+      adaptive_decision_pending_(false),
+      adaptive_prob_sum_(),
+      adaptive_valid_frame_count_(0),
       last_perf_sample_()
 {
 }
@@ -1167,6 +1234,8 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
         // [Recognition Chain Step 1] 加载 ONNX 模型与类别表。
         // 作用：完成后 enabled_ 才允许进入红色触发和识别态。
         net_ = cv::dnn::readNetFromONNX(model_path);
+        net_.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+        net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
         class_names_ = load_class_names_from_json(class_path);
         const DeployCalibration calibration = load_deploy_calibration_json(calibration_path);
         calibration_temperature_ = calibration.temperature;
@@ -1174,6 +1243,10 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
         decision_top1_threshold_ = kRecognitionDecisionTop1Threshold;
         decision_margin_threshold_ = kRecognitionDecisionMarginThreshold;
         enabled_ = !net_.empty();
+        if (enabled_)
+        {
+            warmup_recognition_net(net_, calibration_temperature_, logit_bias_);
+        }
     }
     catch (const std::exception& e)
     {
@@ -1196,9 +1269,12 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
             std::cout << "[ONNX] enabled, model=" << model_path << std::endl;
             std::cout << "[ONNX] classes=" << class_path << std::endl;
             std::cout << "[RECOG] roi_method=" << RoiMethodName(DefaultRoiMethod()) << std::endl;
-            std::cout << "[RECOG] decision=single_frame_fixed3"
+            std::cout << "[RECOG] decision=adaptive_1_or_2_frame"
                       << ", top1_threshold=" << decision_top1_threshold_
-                      << ", margin_threshold=" << decision_margin_threshold_ << std::endl;
+                      << ", margin_threshold=" << decision_margin_threshold_
+                      << ", single_high_top1=" << kRecognitionSingleFrameHighConfTop1Threshold
+                      << ", single_high_margin=" << kRecognitionSingleFrameHighConfMarginThreshold
+                      << std::endl;
             std::cout << "[RECOG] calibration=" << calibration_path
                       << ", temperature=" << calibration_temperature_ << std::endl;
             std::cout << "[RECOG] state map:"
@@ -1224,7 +1300,15 @@ void RecognitionChain::Reset()
     latched_release_pending_ = false;
     current_blob_area_ = 0.0;
     recent_red_candidate_until_ms_ = 0;
+    ClearAdaptiveDecision();
     last_perf_sample_ = PerfSample();
+}
+
+void RecognitionChain::ClearAdaptiveDecision()
+{
+    adaptive_decision_pending_ = false;
+    adaptive_prob_sum_ = {};
+    adaptive_valid_frame_count_ = 0;
 }
 
 bool RecognitionChain::IsEnabled() const
@@ -1535,6 +1619,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     current_vision_code_ = BoardVisionCode::NO_RESULT;
     latched_release_pending_ = false;
     latched_release_deadline_ms_ = 0;
+    ClearAdaptiveDecision();
     if (kRecognitionTextLog)
     {
         std::cout << "[RECOG] sign board accepted: entering recognition"
@@ -1562,6 +1647,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     if (!enabled_ || mode_ != Mode::RECOGNITION)
     {
+        ClearAdaptiveDecision();
         if (render_debug)
         {
             view = frame_bgr.clone();
@@ -1575,8 +1661,8 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         return;
     }
 
-    // [Recognition Chain Step 4] 识别态单帧推理。
-    // 作用：按文档流程重新提取 marker ROI，并用当前这一帧直接做分类判定。
+    // [Recognition Chain Step 4] 识别态自适应 1/2 帧推理。
+    // 作用：按文档流程重新提取 marker ROI，高置信单帧输出，低置信等待第二帧聚合。
     if (render_debug)
     {
         view = frame_bgr.clone();
@@ -1627,6 +1713,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                       << vision_code_text(current_vision_code_)
                       << ", " << reject_text << std::endl;
         }
+        ClearAdaptiveDecision();
         mode_ = Mode::NORMAL;
         last_perf_sample_.process_recog_total_ms =
             std::chrono::duration<double, std::milli>(steady_clock_t::now() - process_begin).count();
@@ -1662,6 +1749,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
             }
             std::cout << std::endl;
         }
+        ClearAdaptiveDecision();
         mode_ = Mode::NORMAL;
         last_perf_sample_.process_recog_total_ms =
             std::chrono::duration<double, std::milli>(steady_clock_t::now() - process_begin).count();
@@ -1684,23 +1772,29 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     }
 
     const auto infer_begin = steady_clock_t::now();
+    RoiClassificationTiming cls_timing;
     const RoiClassificationResult cls =
-        classify_roi_index(net_, roi_result.roi_bgr, calibration_temperature_, logit_bias_);
+        classify_roi_index(net_, roi_result.roi_bgr, calibration_temperature_, logit_bias_, &cls_timing);
     const auto infer_end = steady_clock_t::now();
     const double infer_ms = std::chrono::duration<double, std::milli>(infer_end - infer_begin).count();
     last_perf_sample_.onnx_infer_ms = infer_ms;
+    last_perf_sample_.onnx_preprocess_ms = cls_timing.preprocess_ms;
+    last_perf_sample_.onnx_set_input_ms = cls_timing.set_input_ms;
+    last_perf_sample_.onnx_forward_ms = cls_timing.forward_ms;
+    last_perf_sample_.onnx_postprocess_ms = cls_timing.postprocess_ms;
     last_perf_sample_.onnx_infer_called = true;
 
     std::array<float, kRecognitionMaxClasses> frame_prob_sum = {};
-    int valid_frame_count = 0;
+    int frame_valid_count = 0;
+    std::string frame_pred_name = "invalid";
     if (cls.predicted_index >= 0 && cls.predicted_index < static_cast<int>(class_names_.size()))
     {
         accumulate_probabilities_for_runtime_decision(cls, class_names_, frame_prob_sum);
-        valid_frame_count = 1;
-        const std::string& name = class_names_[cls.predicted_index];
+        frame_valid_count = 1;
+        frame_pred_name = class_names_[cls.predicted_index];
         if (render_debug)
         {
-            cv::putText(view, std::string("pred: ") + name, cv::Point(16, 112), cv::FONT_HERSHEY_SIMPLEX,
+            cv::putText(view, std::string("pred: ") + frame_pred_name, cv::Point(16, 112), cv::FONT_HERSHEY_SIMPLEX,
                         0.65, cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
         }
         std::ostringstream infer_info;
@@ -1710,8 +1804,6 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
             cv::putText(view, infer_info.str(), cv::Point(16, 168), cv::FONT_HERSHEY_SIMPLEX,
                         0.55, cv::Scalar(255, 255, 0), 2, cv::LINE_AA);
         }
-        const ProbabilityDecisionSummary prob_summary =
-            summarize_probabilities(frame_prob_sum, active_class_count, valid_frame_count);
         std::ostringstream prob_info;
         prob_info << "frame_probs:";
         for (size_t i = 0; i < active_class_count; ++i)
@@ -1725,10 +1817,12 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
             cv::putText(view, prob_info.str(), cv::Point(16, 196), cv::FONT_HERSHEY_SIMPLEX,
                         0.52, cv::Scalar(255, 255, 0), 2, cv::LINE_AA);
         }
+        const ProbabilityDecisionSummary frame_summary =
+            summarize_probabilities(frame_prob_sum, active_class_count, frame_valid_count);
         std::ostringstream top_info;
-        top_info << "top1=" << runtime_decision_label(prob_summary.top1_index, class_names_)
-                 << " p=" << std::fixed << std::setprecision(2) << prob_summary.top1_prob
-                 << " m=" << prob_summary.margin;
+        top_info << "frame_top1=" << runtime_decision_label(frame_summary.top1_index, class_names_)
+                 << " p=" << std::fixed << std::setprecision(2) << frame_summary.top1_prob
+                 << " m=" << frame_summary.margin;
         if (render_debug)
         {
             cv::putText(view, top_info.str(), cv::Point(16, 224), cv::FONT_HERSHEY_SIMPLEX,
@@ -1736,17 +1830,87 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         }
         if (kRecognitionVerboseLog)
         {
-            std::cout << "[RECOG] frame_pred=" << name
+            std::cout << "[RECOG] frame_pred=" << frame_pred_name
                       << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
-                      << ", single_frame=1"
                       << ", roi_method=" << RoiMethodName(roi_method) << std::endl;
         }
     }
     last_perf_sample_.classify_total_ms =
         std::chrono::duration<double, std::milli>(steady_clock_t::now() - classify_begin).count();
 
+    const ProbabilityDecisionSummary frame_summary =
+        summarize_probabilities(frame_prob_sum, active_class_count, frame_valid_count);
+    const bool was_waiting_second_frame = adaptive_decision_pending_;
+    const bool high_conf_single_frame =
+        frame_valid_count > 0 &&
+        frame_summary.top1_prob >= kRecognitionSingleFrameHighConfTop1Threshold &&
+        frame_summary.margin >= kRecognitionSingleFrameHighConfMarginThreshold;
+    const bool should_wait_second_frame =
+        kRecognitionAdaptiveTwoFrameEnable &&
+        !was_waiting_second_frame &&
+        frame_valid_count > 0 &&
+        !high_conf_single_frame;
+
+    if (should_wait_second_frame)
+    {
+        adaptive_decision_pending_ = true;
+        adaptive_prob_sum_ = frame_prob_sum;
+        adaptive_valid_frame_count_ = frame_valid_count;
+        current_vision_code_ = BoardVisionCode::NO_RESULT;
+        latched_symbol_code_ = BoardVisionCode::INVALID;
+        latched_release_pending_ = false;
+        latched_release_deadline_ms_ = 0;
+
+        if (render_debug)
+        {
+            cv::putText(view, "RECOG wait 2nd frame", cv::Point(16, 84), cv::FONT_HERSHEY_SIMPLEX,
+                        0.75, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+            cv::putText(view, "result: wait_second_frame", cv::Point(16, 252), cv::FONT_HERSHEY_SIMPLEX,
+                        0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+        }
+
+        if (kRecognitionResultLog)
+        {
+            std::cout << "[RECOG] result=wait_second_frame"
+                      << ", valid_frames=" << frame_valid_count
+                      << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
+                      << ", forward_ms=" << cls_timing.forward_ms
+                      << ", cls_ms=" << last_perf_sample_.classify_total_ms
+                      << ", top1_prob=" << std::fixed << std::setprecision(4) << frame_summary.top1_prob
+                      << ", margin=" << frame_summary.margin
+                      << ", reason=low_conf_wait_second_frame"
+                      << std::endl;
+            std::cout << "[RECOG] state_out=" << vision_code_text(current_vision_code_)
+                      << ", blob_area=" << std::fixed << std::setprecision(1) << current_blob_area_
+                      << std::endl;
+        }
+
+        last_perf_sample_.process_recog_total_ms =
+            std::chrono::duration<double, std::milli>(steady_clock_t::now() - process_begin).count();
+        return;
+    }
+
+    std::array<float, kRecognitionMaxClasses> decision_prob_sum = frame_prob_sum;
+    int decision_valid_count = frame_valid_count;
+    if (was_waiting_second_frame)
+    {
+        if (frame_valid_count > 0)
+        {
+            for (size_t i = 0; i < kRecognitionMaxClasses; ++i)
+            {
+                decision_prob_sum[i] += adaptive_prob_sum_[i];
+            }
+            decision_valid_count += adaptive_valid_frame_count_;
+        }
+        else
+        {
+            decision_prob_sum = {};
+            decision_valid_count = 0;
+        }
+    }
+
     std::ostringstream vote_info;
-    vote_info << "RECOG single frame";
+    vote_info << (was_waiting_second_frame ? "RECOG two-frame avg" : "RECOG high-conf single");
     if (render_debug)
     {
         cv::putText(view, vote_info.str(), cv::Point(16, 84), cv::FONT_HERSHEY_SIMPLEX,
@@ -1754,17 +1918,18 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     }
 
     const ProbabilityDecisionSummary prob_summary =
-        summarize_probabilities(frame_prob_sum, active_class_count, valid_frame_count);
+        summarize_probabilities(decision_prob_sum, active_class_count, decision_valid_count);
 
-    // [Recognition Chain Step 5] 单帧判定。
-    // 作用：从当前这一帧的推理概率里选最终类别，再映射到后续车体策略。
+    // [Recognition Chain Step 5] 自适应 1/2 帧判定。
+    // 作用：高置信单帧直接输出；低置信首帧等待第二帧概率平均后再输出。
     std::string label = "no_decision";
     TargetClass target = TargetClass::UNKNOWN;
     bool has_final_decision = false;
     BoardVisionCode final_code = BoardVisionCode::NO_RESULT;
     std::string failure_reason =
-        (valid_frame_count > 0) ? "low_confidence_or_margin_reject" : "invalid_model_output";
-    if (valid_frame_count > 0 &&
+        (decision_valid_count > 0) ? "low_confidence_or_margin_reject" :
+        (was_waiting_second_frame ? "second_frame_invalid_model_output" : "invalid_model_output");
+    if (decision_valid_count > 0 &&
         prob_summary.top1_index >= 0 &&
         prob_summary.top1_index < static_cast<int>(active_class_count) &&
         prob_summary.top1_prob >= decision_top1_threshold_ &&
@@ -1790,8 +1955,10 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     if (kRecognitionResultLog)
     {
         std::cout << "[RECOG] result=" << label
-                  << ", valid_frames=" << valid_frame_count
+                  << ", valid_frames=" << decision_valid_count
+                  << ", mode=" << (was_waiting_second_frame ? "two_frame_avg" : "single_high_conf")
                   << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
+                  << ", forward_ms=" << cls_timing.forward_ms
                   << ", cls_ms=" << last_perf_sample_.classify_total_ms
                   << ", top1_prob=" << std::fixed << std::setprecision(4) << prob_summary.top1_prob
                   << ", margin=" << prob_summary.margin;
@@ -1816,6 +1983,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                   << std::endl;
     }
 
+    ClearAdaptiveDecision();
     mode_ = Mode::NORMAL;
     last_perf_sample_.process_recog_total_ms =
         std::chrono::duration<double, std::milli>(steady_clock_t::now() - process_begin).count();

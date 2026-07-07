@@ -25,6 +25,10 @@ public:
         double roi_track_classify_ms = 0.0;
         double roi_build_warp_ms = 0.0;
         double onnx_infer_ms = 0.0;
+        double onnx_preprocess_ms = 0.0;
+        double onnx_set_input_ms = 0.0;
+        double onnx_forward_ms = 0.0;
+        double onnx_postprocess_ms = 0.0;
         double classify_total_ms = 0.0;
         double try_total_ms = 0.0;
         double process_recog_total_ms = 0.0;
@@ -62,13 +66,15 @@ public:
     double GetCurrentBlobArea() const;
     const PerfSample& GetLastPerfSample() const;
     // [Recognition Chain Step 2-3] 在普通态里检测红色触发器并切入识别态。
-    // 作用：识别链自己管理 NORMAL -> RECOGNITION 的切换，并进入单帧判定。
+    // 作用：识别链自己管理 NORMAL -> RECOGNITION 的切换，并进入自适应判定。
     bool TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
-    // [Recognition Chain Step 4-5A] 识别态单帧推理并给出结果。
-    // 作用：处理 ROI 分类、单帧类别映射和退出识别态。
+    // [Recognition Chain Step 4-5A] 识别态自适应 1/2 帧推理并给出结果。
+    // 作用：高置信单帧输出，低置信首帧保留识别态等待第二帧聚合。
     void ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
 
 private:
+    void ClearAdaptiveDecision();
+
     enum class TargetClass : uint8_t {
         UNKNOWN = 0,
         WEAPON,
@@ -96,5 +102,8 @@ private:
     bool latched_release_pending_;
     double current_blob_area_;
     uint64_t recent_red_candidate_until_ms_;
+    bool adaptive_decision_pending_;
+    std::array<float, kMaxModelClasses> adaptive_prob_sum_;
+    int adaptive_valid_frame_count_;
     PerfSample last_perf_sample_;
 };

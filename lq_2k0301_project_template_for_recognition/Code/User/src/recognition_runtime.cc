@@ -383,7 +383,11 @@ static void PrintTimingFrameLine(const char* label,
               << ", 红块选择_ms=" << sample.perf.roi_red_band_ms
               << ", 赛道区域判定_ms=" << sample.perf.roi_track_classify_ms
               << ", ROI构建透视_ms=" << sample.perf.roi_build_warp_ms
-              << ", 模型推理_ms=" << sample.perf.onnx_infer_ms
+              << ", 模型总耗时_ms=" << sample.perf.onnx_infer_ms
+              << ", 模型预处理_ms=" << sample.perf.onnx_preprocess_ms
+              << ", setInput_ms=" << sample.perf.onnx_set_input_ms
+              << ", forward_ms=" << sample.perf.onnx_forward_ms
+              << ", 模型后处理_ms=" << sample.perf.onnx_postprocess_ms
               << ", 分类总耗时_ms=" << sample.perf.classify_total_ms
               << std::endl;
 }
