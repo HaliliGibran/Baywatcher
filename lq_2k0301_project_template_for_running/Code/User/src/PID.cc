@@ -35,7 +35,7 @@ static inline bool remote_bypass_active()
 
 static inline bool remote_follow_no_reverse_limit_active()
 {
-    return remote_bypass_active();
+    return (BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE != 0) && remote_bypass_active();
 }
 
 static inline bool remote_recognition_straight_accel_block_active()
@@ -48,6 +48,34 @@ static inline bool remote_recognition_straight_accel_block_active()
     // 识别板输出 u/绕行动作时会给速度比例 < 1；这里只用它判断“识别减速介入”，不依赖具体减速幅度。
     return image_remote_recognition_get_speed_ratio_override() <
            (1.0f - REMOTE_RECOG_SPEED_RATIO_NO_BLOCK_EPS);
+}
+
+static inline float apply_remote_speed_cap(float speed)
+{
+    float speed_cap = 0.0f;
+    if (image_remote_recognition_get_speed_cap_override(&speed_cap) && speed > speed_cap)
+    {
+        return speed_cap;
+    }
+    return speed;
+}
+
+static inline void apply_remote_target_speed_cap(float* left_speed, float* right_speed)
+{
+    float speed_cap = 0.0f;
+    if (!image_remote_recognition_get_speed_cap_override(&speed_cap))
+    {
+        return;
+    }
+
+    if (left_speed != nullptr && *left_speed > speed_cap)
+    {
+        *left_speed = speed_cap;
+    }
+    if (right_speed != nullptr && *right_speed > speed_cap)
+    {
+        *right_speed = speed_cap;
+    }
 }
 
 static inline float clamp_remote_follow_factor_no_reverse(float factor,
@@ -1502,8 +1530,8 @@ void BayWatcher_Inner_Loop(void* arg){
 
     const float remote_speed_scale =
         clampf_pid(image_remote_recognition_get_speed_ratio_override(), 0.0f, 1.0f);
-    const float effective_base_speed =
-        update_curve_slowdown_base_speed(PID.base_target_speed) * remote_speed_scale;
+    const float effective_base_speed = apply_remote_speed_cap(
+        update_curve_slowdown_base_speed(PID.base_target_speed) * remote_speed_scale);
     int32_t pid_out_L = (int32_t)Calc_Pos_PID(&PID_Speed_F_L, effective_base_speed, v_avg);
     int32_t pid_out_R = (int32_t)Calc_Pos_PID(&PID_Speed_F_R, effective_base_speed, v_avg);
     // if (PID.speed_adjust > 0) {
@@ -1700,6 +1728,9 @@ void BayWatcher_Control_Loop(void* arg) {
         big_langd_add = update_straight_acceleration(pure_angle, preview_curve_angle_deg);
     }
 
+    const float capped_forward_speed =
+        apply_remote_speed_cap(effective_base_speed + big_langd_add);
+
     float factor = tanf(safe_speed_adjust * PI_VAL / ACKERMAN_CONST) * 0.55f;
 
     if (cfg_vofa_remote_enable) {
@@ -1711,7 +1742,7 @@ void BayWatcher_Control_Loop(void* arg) {
 
     factor = clamp_remote_follow_factor_no_reverse(
         factor,
-        effective_base_speed + big_langd_add);
+        capped_forward_speed);
 
     esc_sys.current_factor = factor; // 给电调传递当前的 factor，用于动态负压
 
@@ -1726,12 +1757,13 @@ void BayWatcher_Control_Loop(void* arg) {
 
     //0.4
     if (factor >= 0) {
-        PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 0.4f * factor);
-        PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 1.0f * factor);
+        PID.target_speed_L = capped_forward_speed * (1.0f + 0.4f * factor);
+        PID.target_speed_R = capped_forward_speed * (1.0f - 1.0f * factor);
     } else {
-        PID.target_speed_L = (effective_base_speed + big_langd_add) * (1.0f + 1.0f * factor);
-        PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.4f * factor);
+        PID.target_speed_L = capped_forward_speed * (1.0f + 1.0f * factor);
+        PID.target_speed_R = capped_forward_speed * (1.0f - 0.4f * factor);
     }
+    apply_remote_target_speed_cap(&PID.target_speed_L, &PID.target_speed_R);
 
     // //0.35
     // if (PID.speed_adjust >= 0) {

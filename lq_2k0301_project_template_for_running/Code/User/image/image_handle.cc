@@ -345,7 +345,7 @@ void SearchLine_LptEx(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, i
 
     if (climb_line && found)
     {
-        SearchLineAdaptive_Left(img, y_cur, x_cur, pts, pts_count);
+        SearchLineAdaptive_Left(img, y_cur, x_cur, pts, pts_count, PT_MAXLEN);
     }
     else
     {
@@ -448,7 +448,7 @@ void SearchLine_RptEx(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, i
 
     if (climb_line && found)
     {
-        SearchLineAdaptive_Right(img, y_cur, x_cur, pts, pts_count);
+        SearchLineAdaptive_Right(img, y_cur, x_cur, pts, pts_count, PT_MAXLEN);
     }
     else
     {

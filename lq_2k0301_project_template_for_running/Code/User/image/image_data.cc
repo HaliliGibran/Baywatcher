@@ -479,6 +479,27 @@ float image_remote_recognition_get_speed_ratio_override()
     return 1.0f;
 }
 
+bool image_remote_recognition_get_speed_cap_override(float* out_cap)
+{
+    if (out_cap == nullptr)
+    {
+        return false;
+    }
+
+    if (g_remote_recognition.current_code == BoardVisionCode::NO_RESULT ||
+        g_remote_recognition.hold_u_slowdown_until_aggressive_end)
+    {
+        *out_cap = BW_REMOTE_U_SLOWDOWN_RATIO;
+        if (*out_cap < 0.0f)
+        {
+            *out_cap = 0.0f;
+        }
+        return true;
+    }
+
+    return false;
+}
+
 bool image_remote_recognition_is_vehicle_active(uint64_t t_ms)
 {
     return (g_remote_recognition.follow_state == remote_follow_state_t::VEHICLE_ROUTE) &&

@@ -265,6 +265,12 @@ bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
 // 关键参数: 无
 float image_remote_recognition_get_speed_ratio_override();
 
+// 功能: 查询当前远端 u 状态是否强制限制最终基础速度上限
+// 类型: 全局状态查询函数
+// 关键参数:
+// - out_cap: 输出速度上限，单位同 PID.base_target_speed
+bool image_remote_recognition_get_speed_cap_override(float* out_cap);
+
 // 功能: 查询当前远端状态是否需要冻结运行板元素状态机
 // 类型: 全局状态查询函数
 // 说明：

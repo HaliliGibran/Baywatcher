@@ -261,8 +261,16 @@
 #define PUREANGLE_PROGRESSIVE_MAX_ABS_DEG 45.0f
 #endif
 
-// 双板 w/s 锁边绕行时，差速防反转保留裕量：
+// 双板 w/s 锁边绕行时，差速防反转总开关：
 // 使用位置：PID.cc / 仅 remote_follow_locked 分支。
+// 0：关闭，绕行态 factor 只受普通 FACTOR_LIMIT 限制。
+// 1：开启，按 BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN 防止内侧轮反转。
+#ifndef BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE
+#define BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 0
+#endif
+
+// 双板 w/s 锁边绕行时，差速防反转保留裕量：
+// 使用位置：PID.cc / 仅 BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 开启时生效。
 // 作用：
 // - 当前差速链里，factor=+1 时右轮目标速度会刚好压到 0，factor=-1 时左轮会刚好压到 0。
 // - 本参数会把绕行态 factor 限到 [- (1-margin), +(1-margin)]，避免内侧轮被打成负速反转。
@@ -574,14 +582,14 @@
 #define BW_REMOTE_VEHICLE_SKIP_HALF_WIDTH 2
 #endif
 
-// 收到 u 后，对基础速度施加的比例倍率。
+// 收到 u 后的强制慢速上限。
 // 作用：
-// - 当前活跃 Control_Loop 会把 base_target_speed 乘这个比例。
-// - 只有在斑马线冲线未激活时才会被应用；冲线优先级更高。
+// - 当前活跃 Control_Loop 仍会先把 base_target_speed 乘这个值。
+// - 随后不管直道加速、斑马线冲线倍率或差速外侧轮放大，最终速度目标都会被夹到不超过这个值。
 // 调大：u 阶段更快，更接近普通速度。
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 0.01f
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.3f
 #endif
 #pragma endregion
 
