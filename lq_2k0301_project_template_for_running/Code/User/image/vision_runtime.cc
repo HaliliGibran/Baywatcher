@@ -294,7 +294,7 @@ static void HandleManualKeyboardInput()
             continue;
         }
 
-        if (ch == '\0')
+        if (ch == 0x05) // Ctrl+E
         {
             request_stop = true;
             continue;
@@ -313,7 +313,7 @@ static void HandleManualKeyboardInput()
     if (request_stop)
     {
         BayWatcher_Stop_Car();
-        std::printf("[KEY] Ctrl+Space -> stop motor and ESC\r\n");
+        std::printf("[KEY] Ctrl+E -> stop motor and ESC\r\n");
     }
 }
 
