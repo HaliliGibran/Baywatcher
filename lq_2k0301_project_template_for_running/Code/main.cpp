@@ -309,9 +309,9 @@ int main(int argc, char** argv)
     //     return -1;
     // }
     
-    // 设置终端为非阻塞、非规范模式，用于即时读取 c / Ctrl+Space。
+    // 设置终端为非阻塞、非规范模式，用于即时读取 c / Ctrl+E。
     setup_nonblocking_keyboard_input();
-    std::cout << "输入 c: 手动复位当前状态量；Ctrl+Space: 关闭负压和电机" << std::endl;
+    std::cout << "输入 c: 手动复位当前状态量；Ctrl+E: 关闭负压和电机" << std::endl;
     const bool stream_enabled =
         StreamChain::ParseSwitch(argc, argv, StreamChain::DefaultEnabled());
     std::cout << "[BOOT] stream switch=" << (stream_enabled ? "on" : "off")

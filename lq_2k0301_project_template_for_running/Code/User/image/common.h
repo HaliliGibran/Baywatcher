@@ -113,8 +113,8 @@
 // - 1：程序默认启动图传。
 // - 0：程序默认不启动图传，仍可被命令行覆盖。
 #ifndef BW_ENABLE_STREAM
-// #define BW_ENABLE_STREAM 1
-#define BW_ENABLE_STREAM 0
+#define BW_ENABLE_STREAM 1
+// #define BW_ENABLE_STREAM 0
 #endif
 
 // 普通巡线图传底图模式。
