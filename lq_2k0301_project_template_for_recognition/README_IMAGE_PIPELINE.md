@@ -208,10 +208,14 @@
 - `BW_RECOG_REQUIRE_MANUAL_START`
   - 是否要求按一次 `c` 才启动一轮检测
   - 当前默认 `1`
+- `BW_RECOG_PROCESS_KEEP_Y_MIN / BW_RECOG_PROCESS_KEEP_Y_MAX`
+  - 单帧拿到后保留的有效处理区间，区间外直接清黑
+- `BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN / BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MAX`
+  - 提前红色减速 / 提前发 `u` 的搜索带上下边界
 - `BW_RECOG_TRIGGER_SEARCH_Y_MIN / BW_RECOG_TRIGGER_SEARCH_Y_MAX`
-  - 红块搜索带上下边界
-- `BW_RECOG_RED_MASK_MAX_Y`
-  - 红色掩膜允许处理到的最大 y
+  - 正式进入模型识别的红块/ROI 搜索带上下边界
+- `BW_RECOG_TRACK_BOUNDARY_Y_MIN`
+  - 白带迷宫爬线最小 y，默认共用 `BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN`
 - `BW_RECOG_WHITE_REFERENCE_ROW_Y`
   - 白色横向范围估计参考行
 - `BW_STREAM_PUBLISH_INTERVAL_FRAMES`
@@ -237,31 +241,32 @@
 - `mode_`
   - `NORMAL`
   - `RECOGNITION`
-- `recognition_timeout_ms_`
-  - 识别态超时时间
-- `trigger_cooldown_until_ms_`
-  - 退出识别态后的触发冷却截止时刻
+- `current_vision_code_`
+  - 当前对外输出的视觉码：`w/s/v/b/u/n`
+- `recent_red_candidate_until_ms_`
+  - 近期红色可见窗口，用于提前 `u` / 减速保持
 
-### 5.2 投票相关
+### 5.2 单帧判定相关
 
-- `votes_`
-  - 当前识别态里累计的分类结果
-- `required_votes_`
-  - 收敛需要的票数
-  - 当前构造函数默认值 `8`
+- `logit_bias_`
+  - 部署校准里的类别偏置
+- `calibration_temperature_`
+  - 部署校准里的温度系数
+- `decision_top1_threshold_`
+  - 单帧 Top-1 概率阈值
+- `decision_margin_threshold_`
+  - 单帧 Top-1 与 Top-2 间隔阈值
 
-### 5.3 事件边沿相关
+### 5.3 成功结果保持与性能
 
-- `event_armed_`
-  - 是否允许下一次同类事件重新触发
-- `next_event_seq_`
-  - 下一个事件序号
-- `pending_tx_action_`
-  - 当前待发送事件
-- `pending_tx_seq_`
-  - 当前待发送事件的序号
-- `pending_tx_repeat_remain_`
-  - 当前事件剩余重复发送帧数
+- `latched_symbol_code_`
+  - 成功识别 `w/s/v` 后的短暂保持结果
+- `latched_release_pending_` / `latched_release_deadline_ms_`
+  - marker 短暂丢失后的释放控制
+- `current_blob_area_`
+  - 当前红色观测面积
+- `last_perf_sample_`
+  - 当前帧 ROI / ONNX / 总链路耗时
 
 ## 6. 通信协议与双板协同
 
@@ -357,7 +362,10 @@
 
 当前 ROI 提取已经与 `yolo/project_root/scripts/_roi_runtime_geometry.py` 对齐，核心约束包括：
 
-1. 运行时前处理只裁 `BW_RECOG_TRIGGER_SEARCH_Y_MIN <= y < BW_RECOG_TRIGGER_SEARCH_Y_MAX` 这条带，并且红色搜索也只在这个窗口内进行
+1. 运行时前处理只保留 `BW_RECOG_PROCESS_KEEP_Y_MIN <= y < BW_RECOG_PROCESS_KEEP_Y_MAX`，区间外清黑
+   - 提前减速红色检测使用 `BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN <= y < BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MAX`
+   - 正式模型触发 / ROI 搜索使用 `BW_RECOG_TRIGGER_SEARCH_Y_MIN <= y < BW_RECOG_TRIGGER_SEARCH_Y_MAX`
+   - 白带迷宫爬线使用 `BW_RECOG_TRACK_BOUNDARY_Y_MIN`，默认与提前减速最小 y 共用
 2. 搜索前还会读取原图 `y=BW_RECOG_WHITE_REFERENCE_ROW_Y` 这一行上的白色跑道范围，只保留该白区横向范围
    - 白色阈值固定为 `S <= 60`、`V >= 150`
    - 若最长连续白段宽度小于 `120` 像素，则回退到原来的整带搜索
@@ -380,30 +388,31 @@
 一旦进入识别态：
 
 - `mode_ = RECOGNITION`
-- `votes_.clear()`
-- `recognition_timeout_ms_ = t_ms + 2500`
+- `current_vision_code_ = NO_RESULT`
 
-之后每帧由 `ProcessRecognitionFrame(...)` 处理。
+之后由下一次 `ProcessRecognitionFrame(...)` 做一次单帧判定。
 
-识别态每帧逻辑：
+识别态单帧逻辑：
 
 1. 重新执行一遍 ROI 提取
-2. 只有 `rotated_roi + 质量过滤通过` 的帧才参与投票
+2. 若不是 `rotated_roi`，按 ROI 结果回退输出 `b/u/n` 并退出识别态
 3. 把 `64x64` ROI 送入 ONNX
-4. 取 Top-1 类别索引
-5. 把类别索引压入 `votes_`
-6. 在 `view` 上叠加 ROI 状态、预测类别、推理耗时、投票进度
-7. 若票数达到 `required_votes_` 或识别超时，则执行投票收敛
+4. 六小类模型按部署映射聚合成 `weapon/supply/vehicle`
+5. 用本帧 Top-1 概率和 Top-1/Top-2 margin 做阈值判定
+6. 通过则输出 `w/s/v`，不通过则输出 `u`
+7. 在 `view` 上叠加 ROI 状态、预测类别、推理耗时、本帧概率和最终结果
+8. 判定完成后立即 `mode_ = NORMAL`
 
-## 11. 投票收敛与类别映射
+## 11. 单帧判定与类别映射
 
-投票收敛逻辑也在 `ProcessRecognitionFrame(...)` 中。
+单帧判定逻辑也在 `ProcessRecognitionFrame(...)` 中。
 
 当前策略：
 
-1. 统计 `votes_` 里每个类别出现次数
-2. 取出现次数最多的类别
-3. 把类别文本映射成工程内目标类别
+1. 取本帧聚合概率里的 Top-1 / Top-2
+2. 检查 Top-1 概率是否达到 `decision_top1_threshold_`
+3. 检查 Top-1 与 Top-2 的间隔是否达到 `decision_margin_threshold_`
+4. 通过后把类别文本映射成工程内目标类别
 
 文本到目标类别的映射规则：
 
@@ -418,15 +427,12 @@
 
 一旦得到合法事件：
 
-- `pending_tx_action_ = action`
-- `pending_tx_seq_ = next_event_seq_++`
-- `pending_tx_repeat_remain_ = BW_BOARD_EVENT_REPEAT_FRAMES`
-- `event_armed_ = false`
+- `current_vision_code_ = w/s/v`
+- `latched_symbol_code_ = current_vision_code_`
 
 然后识别态退出：
 
 - `mode_ = NORMAL`
-- `trigger_cooldown_until_ms_ = t_ms + 3000`
 
 ## 12. 事件发送策略
 

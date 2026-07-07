@@ -56,10 +56,10 @@ public:
     double GetCurrentBlobArea() const;
     const PerfSample& GetLastPerfSample() const;
     // [Recognition Chain Step 2-3] 在普通态里检测红色触发器并切入识别态。
-    // 作用：识别链自己管理 NORMAL -> RECOGNITION 的切换，并开始概率累积。
+    // 作用：识别链自己管理 NORMAL -> RECOGNITION 的切换，并进入单帧判定。
     bool TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
-    // [Recognition Chain Step 4-5A] 识别态逐帧推理并在概率累积收敛后给出结果。
-    // 作用：处理 ROI 分类、概率累积、类别映射和退出识别态。
+    // [Recognition Chain Step 4-5A] 识别态单帧推理并给出结果。
+    // 作用：处理 ROI 分类、单帧类别映射和退出识别态。
     void ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
 
 private:
@@ -79,16 +79,11 @@ private:
     bool enabled_;
     cv::dnn::Net net_;
     std::vector<std::string> class_names_;
-    std::array<float, kMaxModelClasses> prob_sum_;
     std::array<float, kMaxModelClasses> logit_bias_;
-    int valid_frame_count_;
-    int min_valid_frames_;
-    int max_valid_frames_;
     float calibration_temperature_;
     float decision_top1_threshold_;
     float decision_margin_threshold_;
     Mode mode_;
-    uint64_t recognition_timeout_ms_;
     BoardVisionCode current_vision_code_;
     BoardVisionCode latched_symbol_code_;
     uint64_t latched_release_deadline_ms_;

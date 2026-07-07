@@ -3,7 +3,6 @@
 #include "common.h"
 #include "image_switch_utils.h"
 #include "roi_runtime_geometry.h"
-#include "transform_table.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -20,9 +19,6 @@
 namespace {
 
 constexpr uint64_t kRecognitionTriggerRejectLogIntervalMs = 300;
-constexpr uint64_t kRecognitionProbabilityTimeoutMs = 1200;
-constexpr int kRecognitionTriggerFrameWidth = BW_RECOG_CAMERA_FRAME_WIDTH;
-constexpr int kRecognitionTriggerFrameHeight = BW_RECOG_CAMERA_FRAME_HEIGHT;
 constexpr int kRecognitionSlowdownMinSearchYInclusive = BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN;
 constexpr int kRecognitionSlowdownMaxSearchYExclusive = BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MAX;
 constexpr int kRecognitionMinSearchYInclusive = BW_RECOG_TRIGGER_SEARCH_Y_MIN;
@@ -31,9 +27,7 @@ constexpr uint64_t kRecognitionRecentCandidateHoldMs = 200;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
 constexpr bool kRecognitionVerboseLog = kRecognitionTextLog && (BW_RECOG_VERBOSE_LOG != 0);
-constexpr int kRecognitionMinValidFrames = BW_RECOG_MIN_VALID_FRAMES;
-constexpr int kRecognitionMaxValidFrames = BW_RECOG_MAX_VALID_FRAMES;
-constexpr float kRecognitionDecisionTop1AvgThreshold = BW_RECOG_DECISION_TOP1_AVG_THRESHOLD;
+constexpr float kRecognitionDecisionTop1Threshold = BW_RECOG_DECISION_TOP1_THRESHOLD;
 constexpr float kRecognitionDecisionMarginThreshold = BW_RECOG_DECISION_MARGIN_THRESHOLD;
 constexpr int kRecognitionModelVariant = BW_RECOG_MODEL_VARIANT;
 constexpr bool kRecognitionUseGrayRed32Model =
@@ -72,7 +66,7 @@ struct DeployCalibration
 {
     float temperature = 1.0f;
     std::array<float, kRecognitionMaxClasses> logit_bias = {};
-    float decision_top1_threshold = kRecognitionDecisionTop1AvgThreshold;
+    float decision_top1_threshold = kRecognitionDecisionTop1Threshold;
     float decision_margin_threshold = kRecognitionDecisionMarginThreshold;
     bool loaded = false;
 };
@@ -81,8 +75,8 @@ struct ProbabilityDecisionSummary
 {
     int top1_index = -1;
     int top2_index = -1;
-    float top1_avg = 0.0f;
-    float top2_avg = 0.0f;
+    float top1_prob = 0.0f;
+    float top2_prob = 0.0f;
     float margin = 0.0f;
 };
 
@@ -175,40 +169,6 @@ static void draw_roi_preview_inset(cv::Mat& view, const cv::Mat& roi_bgr)
     cv::rectangle(view, preview_rect, cv::Scalar(0, 255, 255), 2);
     cv::putText(view, "ROI", cv::Point(preview_rect.x, preview_rect.y + preview_rect.height + 22),
                 cv::FONT_HERSHEY_SIMPLEX, 0.60, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
-}
-
-static int clamp_recognition_trigger_coord(int v, int hi)
-{
-    if (v < 0)
-    {
-        return 0;
-    }
-    if (v > hi)
-    {
-        return hi;
-    }
-    return v;
-}
-
-static void map_trigger_rect_point_to_ipm(int x, int y, float* out_ipm_x, float* out_ipm_y)
-{
-    const int px = clamp_recognition_trigger_coord(x, kRecognitionTriggerFrameWidth - 1);
-    const int py = clamp_recognition_trigger_coord(y, kRecognitionTriggerFrameHeight - 1);
-    if (out_ipm_x != nullptr)
-    {
-        *out_ipm_x = UndistInverseMapW[py][px];
-    }
-    if (out_ipm_y != nullptr)
-    {
-        *out_ipm_y = UndistInverseMapH[py][px];
-    }
-}
-
-static float ipm_segment_length(float x0, float y0, float x1, float y1)
-{
-    const float dx = x1 - x0;
-    const float dy = y1 - y0;
-    return std::sqrt(dx * dx + dy * dy);
 }
 
 static BoardVisionCode vision_code_from_target_code(uint8_t target_code)
@@ -408,60 +368,6 @@ static BoardVisionCode fallback_code_from_roi_result(const RoiExtractionResult& 
     return BoardVisionCode::UNKNOWN;
 }
 
-
-static bool red_rect_is_horizontal_ipm_rect(const cv::Rect& rect,
-                                            float* top_width_out = nullptr,
-                                            float* bottom_width_out = nullptr,
-                                            float* left_height_out = nullptr,
-                                            float* right_height_out = nullptr)
-{
-    if (BW_RECOG_TRIGGER_IPM_RECT_ENABLE == 0)
-    {
-        return true;
-    }
-
-    if (rect.width <= 1 || rect.height <= 1)
-    {
-        return false;
-    }
-
-    float tl_x = 0.0f, tl_y = 0.0f;
-    float tr_x = 0.0f, tr_y = 0.0f;
-    float br_x = 0.0f, br_y = 0.0f;
-    float bl_x = 0.0f, bl_y = 0.0f;
-    map_trigger_rect_point_to_ipm(rect.x, rect.y, &tl_x, &tl_y);
-    map_trigger_rect_point_to_ipm(rect.x + rect.width - 1, rect.y, &tr_x, &tr_y);
-    map_trigger_rect_point_to_ipm(rect.x + rect.width - 1, rect.y + rect.height - 1, &br_x, &br_y);
-    map_trigger_rect_point_to_ipm(rect.x, rect.y + rect.height - 1, &bl_x, &bl_y);
-
-    const float top_width = ipm_segment_length(tl_x, tl_y, tr_x, tr_y);
-    const float bottom_width = ipm_segment_length(bl_x, bl_y, br_x, br_y);
-    const float left_height = ipm_segment_length(tl_x, tl_y, bl_x, bl_y);
-    const float right_height = ipm_segment_length(tr_x, tr_y, br_x, br_y);
-
-    if (top_width_out != nullptr)
-    {
-        *top_width_out = top_width;
-    }
-    if (bottom_width_out != nullptr)
-    {
-        *bottom_width_out = bottom_width;
-    }
-    if (left_height_out != nullptr)
-    {
-        *left_height_out = left_height;
-    }
-    if (right_height_out != nullptr)
-    {
-        *right_height_out = right_height;
-    }
-
-    const float ratio = BW_RECOG_TRIGGER_IPM_MIN_WIDTH_HEIGHT_RATIO;
-    return top_width >= left_height * ratio &&
-           top_width >= right_height * ratio &&
-           bottom_width >= left_height * ratio &&
-           bottom_width >= right_height * ratio;
-}
 
 // [Recognition Chain] 文件存在性检查。
 // 作用：在模型加载前快速判断运行时路径是否有效。
@@ -690,7 +596,7 @@ static DeployCalibration load_deploy_calibration_json(const std::string& path)
 
     calibration.temperature = std::max(1e-4f, parse_json_number_or_default(content, "temperature", 1.0f));
     calibration.logit_bias = parse_json_float_array(content, "logit_bias", calibration.logit_bias);
-    calibration.decision_top1_threshold = parse_json_number_or_default(content, "decision_top1_threshold", kRecognitionDecisionTop1AvgThreshold);
+    calibration.decision_top1_threshold = parse_json_number_or_default(content, "decision_top1_threshold", kRecognitionDecisionTop1Threshold);
     calibration.decision_margin_threshold = parse_json_number_or_default(content, "decision_margin_threshold", kRecognitionDecisionMarginThreshold);
     calibration.loaded = true;
     return calibration;
@@ -888,107 +794,6 @@ static uint8_t runtime_decision_target_code(int decision_index,
     }
     return 0;
 }
-// [Recognition Chain] 红色触发物检测。
-// 作用：在当前 320x240 原始图上找红色近矩形目标，作为进入识别态的前置触发器。
-static bool detect_red_rect_like(const cv::Mat& frame_bgr, cv::Rect* best_rect, cv::Mat* out_mask = nullptr)
-{
-    if (best_rect == nullptr || frame_bgr.empty())
-    {
-        return false;
-    }
-
-    cv::Mat hsv;
-    cv::cvtColor(frame_bgr, hsv, cv::COLOR_BGR2HSV);
-
-    cv::Mat m1, m2, red;
-    cv::inRange(hsv, cv::Scalar(0, 60, 50), cv::Scalar(10, 255, 255), m1);
-    cv::inRange(hsv, cv::Scalar(160, 60, 50), cv::Scalar(180, 255, 255), m2);
-    cv::bitwise_or(m1, m2, red);
-
-    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
-    cv::morphologyEx(red, red, cv::MORPH_OPEN, kernel);
-    cv::morphologyEx(red, red, cv::MORPH_CLOSE, kernel);
-
-    std::vector<std::vector<cv::Point>> contours;
-    cv::findContours(red, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-    double best_score = -1.0;
-    cv::Rect chosen;
-    for (size_t i = 0; i < contours.size(); ++i)
-    {
-        const double area = cv::contourArea(contours[i]);
-        if (area < 300.0)
-        {
-            continue;
-        }
-
-        const cv::Rect r = cv::boundingRect(contours[i]);
-        if (r.width < 12 || r.height < 12)
-        {
-            continue;
-        }
-
-        const double fill = area / (double)(r.width * r.height + 1e-6);
-        if (fill < 0.55)
-        {
-            continue;
-        }
-
-        const double ratio = (double)r.width / (double)r.height;
-        const double ratio_penalty = std::min(std::abs(ratio - 1.0), 1.2);
-        const double score = area * (1.0 - 0.35 * ratio_penalty) * fill;
-
-        if (score > best_score)
-        {
-            best_score = score;
-            chosen = r;
-        }
-    }
-
-    if (best_score < 0.0)
-    {
-        return false;
-    }
-
-    *best_rect = chosen;
-    if (out_mask != nullptr)
-    {
-        *out_mask = red;
-    }
-    return true;
-}
-
-static bool detect_red_candidate_for_slowdown(const cv::Mat& frame_bgr, cv::Rect* best_rect = nullptr)
-{
-    if (frame_bgr.empty())
-    {
-        return false;
-    }
-
-    const int y_min = std::max(0, std::min(kRecognitionSlowdownMinSearchYInclusive, frame_bgr.rows));
-    const int y_max = std::max(y_min, std::min(kRecognitionSlowdownMaxSearchYExclusive, frame_bgr.rows));
-    if (y_max - y_min <= 1)
-    {
-        return false;
-    }
-
-    const cv::Rect band_rect(0, y_min, frame_bgr.cols, y_max - y_min);
-    cv::Rect local_rect;
-    if (!detect_red_rect_like(frame_bgr(band_rect), &local_rect, nullptr))
-    {
-        return false;
-    }
-
-    if (best_rect != nullptr)
-    {
-        *best_rect = cv::Rect(local_rect.x,
-                              local_rect.y + y_min,
-                              local_rect.width,
-                              local_rect.height);
-    }
-    return true;
-}
-
 // [Recognition Chain] 单个 ROI 的 Top-1 分类推理。
 // 作用：按当前模型模式把 ROI 预处理成对应 blob，再送入 ONNX，输出当前帧的类别索引。
 static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
@@ -1235,9 +1040,9 @@ static ProbabilityDecisionSummary summarize_probabilities(const std::array<float
 
     summary.top1_index = best_index;
     summary.top2_index = second_index;
-    summary.top1_avg = std::max(best_value, 0.0f);
-    summary.top2_avg = std::max(second_value, 0.0f);
-    summary.margin = std::max(summary.top1_avg - summary.top2_avg, 0.0f);
+    summary.top1_prob = std::max(best_value, 0.0f);
+    summary.top2_prob = std::max(second_value, 0.0f);
+    summary.margin = std::max(summary.top1_prob - summary.top2_prob, 0.0f);
     return summary;
 }
 
@@ -1296,23 +1101,18 @@ bool RecognitionChain::ParseSwitch(int argc, char** argv, bool default_value)
 
 RecognitionChain::RecognitionChain()
     : enabled_(false),
-      prob_sum_(),
       logit_bias_(),
-      valid_frame_count_(0),
-      min_valid_frames_(kRecognitionMinValidFrames),
-      max_valid_frames_(kRecognitionMaxValidFrames),
       calibration_temperature_(1.0f),
-      decision_top1_threshold_(kRecognitionDecisionTop1AvgThreshold),
-        decision_margin_threshold_(kRecognitionDecisionMarginThreshold),
-        mode_(Mode::NORMAL),
-        recognition_timeout_ms_(0),
-        current_vision_code_(BoardVisionCode::UNKNOWN),
-        latched_symbol_code_(BoardVisionCode::INVALID),
-        latched_release_deadline_ms_(0),
-        latched_release_pending_(false),
-        current_blob_area_(0.0),
-        recent_red_candidate_until_ms_(0),
-        last_perf_sample_()
+      decision_top1_threshold_(kRecognitionDecisionTop1Threshold),
+      decision_margin_threshold_(kRecognitionDecisionMarginThreshold),
+      mode_(Mode::NORMAL),
+      current_vision_code_(BoardVisionCode::UNKNOWN),
+      latched_symbol_code_(BoardVisionCode::INVALID),
+      latched_release_deadline_ms_(0),
+      latched_release_pending_(false),
+      current_blob_area_(0.0),
+      recent_red_candidate_until_ms_(0),
+      last_perf_sample_()
 {
 }
 
@@ -1355,7 +1155,7 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
         const DeployCalibration calibration = load_deploy_calibration_json(calibration_path);
         calibration_temperature_ = calibration.temperature;
         logit_bias_ = calibration.logit_bias;
-        decision_top1_threshold_ = kRecognitionDecisionTop1AvgThreshold;
+        decision_top1_threshold_ = kRecognitionDecisionTop1Threshold;
         decision_margin_threshold_ = kRecognitionDecisionMarginThreshold;
         enabled_ = !net_.empty();
     }
@@ -1380,7 +1180,7 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
             std::cout << "[ONNX] enabled, model=" << model_path << std::endl;
             std::cout << "[ONNX] classes=" << class_path << std::endl;
             std::cout << "[RECOG] roi_method=" << RoiMethodName(DefaultRoiMethod()) << std::endl;
-            std::cout << "[RECOG] decision=fixed3_prob_accum"
+            std::cout << "[RECOG] decision=single_frame_fixed3"
                       << ", top1_threshold=" << decision_top1_threshold_
                       << ", margin_threshold=" << decision_margin_threshold_ << std::endl;
             std::cout << "[RECOG] calibration=" << calibration_path
@@ -1401,10 +1201,7 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
 
 void RecognitionChain::Reset()
 {
-    prob_sum_.fill(0.0f);
-    valid_frame_count_ = 0;
     mode_ = Mode::NORMAL;
-    recognition_timeout_ms_ = 0;
     current_vision_code_ = BoardVisionCode::UNKNOWN;
     latched_symbol_code_ = BoardVisionCode::INVALID;
     latched_release_deadline_ms_ = 0;
@@ -1718,9 +1515,6 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     // [Recognition Chain Step 3] 进入识别态。
     // 作用：marker ROI 一旦构造成功，就直接进入分类阶段。
     mode_ = Mode::RECOGNITION;
-    prob_sum_.fill(0.0f);
-    valid_frame_count_ = 0;
-    recognition_timeout_ms_ = t_ms + kRecognitionProbabilityTimeoutMs;
     current_vision_code_ = BoardVisionCode::NO_RESULT;
     latched_release_pending_ = false;
     latched_release_deadline_ms_ = 0;
@@ -1764,8 +1558,8 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         return;
     }
 
-    // [Recognition Chain Step 4] 识别态逐帧推理。
-    // 作用：每帧都按文档流程重新提取 marker ROI，再做分类概率累计。
+    // [Recognition Chain Step 4] 识别态单帧推理。
+    // 作用：按文档流程重新提取 marker ROI，并用当前这一帧直接做分类判定。
     if (render_debug)
     {
         view = frame_bgr.clone();
@@ -1796,8 +1590,6 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     if (roi_result.status == "miss")
     {
-        prob_sum_.fill(0.0f);
-        valid_frame_count_ = 0;
         current_vision_code_ = fallback_code_from_roi_result(roi_result);
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
@@ -1825,8 +1617,6 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     if (roi_result.status != "rotated_roi")
     {
-        prob_sum_.fill(0.0f);
-        valid_frame_count_ = 0;
         current_vision_code_ = fallback_code_from_roi_result(roi_result);
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
@@ -1882,10 +1672,13 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     const double infer_ms = std::chrono::duration<double, std::milli>(infer_end - infer_begin).count();
     last_perf_sample_.onnx_infer_ms = infer_ms;
     last_perf_sample_.onnx_infer_called = true;
+
+    std::array<float, kRecognitionMaxClasses> frame_prob_sum = {};
+    int valid_frame_count = 0;
     if (cls.predicted_index >= 0 && cls.predicted_index < static_cast<int>(class_names_.size()))
     {
-        accumulate_probabilities_for_runtime_decision(cls, class_names_, prob_sum_);
-        valid_frame_count_++;
+        accumulate_probabilities_for_runtime_decision(cls, class_names_, frame_prob_sum);
+        valid_frame_count = 1;
         const std::string& name = class_names_[cls.predicted_index];
         if (render_debug)
         {
@@ -1900,14 +1693,14 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                         0.55, cv::Scalar(255, 255, 0), 2, cv::LINE_AA);
         }
         const ProbabilityDecisionSummary prob_summary =
-            summarize_probabilities(prob_sum_, active_class_count, valid_frame_count_);
+            summarize_probabilities(frame_prob_sum, active_class_count, valid_frame_count);
         std::ostringstream prob_info;
-        prob_info << "avg_probs:";
+        prob_info << "frame_probs:";
         for (size_t i = 0; i < active_class_count; ++i)
         {
             prob_info << (i == 0 ? " " : "/")
                       << std::fixed << std::setprecision(2)
-                      << prob_sum_[i] / static_cast<float>(valid_frame_count_);
+                      << frame_prob_sum[i];
         }
         if (render_debug)
         {
@@ -1916,7 +1709,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         }
         std::ostringstream top_info;
         top_info << "top1=" << runtime_decision_label(prob_summary.top1_index, class_names_)
-                 << " p=" << std::fixed << std::setprecision(2) << prob_summary.top1_avg
+                 << " p=" << std::fixed << std::setprecision(2) << prob_summary.top1_prob
                  << " m=" << prob_summary.margin;
         if (render_debug)
         {
@@ -1927,7 +1720,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         {
             std::cout << "[RECOG] frame_pred=" << name
                       << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
-                      << ", valid_frames=" << valid_frame_count_ << "/" << max_valid_frames_
+                      << ", single_frame=1"
                       << ", roi_method=" << RoiMethodName(roi_method) << std::endl;
         }
     }
@@ -1935,7 +1728,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         std::chrono::duration<double, std::milli>(steady_clock_t::now() - classify_begin).count();
 
     std::ostringstream vote_info;
-    vote_info << "RECOG valid: " << valid_frame_count_ << "/" << max_valid_frames_;
+    vote_info << "RECOG single frame";
     if (render_debug)
     {
         cv::putText(view, vote_info.str(), cv::Point(16, 84), cv::FONT_HERSHEY_SIMPLEX,
@@ -1943,35 +1736,20 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     }
 
     const ProbabilityDecisionSummary prob_summary =
-        summarize_probabilities(prob_sum_, active_class_count, valid_frame_count_);
-    const bool early_ready =
-        valid_frame_count_ >= min_valid_frames_ &&
-        prob_summary.top1_avg >= decision_top1_threshold_ &&
-        prob_summary.margin >= decision_margin_threshold_;
-    const bool max_frames_reached = valid_frame_count_ >= max_valid_frames_;
-    const bool timeout = t_ms >= recognition_timeout_ms_;
-    if (!early_ready && !max_frames_reached && !timeout)
-    {
-        last_perf_sample_.process_recog_total_ms =
-            std::chrono::duration<double, std::milli>(steady_clock_t::now() - process_begin).count();
-        return;
-    }
+        summarize_probabilities(frame_prob_sum, active_class_count, valid_frame_count);
 
-    // [Recognition Chain Step 5] 概率累积收敛。
-    // 作用：从当前累计的有效推理帧里选最终类别，再映射到后续车体策略。
+    // [Recognition Chain Step 5] 单帧判定。
+    // 作用：从当前这一帧的推理概率里选最终类别，再映射到后续车体策略。
     std::string label = "no_decision";
     TargetClass target = TargetClass::UNKNOWN;
     bool has_final_decision = false;
     BoardVisionCode final_code = BoardVisionCode::NO_RESULT;
-    std::string failure_reason = "low_confidence_or_margin_reject";
-    if (valid_frame_count_ < min_valid_frames_ && timeout)
-    {
-        failure_reason = "timeout_before_min_valid_frames";
-    }
-    if (valid_frame_count_ >= min_valid_frames_ &&
+    std::string failure_reason =
+        (valid_frame_count > 0) ? "low_confidence_or_margin_reject" : "invalid_model_output";
+    if (valid_frame_count > 0 &&
         prob_summary.top1_index >= 0 &&
         prob_summary.top1_index < static_cast<int>(active_class_count) &&
-        prob_summary.top1_avg >= decision_top1_threshold_ &&
+        prob_summary.top1_prob >= decision_top1_threshold_ &&
         prob_summary.margin >= decision_margin_threshold_)
     {
         label = runtime_decision_label(prob_summary.top1_index, class_names_);
@@ -1994,10 +1772,10 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     if (kRecognitionResultLog)
     {
         std::cout << "[RECOG] result=" << label
-                  << ", valid_frames=" << valid_frame_count_
+                  << ", valid_frames=" << valid_frame_count
                   << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
                   << ", cls_ms=" << last_perf_sample_.classify_total_ms
-                  << ", top1_avg=" << std::fixed << std::setprecision(4) << prob_summary.top1_avg
+                  << ", top1_prob=" << std::fixed << std::setprecision(4) << prob_summary.top1_prob
                   << ", margin=" << prob_summary.margin;
         if (!has_final_decision)
         {
@@ -2021,8 +1799,6 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     }
 
     mode_ = Mode::NORMAL;
-    prob_sum_.fill(0.0f);
-    valid_frame_count_ = 0;
     last_perf_sample_.process_recog_total_ms =
         std::chrono::duration<double, std::milli>(steady_clock_t::now() - process_begin).count();
 }

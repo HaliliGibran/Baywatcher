@@ -743,7 +743,7 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     const bool remote_follow_locked =
         image_remote_recognition_get_forced_follow_mode(&forced_follow_mode);
     const bool remote_circle_block = image_remote_recognition_should_block_circle();
-    const bool remote_route_active = vehicle_active || remote_follow_locked;
+    const bool remote_route_active = image_remote_recognition_should_freeze_state_machine(t_ms);
 
     // follow_mode 由上层策略决定，这里只消费，不在主链入口硬重置。
     const track_search_result_t track_search = process_track_edges(img, vehicle_active);
@@ -819,7 +819,7 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     }
     else if (remote_route_active)
     {
-        // 远端 w/s/v/u 期间只“冻结”当前元素状态机，不再推进；
+        // 远端 w/s/v 期间只“冻结”当前元素状态机，不再推进；u 进 vehicle 特殊巡线但不进此分支。
         // 不清 element_type/circle_state/crossing_state，便于退出远端接管后继续沿原上下文恢复。
         // 只有 b（remote_circle_block）会走清状态机分支。
     }

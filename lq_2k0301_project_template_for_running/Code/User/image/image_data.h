@@ -218,7 +218,7 @@ void image_remote_recognition_reset();
 // 类型: 全局状态更新函数
 // 关键参数:
 // - code/seq: 识别板发送的状态码与序号
-// - current_pure_angle: 收到 vehicle 事件当下的 pure_angle
+// - current_pure_angle: 收到 w/s/v/u 事件当下的 pure_angle；u 也复用 vehicle hold
 // - t_ms: 当前时间戳（毫秒）
 void image_remote_recognition_apply_state(BoardVisionCode code,
                                           uint8_t seq,
@@ -239,13 +239,13 @@ void image_remote_recognition_tick(uint64_t t_ms);
 // - 仅服务于 w/s 激进角链的“丢线停主动作 / 寻线停回摆”逻辑。
 void image_remote_recognition_update_line_visibility(bool left_found, bool right_found);
 
-// 功能: 查询当前是否处于远端 vehicle 的保持航向窗口
+// 功能: 查询当前是否处于远端 v/u 的 vehicle 特殊巡线窗口
 // 类型: 全局状态查询函数
 // 关键参数:
 // - t_ms: 当前时间戳（毫秒）
 bool image_remote_recognition_is_vehicle_active(uint64_t t_ms);
 
-// 功能: 查询当前是否处于远端 vehicle 的保持航向窗口，并返回锁存航向角
+// 功能: 查询当前是否处于远端 v/u 的 vehicle 特殊巡线窗口，并返回锁存航向角
 // 类型: 全局状态查询函数
 // 关键参数:
 // - t_ms: 当前时间戳（毫秒）
@@ -264,6 +264,13 @@ bool image_remote_recognition_get_aggressive_turn_override(float raw_pure_angle,
 // 类型: 全局状态查询函数
 // 关键参数: 无
 float image_remote_recognition_get_speed_ratio_override();
+
+// 功能: 查询当前远端状态是否需要冻结运行板元素状态机
+// 类型: 全局状态查询函数
+// 说明：
+// - w/s/v 冻结状态机。
+// - u 虽进入 vehicle 特殊巡线并减速，但不冻结状态机。
+bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms);
 
 // 功能: 查询当前是否锁定到单边边线跟线
 // 类型: 全局状态查询函数
