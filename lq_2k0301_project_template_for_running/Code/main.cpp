@@ -21,6 +21,8 @@ QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 #include "stream_chain.h"
 #include "vision_runtime.h"
 #include <chrono>
+#include <fcntl.h>
+#include <termios.h>
 #include <vector>
 const float SAMPLE_PERIOD = 0.005f;
 
@@ -67,6 +69,38 @@ BayWatcher_TargetHandler  handler_sys;
 BayWatcher_Logger         Logger;
 
 // ==================== 系统初始化 ====================
+static struct termios g_stdin_termios;
+static int g_stdin_flags = -1;
+static bool g_stdin_termios_saved = false;
+
+static void setup_nonblocking_keyboard_input()
+{
+    g_stdin_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    if (g_stdin_flags != -1) {
+        fcntl(STDIN_FILENO, F_SETFL, g_stdin_flags | O_NONBLOCK);
+    }
+
+    if (tcgetattr(STDIN_FILENO, &g_stdin_termios) == 0) {
+        struct termios raw = g_stdin_termios;
+        raw.c_lflag &= ~(ICANON | ECHO);
+        raw.c_cc[VMIN] = 0;
+        raw.c_cc[VTIME] = 0;
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0) {
+            g_stdin_termios_saved = true;
+        }
+    }
+}
+
+static void restore_keyboard_input()
+{
+    if (g_stdin_flags != -1) {
+        fcntl(STDIN_FILENO, F_SETFL, g_stdin_flags);
+    }
+
+    if (g_stdin_termios_saved) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_stdin_termios);
+    }
+}
 
 // 功能: 系统初始化
 void system_init(){
@@ -275,12 +309,9 @@ int main(int argc, char** argv)
     //     return -1;
     // }
     
-    // 设置终端为非阻塞 (用于按键 'c' 快速复位赛道状态)
-    {
-        int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-        if (flags != -1) fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
-    }
-    std::cout << "输入 c: 手动复位当前状态量" << std::endl;
+    // 设置终端为非阻塞、非规范模式，用于即时读取 c / Ctrl+Space。
+    setup_nonblocking_keyboard_input();
+    std::cout << "输入 c: 手动复位当前状态量；Ctrl+Space: 关闭负压和电机" << std::endl;
     const bool stream_enabled =
         StreamChain::ParseSwitch(argc, argv, StreamChain::DefaultEnabled());
     std::cout << "[BOOT] stream switch=" << (stream_enabled ? "on" : "off")
@@ -301,10 +332,7 @@ int main(int argc, char** argv)
     // printf("\n[System] All tasks stopped. Preparing for exit...\n");
     // return 0;    // 注意：无需显式调用 exit(0)，执行 return 0 后，全局变量（包括 loader）会按正确顺序析构。
 
-    int terminal_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-    if (terminal_flags != -1) {
-        fcntl(STDIN_FILENO, F_SETFL, terminal_flags & ~O_NONBLOCK);
-    }
+    restore_keyboard_input();
 
     system("stty sane");
     printf("\n\n[System] All tasks stopped. Preparing for exit...\n");

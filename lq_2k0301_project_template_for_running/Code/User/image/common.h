@@ -18,6 +18,7 @@
 // - 若车在入环或环内贴边不够，保留开启。
 #ifndef BW_CIRCLE_OFFSET_ENABLE
 #define BW_CIRCLE_OFFSET_ENABLE 0
+// #define BW_CIRCLE_OFFSET_ENABLE 1
 #endif
 
 // pure_angle 预瞄“速度反馈前推”总开关：
@@ -140,7 +141,7 @@
 #define WHITE_IN_GRAY         (255)   // 二值图白色像素值
 
 // 物理参数（全局宏）
-#define PIXPERMETER           (65.13f) // 逆透视后每米像素数
+#define PIXPERMETER           (66.45f) // 逆透视后每米像素数
 #define ROADWIDTH             (0.45f)  // 赛道宽度（米）
 
 #define PT_MAXLEN             (80)     // 点列最大长度（左右线/中线/路径均使用）
@@ -579,7 +580,7 @@
 // 调大：u 阶段更快，更接近普通速度。
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 0.3f
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.01f
 #endif
 #pragma endregion
 

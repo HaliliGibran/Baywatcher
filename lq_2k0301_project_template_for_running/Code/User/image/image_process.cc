@@ -765,6 +765,9 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
         return;
     }
 
+
+    //=====================================================================================
+
     // //测试赛道宽度矫正PIXPERMETER
     // float roadwidth_pix_sqr = (100.0f) * (100.0f);
     // int id_roadwidth_test = 0;
@@ -787,6 +790,8 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     // printf("PIXPERMETER_NEW: %.2f pix/m\r\n",  PIXPERMETER_NEW);
     // printf("id_roadwidth_test"": %d\r\n",  id_roadwidth_test);
     // return;
+
+    //=========================================================================================================
 
     // //测试中线偏移量矫正PIXPERMETER_ACROSS
     // float mid_div_pix_sqr = (100.0f) * (100.0f);

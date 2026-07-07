@@ -126,4 +126,8 @@ extern float cfg_straight_accel_yaw_min_th;
 extern float cfg_straight_accel_curve_max_th;
 extern float cfg_straight_accel_yaw_max_th;
 extern float cfg_straight_accel_intensity;
+extern bool cfg_crossing_pid_enable;
+extern bool Crossing_Between;
+extern bool cfg_crossing_between_enable;
+extern uint32_t cfg_crossing_between_timeout_ticks;
 #endif

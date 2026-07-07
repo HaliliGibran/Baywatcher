@@ -4,6 +4,7 @@
 #include "main.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <iomanip>
 #include <sstream>
@@ -189,17 +190,159 @@ static void RenderLineTrackingView(const cv::Mat& frame_img,
     }
 }
 
-static void HandleManualVisionReset()
+static void HandleManualKeyboardInput()
 {
+    static char speed_cmd[16] = {0};
+    static int speed_cmd_len = 0;
+    static float last_terminal_target_speed = 0.0f;
+    static bool has_last_terminal_target_speed = false;
+
+    auto clear_speed_cmd = [&]() {
+        speed_cmd_len = 0;
+        speed_cmd[0] = '\0';
+    };
+
+    auto print_speed_cmd = [&]() {
+        std::printf("[KEY] cmd=%s\r\n", speed_cmd_len > 0 ? speed_cmd : "<empty>");
+    };
+
+    auto append_speed_cmd = [&](char input) {
+        if (speed_cmd_len >= static_cast<int>(sizeof(speed_cmd)) - 1)
+        {
+            std::printf("[KEY] cmd full, ignored '%c'\r\n", input);
+            return;
+        }
+
+        if (speed_cmd_len == 0 && input != '-')
+        {
+            return;
+        }
+
+        if (speed_cmd_len > 0)
+        {
+            const bool is_digit = (input >= '0' && input <= '9');
+            const bool is_decimal_point = (input == '.');
+            const bool is_last_speed = (input == 'l' || input == 'L');
+            if (!is_digit && !is_decimal_point && !is_last_speed)
+            {
+                return;
+            }
+        }
+
+        speed_cmd[speed_cmd_len++] = input;
+        speed_cmd[speed_cmd_len] = '\0';
+        print_speed_cmd();
+    };
+
+    auto submit_speed_cmd = [&]() {
+        if (speed_cmd_len <= 0)
+        {
+            return;
+        }
+
+        if (speed_cmd[0] != '-')
+        {
+            std::printf("[KEY] invalid cmd: %s\r\n", speed_cmd);
+            clear_speed_cmd();
+            return;
+        }
+
+        if (speed_cmd_len == 2 && (speed_cmd[1] == 'l' || speed_cmd[1] == 'L'))
+        {
+            if (!has_last_terminal_target_speed)
+            {
+                std::printf("[KEY] no last terminal target speed\r\n");
+                clear_speed_cmd();
+                return;
+            }
+
+            PID.base_target_speed = last_terminal_target_speed;
+            BayWatcher_Start_Car();
+            std::printf("[KEY] launch with last target speed %.2f\r\n", last_terminal_target_speed);
+            clear_speed_cmd();
+            return;
+        }
+
+        char* parse_end = nullptr;
+        const float target_speed = std::strtof(speed_cmd + 1, &parse_end);
+        const bool parsed_all = (parse_end == speed_cmd + speed_cmd_len);
+        if (!parsed_all || speed_cmd_len <= 1 || target_speed < 0.0f || target_speed > 30.0f)
+        {
+            std::printf("[KEY] invalid speed cmd: %s (range 0..30)\r\n", speed_cmd);
+            clear_speed_cmd();
+            return;
+        }
+
+        PID.base_target_speed = target_speed;
+        last_terminal_target_speed = target_speed;
+        has_last_terminal_target_speed = true;
+        BayWatcher_Start_Car();
+        std::printf("[KEY] launch target speed %.2f\r\n", target_speed);
+        clear_speed_cmd();
+    };
+
     char ch = 0;
-    if (read(STDIN_FILENO, &ch, 1) != 1 || (ch != 'c' && ch != 'C'))
+    bool request_reset = false;
+    bool request_stop = false;
+
+    while (read(STDIN_FILENO, &ch, 1) == 1)
     {
-        return;
+        if (ch == 'c' || ch == 'C')
+        {
+            request_reset = true;
+            clear_speed_cmd();
+            continue;
+        }
+
+        if (request_reset)
+        {
+            continue;
+        }
+
+        if (ch == '\r' || ch == '\n')
+        {
+            submit_speed_cmd();
+            continue;
+        }
+
+        if (ch == 27)
+        {
+            clear_speed_cmd();
+            std::printf("[KEY] cmd cleared\r\n");
+            continue;
+        }
+
+        if (ch == 127 || ch == 8)
+        {
+            if (speed_cmd_len > 0)
+            {
+                speed_cmd[--speed_cmd_len] = '\0';
+                print_speed_cmd();
+            }
+            continue;
+        }
+
+        if (ch == '\0')
+        {
+            request_stop = true;
+            continue;
+        }
+
+        append_speed_cmd(ch);
     }
 
-    track_force_reset();
-    handler_sys.Stop_Action();
-    image_remote_recognition_reset();
+    if (request_reset)
+    {
+        track_force_reset();
+        handler_sys.Stop_Action();
+        image_remote_recognition_reset();
+    }
+
+    if (request_stop)
+    {
+        BayWatcher_Stop_Car();
+        std::printf("[KEY] Ctrl+Space -> stop motor and ESC\r\n");
+    }
 }
 
 static bool RenderBypassBranchIfNeeded(const cv::Mat& gray_frame, bool render_debug_view)
@@ -255,7 +398,7 @@ void Vision_System_Run(bool stream_enabled)
 
     while (ls_system_running)
     {
-        HandleManualVisionReset();
+        HandleManualKeyboardInput();
 
         if (!camera.capture_frame(img, true, cv::IMREAD_GRAYSCALE, false))
         {
