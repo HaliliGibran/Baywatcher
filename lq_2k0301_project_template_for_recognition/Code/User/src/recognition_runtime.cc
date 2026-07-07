@@ -333,6 +333,11 @@ static double elapsed_ms_since(const steady_time_point_t& begin,
     return std::chrono::duration<double, std::milli>(end - begin).count();
 }
 
+static steady_time_point_t timing_frame_trace_end(const RuntimeFrameTimingSample& sample)
+{
+    return sample.send_attempted ? sample.send_end : sample.chain_end;
+}
+
 static void PrintTimingFrameLine(const char* label,
                                  const RuntimeFrameTimingSample& sample,
                                  const steady_time_point_t& trace_begin)
@@ -388,12 +393,13 @@ static void PrintUToResultTimingTrace(const UToResultTimingState& state,
                                       const RuntimeFrameTimingSample& enter_frame,
                                       const RuntimeFrameTimingSample& result_frame)
 {
-    if (!result_frame.valid || !result_frame.send_ok)
+    if (!result_frame.valid)
     {
         return;
     }
 
-    const double total_ms = elapsed_ms_since(state.trigger_read_begin, result_frame.send_end);
+    const steady_time_point_t result_trace_end = timing_frame_trace_end(result_frame);
+    const double total_ms = elapsed_ms_since(state.trigger_read_begin, result_trace_end);
     const double trigger_to_first_u_send_ms =
         state.first_u_sent ? state.first_u_send_offset_ms : -1.0;
     const double trigger_to_enter_read_ms =
@@ -415,6 +421,8 @@ static void PrintUToResultTimingTrace(const UToResultTimingState& state,
               << ", u包数量=" << state.u_packet_count
               << ", 首次u包序号="
               << (state.first_u_sent ? static_cast<int>(state.first_u_tx_seq) : -1)
+              << ", 结果帧发包=" << (result_frame.send_attempted ? "是" : "否")
+              << ", 结果帧发包成功=" << (result_frame.send_ok ? "是" : "否")
               << ", 结果包序号=" << static_cast<int>(result_frame.tx_seq)
               << std::endl;
 
@@ -451,6 +459,15 @@ static void UpdateUToResultTimingAfterFrame(UToResultTimingState* state,
         state->trigger_frame_seq = sample.frame_seq;
         trigger_frame = sample;
         enter_frame = RuntimeFrameTimingSample();
+
+        std::cout << "[识别耗时] 统计开始: 起始帧=" << state->trigger_frame_seq
+                  << ", 触发状态=" << VisionCodeText(sample.code_before)
+                  << "->" << VisionCodeText(sample.code_after)
+                  << ", 触发帧发包=" << (sample.send_attempted ? "是" : "否")
+                  << ", 触发帧发包成功=" << (sample.send_ok ? "是" : "否")
+                  << ", 包序号=" << static_cast<int>(sample.tx_seq)
+                  << std::endl;
+        PrintTimingFrameLine("触发u帧", trigger_frame, state->trigger_read_begin);
     }
 
     ++state->frame_count;
@@ -473,7 +490,7 @@ static void UpdateUToResultTimingAfterFrame(UToResultTimingState* state,
         return;
     }
 
-    if (sample.send_ok && IsRecognitionSuccessCode(sample.code_after))
+    if (IsRecognitionSuccessCode(sample.code_after))
     {
         PrintUToResultTimingTrace(*state, trigger_frame, enter_frame, sample);
         *state = UToResultTimingState();
@@ -482,8 +499,7 @@ static void UpdateUToResultTimingAfterFrame(UToResultTimingState* state,
         return;
     }
 
-    if (sample.send_ok &&
-        sample.code_after != BoardVisionCode::NO_RESULT &&
+    if (sample.code_after != BoardVisionCode::NO_RESULT &&
         sample.code_after != BoardVisionCode::INVALID)
     {
         const double abort_ms = sample.send_attempted
