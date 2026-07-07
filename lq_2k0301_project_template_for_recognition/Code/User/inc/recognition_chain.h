@@ -105,5 +105,6 @@ private:
     bool adaptive_decision_pending_;
     std::array<float, kMaxModelClasses> adaptive_prob_sum_;
     int adaptive_valid_frame_count_;
+    int adaptive_bad_frame_count_;
     PerfSample last_perf_sample_;
 };

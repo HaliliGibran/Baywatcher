@@ -34,6 +34,8 @@ constexpr float kRecognitionSingleFrameHighConfTop1Threshold =
     BW_RECOG_SINGLE_FRAME_HIGH_CONF_TOP1_THRESHOLD;
 constexpr float kRecognitionSingleFrameHighConfMarginThreshold =
     BW_RECOG_SINGLE_FRAME_HIGH_CONF_MARGIN_THRESHOLD;
+constexpr int kRecognitionAdaptiveTwoFrameMaxBadFrames =
+    BW_RECOG_ADAPTIVE_TWO_FRAME_MAX_BAD_FRAMES;
 constexpr int kRecognitionOnnxWarmupRuns = BW_RECOG_ONNX_WARMUP_RUNS;
 constexpr int kRecognitionModelVariant = BW_RECOG_MODEL_VARIANT;
 constexpr bool kRecognitionUseGrayRed32Model =
@@ -1195,6 +1197,7 @@ RecognitionChain::RecognitionChain()
       adaptive_decision_pending_(false),
       adaptive_prob_sum_(),
       adaptive_valid_frame_count_(0),
+      adaptive_bad_frame_count_(0),
       last_perf_sample_()
 {
 }
@@ -1309,6 +1312,7 @@ void RecognitionChain::ClearAdaptiveDecision()
     adaptive_decision_pending_ = false;
     adaptive_prob_sum_ = {};
     adaptive_valid_frame_count_ = 0;
+    adaptive_bad_frame_count_ = 0;
 }
 
 bool RecognitionChain::IsEnabled() const
@@ -1692,6 +1696,54 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         recent_red_candidate_until_ms_ = t_ms + kRecognitionRecentCandidateHoldMs;
     }
 
+    const auto keep_adaptive_wait_on_bad_roi =
+        [&](const char* roi_status, const std::string& reject_text) -> bool {
+            if (!adaptive_decision_pending_)
+            {
+                return false;
+            }
+
+            ++adaptive_bad_frame_count_;
+            if (adaptive_bad_frame_count_ > kRecognitionAdaptiveTwoFrameMaxBadFrames)
+            {
+                if (kRecognitionResultLog)
+                {
+                    std::cout << "[RECOG] result=abort_second_frame_wait"
+                              << ", bad_frames=" << adaptive_bad_frame_count_
+                              << ", roi_status=" << roi_status
+                              << ", reason=" << reject_text
+                              << std::endl;
+                }
+                return false;
+            }
+
+            current_vision_code_ = BoardVisionCode::NO_RESULT;
+            latched_symbol_code_ = BoardVisionCode::INVALID;
+            latched_release_pending_ = false;
+            latched_release_deadline_ms_ = 0;
+            if (render_debug)
+            {
+                cv::putText(view, "RECOG keep waiting 2nd frame",
+                            cv::Point(16, 84), cv::FONT_HERSHEY_SIMPLEX,
+                            0.65, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+            }
+            if (kRecognitionResultLog)
+            {
+                std::cout << "[RECOG] result=wait_second_frame_roi_not_ready"
+                          << ", bad_frames=" << adaptive_bad_frame_count_
+                          << "/" << kRecognitionAdaptiveTwoFrameMaxBadFrames
+                          << ", roi_status=" << roi_status
+                          << ", reason=" << reject_text
+                          << std::endl;
+                std::cout << "[RECOG] state_out=" << vision_code_text(current_vision_code_)
+                          << ", blob_area=" << std::fixed << std::setprecision(1) << current_blob_area_
+                          << std::endl;
+            }
+            last_perf_sample_.process_recog_total_ms =
+                std::chrono::duration<double, std::milli>(steady_clock_t::now() - process_begin).count();
+            return true;
+        };
+
     if (roi_result.status == "miss")
     {
         current_vision_code_ = fallback_code_from_roi_result(roi_result);
@@ -1712,6 +1764,10 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
             std::cout << "[RECOG] recognition exit: miss, fallback_state="
                       << vision_code_text(current_vision_code_)
                       << ", " << reject_text << std::endl;
+        }
+        if (keep_adaptive_wait_on_bad_roi("miss", reject_text))
+        {
+            return;
         }
         ClearAdaptiveDecision();
         mode_ = Mode::NORMAL;
@@ -1748,6 +1804,10 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                 }
             }
             std::cout << std::endl;
+        }
+        if (keep_adaptive_wait_on_bad_roi(roi_result.status.c_str(), reject_text))
+        {
+            return;
         }
         ClearAdaptiveDecision();
         mode_ = Mode::NORMAL;
@@ -1841,6 +1901,35 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     const ProbabilityDecisionSummary frame_summary =
         summarize_probabilities(frame_prob_sum, active_class_count, frame_valid_count);
     const bool was_waiting_second_frame = adaptive_decision_pending_;
+    if (frame_valid_count > 0)
+    {
+        adaptive_bad_frame_count_ = 0;
+    }
+    if (was_waiting_second_frame && frame_valid_count <= 0)
+    {
+        ++adaptive_bad_frame_count_;
+        if (adaptive_bad_frame_count_ <= kRecognitionAdaptiveTwoFrameMaxBadFrames)
+        {
+            current_vision_code_ = BoardVisionCode::NO_RESULT;
+            latched_symbol_code_ = BoardVisionCode::INVALID;
+            latched_release_pending_ = false;
+            latched_release_deadline_ms_ = 0;
+            if (kRecognitionResultLog)
+            {
+                std::cout << "[RECOG] result=wait_second_frame_invalid_model_output"
+                          << ", bad_frames=" << adaptive_bad_frame_count_
+                          << "/" << kRecognitionAdaptiveTwoFrameMaxBadFrames
+                          << ", reason=invalid_model_output"
+                          << std::endl;
+                std::cout << "[RECOG] state_out=" << vision_code_text(current_vision_code_)
+                          << ", blob_area=" << std::fixed << std::setprecision(1) << current_blob_area_
+                          << std::endl;
+            }
+            last_perf_sample_.process_recog_total_ms =
+                std::chrono::duration<double, std::milli>(steady_clock_t::now() - process_begin).count();
+            return;
+        }
+    }
     const bool high_conf_single_frame =
         frame_valid_count > 0 &&
         frame_summary.top1_prob >= kRecognitionSingleFrameHighConfTop1Threshold &&
@@ -1856,6 +1945,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         adaptive_decision_pending_ = true;
         adaptive_prob_sum_ = frame_prob_sum;
         adaptive_valid_frame_count_ = frame_valid_count;
+        adaptive_bad_frame_count_ = 0;
         current_vision_code_ = BoardVisionCode::NO_RESULT;
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
@@ -1925,6 +2015,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     std::string label = "no_decision";
     TargetClass target = TargetClass::UNKNOWN;
     bool has_final_decision = false;
+    bool forced_two_frame_low_conf = false;
     BoardVisionCode final_code = BoardVisionCode::NO_RESULT;
     std::string failure_reason =
         (decision_valid_count > 0) ? "low_confidence_or_margin_reject" :
@@ -1939,6 +2030,20 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         target = static_cast<TargetClass>(runtime_decision_target_code(prob_summary.top1_index, class_names_));
         final_code = vision_code_from_target_code(static_cast<uint8_t>(target));
         has_final_decision = (final_code != BoardVisionCode::INVALID);
+    }
+    else if (was_waiting_second_frame &&
+             decision_valid_count > 0 &&
+             prob_summary.top1_index >= 0 &&
+             prob_summary.top1_index < static_cast<int>(active_class_count))
+    {
+        label = runtime_decision_label(prob_summary.top1_index, class_names_);
+        target = static_cast<TargetClass>(runtime_decision_target_code(prob_summary.top1_index, class_names_));
+        final_code = vision_code_from_target_code(static_cast<uint8_t>(target));
+        has_final_decision = (final_code != BoardVisionCode::INVALID);
+        forced_two_frame_low_conf = has_final_decision;
+        failure_reason = forced_two_frame_low_conf
+            ? "two_frame_force_top1_after_low_conf"
+            : "two_frame_invalid_target_code";
     }
 
     if (render_debug)
@@ -1962,7 +2067,11 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                   << ", cls_ms=" << last_perf_sample_.classify_total_ms
                   << ", top1_prob=" << std::fixed << std::setprecision(4) << prob_summary.top1_prob
                   << ", margin=" << prob_summary.margin;
-        if (!has_final_decision)
+        if (forced_two_frame_low_conf)
+        {
+            std::cout << ", reason=" << failure_reason;
+        }
+        else if (!has_final_decision)
         {
             std::cout << ", reason=" << failure_reason;
         }
