@@ -785,13 +785,7 @@ int main(int argc, char** argv)
                   << recognition_runtime::kRecognitionFrameHeight << "@"
                   << recognition_runtime::kRecognitionFrameFps
                   << " color, UART1@115200" << std::endl;
-        std::cout << "[BOOT] precheck interval="
-                  << BW_RECOG_NORMAL_PRECHECK_INTERVAL_MS
-                  << " ms, ultra_fast="
-                  << (BW_RECOG_ULTRA_FAST_PRECHECK_ENABLE ? "on" : "off")
-                  << ", full_roi_min_interval="
-                  << BW_RECOG_FULL_ROI_MIN_INTERVAL_MS
-                  << " ms, loop_target_fps="
+        std::cout << "[BOOT] loop_target_fps="
                   << BW_RECOG_LOOP_TARGET_FPS
                   << std::endl;
     }

@@ -125,13 +125,6 @@
 // #define BW_STREAM_LINE_USE_BINARY_VIEW 0
 #endif
 
-// 灰度二值化诊断总开关。
-// 使用位置：vision_runtime.cc。
-// - 1：输出整图/中心/四角灰度统计与 Otsu 阈值。
-// - 0：关闭这组纯诊断日志与叠字。
-#ifndef BW_GRAY_BIN_DIAG_ENABLE
-#define BW_GRAY_BIN_DIAG_ENABLE 0
-#endif
 #pragma endregion
 
 #pragma region 图像基础参数
@@ -591,22 +584,6 @@
 #pragma endregion
 
 #pragma region 图传开关与图传模式切换
-#pragma endregion
-
-#pragma region 灰度二值化诊断参数
-// 灰度诊断采样块边长（像素）：
-// 使用位置：vision_runtime.cc。
-// 作用：中心和四角都用同样大小的小块统计均值。
-#ifndef BW_GRAY_BIN_DIAG_PATCH_SIZE
-#define BW_GRAY_BIN_DIAG_PATCH_SIZE 16
-#endif
-
-// 灰度诊断日志最小输出间隔（毫秒）：
-// 使用位置：vision_runtime.cc。
-// 作用：避免每帧都刷屏；图传开启时仍会每帧叠加当前统计值。
-#ifndef BW_GRAY_BIN_DIAG_LOG_INTERVAL_MS
-#define BW_GRAY_BIN_DIAG_LOG_INTERVAL_MS 400
-#endif
 #pragma endregion
 
 #pragma region 历史保留切换参数

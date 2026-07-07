@@ -52,11 +52,8 @@ constexpr int kWhiteMinValue = 150;
 constexpr int kWhiteMinRgb = 165;
 constexpr int kWhiteMaxChannelDiff = 40;
 constexpr int kWhiteMinSpanWidth = 60;
-constexpr int kTrackWhiteFallbackHalfWindow = BW_RECOG_TRACK_WHITE_FALLBACK_HALF_WINDOW;
 constexpr int kTrackBrickOuterExpandPixels = BW_RECOG_TRACK_BRICK_OUTER_EXPAND_PIXELS;
-constexpr int kTrackWhiteMinInsideRun = BW_RECOG_TRACK_WHITE_MIN_INSIDE_RUN;
 constexpr int kTrackMazeMaxSteps = BW_RECOG_TRACK_MAZE_MAX_STEPS;
-constexpr int kTrackBoundaryNearestRowGap = BW_RECOG_TRACK_BOUNDARY_NEAREST_ROW_GAP;
 constexpr unsigned char kTrackWhitePixel = 255;
 constexpr unsigned char kTrackNonWhitePixel = 0;
 
@@ -884,156 +881,6 @@ static std::vector<cv::Point> BuildTrackRegionPolygon(const TaskTrackBoundarySta
     return polygon;
 }
 
-static bool IsValidLeftTrackBoundaryTransition(const unsigned char* row, int cols, int x)
-{
-    if (row == nullptr || x <= 0 || x >= cols - 1)
-    {
-        return false;
-    }
-    if (row[x] != kTrackWhitePixel || row[x - 1] != kTrackNonWhitePixel)
-    {
-        return false;
-    }
-    int white_run = 0;
-    while (x + white_run < cols && row[x + white_run] == kTrackWhitePixel &&
-           white_run < kTrackWhiteMinInsideRun)
-    {
-        ++white_run;
-    }
-    return white_run >= kTrackWhiteMinInsideRun;
-}
-
-static bool IsValidRightTrackBoundaryTransition(const unsigned char* row, int cols, int x)
-{
-    if (row == nullptr || x <= 0 || x >= cols - 1)
-    {
-        return false;
-    }
-    if (row[x] != kTrackWhitePixel || row[x + 1] != kTrackNonWhitePixel)
-    {
-        return false;
-    }
-    int white_run = 0;
-    while (x - white_run >= 0 && row[x - white_run] == kTrackWhitePixel &&
-           white_run < kTrackWhiteMinInsideRun)
-    {
-        ++white_run;
-    }
-    return white_run >= kTrackWhiteMinInsideRun;
-}
-
-static bool FindLeftTrackBoundaryOnRowWindow(const unsigned char* row,
-                                             int cols,
-                                             int anchor_x,
-                                             int half_window,
-                                             int* out_x)
-{
-    if (out_x == nullptr || row == nullptr || cols <= 2)
-    {
-        return false;
-    }
-
-    const int x0 = std::max(1, anchor_x - half_window);
-    const int x1 = std::min(cols - 2, anchor_x + half_window);
-    bool found = false;
-    int best_x = -1;
-    int best_dist = std::numeric_limits<int>::max();
-    for (int x = x0; x <= x1; ++x)
-    {
-        if (!IsValidLeftTrackBoundaryTransition(row, cols, x))
-        {
-            continue;
-        }
-        const int dist = std::abs(x - anchor_x);
-        if (!found || dist < best_dist || (dist == best_dist && x < best_x))
-        {
-            found = true;
-            best_x = x;
-            best_dist = dist;
-        }
-    }
-
-    if (!found)
-    {
-        return false;
-    }
-    *out_x = best_x;
-    return true;
-}
-
-static bool FindRightTrackBoundaryOnRowWindow(const unsigned char* row,
-                                              int cols,
-                                              int anchor_x,
-                                              int half_window,
-                                              int* out_x)
-{
-    if (out_x == nullptr || row == nullptr || cols <= 2)
-    {
-        return false;
-    }
-
-    const int x0 = std::max(1, anchor_x - half_window);
-    const int x1 = std::min(cols - 2, anchor_x + half_window);
-    bool found = false;
-    int best_x = -1;
-    int best_dist = std::numeric_limits<int>::max();
-    for (int x = x0; x <= x1; ++x)
-    {
-        if (!IsValidRightTrackBoundaryTransition(row, cols, x))
-        {
-            continue;
-        }
-        const int dist = std::abs(x - anchor_x);
-        if (!found || dist < best_dist || (dist == best_dist && x > best_x))
-        {
-            found = true;
-            best_x = x;
-            best_dist = dist;
-        }
-    }
-
-    if (!found)
-    {
-        return false;
-    }
-    *out_x = best_x;
-    return true;
-}
-
-static bool FindLeftTrackBoundaryOnRowFull(const unsigned char* row, int cols, int* out_x)
-{
-    if (out_x == nullptr || row == nullptr || cols <= 2)
-    {
-        return false;
-    }
-    for (int x = 1; x < cols - 1; ++x)
-    {
-        if (IsValidLeftTrackBoundaryTransition(row, cols, x))
-        {
-            *out_x = x;
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool FindRightTrackBoundaryOnRowFull(const unsigned char* row, int cols, int* out_x)
-{
-    if (out_x == nullptr || row == nullptr || cols <= 2)
-    {
-        return false;
-    }
-    for (int x = cols - 2; x >= 1; --x)
-    {
-        if (IsValidRightTrackBoundaryTransition(row, cols, x))
-        {
-            *out_x = x;
-            return true;
-        }
-    }
-    return false;
-}
-
 static void TraceTaskWhiteBoundaryLeftMaze(const cv::Mat& white_mask,
                                            int start_y,
                                            int start_x,
@@ -1187,54 +1034,6 @@ static void RasterizeTaskTrackBoundaryPoints(const std::vector<cv::Point>& point
     }
 }
 
-static void FillTaskTrackBoundaryRows(const cv::Mat& white_mask,
-                                      bool is_left,
-                                      int top_y,
-                                      int bottom_y,
-                                      int seed_x,
-                                      std::vector<int>* x_by_row)
-{
-    if (x_by_row == nullptr || white_mask.empty())
-    {
-        return;
-    }
-
-    int prev_x = seed_x;
-    for (int y = bottom_y; y >= top_y; --y)
-    {
-        if ((*x_by_row)[y] >= 0)
-        {
-            prev_x = (*x_by_row)[y];
-            continue;
-        }
-
-        const unsigned char* row = white_mask.ptr<unsigned char>(y);
-        int found_x = -1;
-        bool found = false;
-        if (prev_x >= 0)
-        {
-            found = is_left
-                ? FindLeftTrackBoundaryOnRowWindow(
-                      row, white_mask.cols, prev_x, kTrackWhiteFallbackHalfWindow, &found_x)
-                : FindRightTrackBoundaryOnRowWindow(
-                      row, white_mask.cols, prev_x, kTrackWhiteFallbackHalfWindow, &found_x);
-        }
-        if (!found)
-        {
-            found = is_left
-                ? FindLeftTrackBoundaryOnRowFull(row, white_mask.cols, &found_x)
-                : FindRightTrackBoundaryOnRowFull(row, white_mask.cols, &found_x);
-        }
-        if (!found)
-        {
-            continue;
-        }
-
-        (*x_by_row)[y] = found_x;
-        prev_x = found_x;
-    }
-}
-
 static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
                                         int reference_x_min,
                                         int reference_x_max,
@@ -1374,44 +1173,6 @@ static cv::Rect BuildTaskTrackSearchRect(const TaskTrackBoundaryState& state,
         return rect;
     }
     return clamped;
-}
-
-static int FindNearestTaskTrackBoundaryRow(const TaskTrackBoundaryState& state, int target_y)
-{
-    if (!state.valid || target_y < 0)
-    {
-        return -1;
-    }
-
-    const int y0 = std::max(state.top_y, std::min(target_y, state.bottom_y));
-    if (state.left_x_by_row[y0] >= 0 &&
-        state.right_x_by_row[y0] >= 0 &&
-        state.left_x_by_row[y0] < state.right_x_by_row[y0])
-    {
-        return y0;
-    }
-
-    for (int gap = 1; gap <= kTrackBoundaryNearestRowGap; ++gap)
-    {
-        const int up_y = y0 - gap;
-        if (up_y >= state.top_y &&
-            state.left_x_by_row[up_y] >= 0 &&
-            state.right_x_by_row[up_y] >= 0 &&
-            state.left_x_by_row[up_y] < state.right_x_by_row[up_y])
-        {
-            return up_y;
-        }
-
-        const int down_y = y0 + gap;
-        if (down_y <= state.bottom_y &&
-            state.left_x_by_row[down_y] >= 0 &&
-            state.right_x_by_row[down_y] >= 0 &&
-            state.left_x_by_row[down_y] < state.right_x_by_row[down_y])
-        {
-            return down_y;
-        }
-    }
-    return -1;
 }
 
 static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(

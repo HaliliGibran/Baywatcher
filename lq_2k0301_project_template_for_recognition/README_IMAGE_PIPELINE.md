@@ -202,11 +202,6 @@
 
 ### 4.3 红框触发几何参数
 
-- `BW_RECOG_ROI_METHOD`
-  - `0 = direct_red_quad`
-  - `1 = ipm_square_from_top_edge`
-  - 当前默认 `1`
-  - 与 `yolo` 当前训练流程保持一致
 - `BW_RECOG_CAMERA_FPS`
   - 识别板相机帧率
   - 当前默认 `30`
