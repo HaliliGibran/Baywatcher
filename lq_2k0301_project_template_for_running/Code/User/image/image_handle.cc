@@ -136,12 +136,19 @@ void ResetPureAnglePreviewTransitionState()
 // 功能: 迷宫法爬左边线
 // 类型: 图像处理函数
 // 关键参数: img-二值图, h/w-起点坐标, pts/line_num-输出点列
-void SearchLineAdaptive_Left(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h, int32_t w, int32_t (&pts)[PT_MAXLEN][2], int32_t* line_num)
+void SearchLineAdaptive_Left(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h, int32_t w, int32_t (&pts)[PT_MAXLEN][2], int32_t* line_num, int32_t max_points)
 {
+    if (line_num == nullptr)
+    {
+        return;
+    }
+    if (max_points < 0) max_points = 0;
+    if (max_points > PT_MAXLEN) max_points = PT_MAXLEN;
+
     int step = 0 , dir = 0 , turn = 0 , pts_len = 0; // 局部: 迷宫爬线状态与输出长度
     const int (*df)[2] = direction_front;
     const int (*dfl)[2] = direction_frontleft;
-    while (step < PT_MAXLEN && turn < 4)
+    while (step < PT_MAXLEN && turn < 4 && pts_len < max_points)
     {
         if (!(w > 1 && w < IMAGE_W - 2 && h > 1 && h < IMAGE_H - 2))
         {
@@ -177,7 +184,7 @@ void SearchLineAdaptive_Left(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h, 
 
         if (w > 5 && w < IMAGE_W - 5)
         {
-            if (pts_len >= PT_MAXLEN)
+            if (pts_len >= max_points)
             {
                 break;
             }
@@ -193,12 +200,19 @@ void SearchLineAdaptive_Left(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h, 
 // 功能: 迷宫法爬右边线
 // 类型: 图像处理函数
 // 关键参数: img-二值图, h/w-起点坐标, pts/line_num-输出点列
-void SearchLineAdaptive_Right(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h, int32_t w, int32_t (&pts)[PT_MAXLEN][2], int32_t* line_num)
+void SearchLineAdaptive_Right(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h, int32_t w, int32_t (&pts)[PT_MAXLEN][2], int32_t* line_num, int32_t max_points)
 {
+    if (line_num == nullptr)
+    {
+        return;
+    }
+    if (max_points < 0) max_points = 0;
+    if (max_points > PT_MAXLEN) max_points = PT_MAXLEN;
+
     int step = 0 , dir = 0 , turn = 0 , pts_len = 0; // 局部: 迷宫爬线状态与输出长度
     const int (*df)[2] = direction_front;
     const int (*dfr)[2] = direction_frontright;
-    while (step < PT_MAXLEN && turn < 4)
+    while (step < PT_MAXLEN && turn < 4 && pts_len < max_points)
     {
         if (!(w > 1 && w < IMAGE_W - 2 && h > 1 && h < IMAGE_H - 2))
         {
@@ -234,7 +248,7 @@ void SearchLineAdaptive_Right(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h,
 
         if (w > 5 && w < IMAGE_W - 5)
         {
-            if (pts_len >= PT_MAXLEN)
+            if (pts_len >= max_points)
             {
                 break;
             }

@@ -18,6 +18,7 @@ namespace {
 using steady_clock_t = std::chrono::steady_clock;
 using steady_time_point_t = std::chrono::time_point<steady_clock_t>;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
+constexpr bool kRecognitionUToResultTimingLog = (BW_RECOG_U_TO_RESULT_TIMING_LOG_ENABLE != 0);
 
 struct RuntimeWhiteReferenceStats
 {
@@ -253,6 +254,252 @@ const char* VisionCodeText(BoardVisionCode code)
     case BoardVisionCode::NO_RESULT: return "u";
     case BoardVisionCode::UNKNOWN: return "n";
     default: return "-";
+    }
+}
+
+static bool IsRecognitionSuccessCode(BoardVisionCode code)
+{
+    return code == BoardVisionCode::VEHICLE ||
+           code == BoardVisionCode::WEAPON ||
+           code == BoardVisionCode::SUPPLY;
+}
+
+struct UToResultTimingState
+{
+    bool active = false;
+    steady_time_point_t trigger_read_begin;
+    uint64_t trigger_frame_seq = 0;
+    uint32_t frame_count = 0;
+    uint32_t u_packet_count = 0;
+    bool first_u_sent = false;
+    uint8_t first_u_tx_seq = 0;
+    double first_u_send_offset_ms = 0.0;
+};
+
+enum class RuntimeFrameStage
+{
+    DISABLED = 0,
+    MANUAL_IDLE,
+    TRY_ENTER,
+    PROCESS_RECOG,
+};
+
+struct RuntimeFrameTimingSample
+{
+    bool valid = false;
+    uint64_t frame_seq = 0;
+    uint64_t t_ms = 0;
+    RuntimeFrameStage stage = RuntimeFrameStage::TRY_ENTER;
+    BoardVisionCode code_before = BoardVisionCode::INVALID;
+    BoardVisionCode code_after = BoardVisionCode::INVALID;
+    bool in_recognition_before = false;
+    bool in_recognition_after = false;
+    bool entered_recognition = false;
+    bool exited_recognition = false;
+    steady_time_point_t read_begin;
+    steady_time_point_t chain_end;
+    steady_time_point_t send_end;
+    double capture_ms = 0.0;
+    double prepare_ms = 0.0;
+    double chain_ms = 0.0;
+    double overlay_ms = 0.0;
+    double send_state_ms = 0.0;
+    double publish_ms = 0.0;
+    double read_to_prepare_done_ms = 0.0;
+    double read_to_chain_done_ms = 0.0;
+    double read_to_overlay_done_ms = 0.0;
+    double read_to_send_done_ms = 0.0;
+    bool send_attempted = false;
+    bool send_ok = false;
+    uint8_t tx_seq = 0;
+    RecognitionChain::PerfSample perf;
+};
+
+static const char* RuntimeFrameStageText(RuntimeFrameStage stage)
+{
+    switch (stage)
+    {
+    case RuntimeFrameStage::DISABLED: return "识别关闭";
+    case RuntimeFrameStage::MANUAL_IDLE: return "手动待机";
+    case RuntimeFrameStage::TRY_ENTER: return "普通态触发";
+    case RuntimeFrameStage::PROCESS_RECOG: return "识别态推理";
+    default: return "未知阶段";
+    }
+}
+
+static double elapsed_ms_since(const steady_time_point_t& begin,
+                               const steady_time_point_t& end)
+{
+    return std::chrono::duration<double, std::milli>(end - begin).count();
+}
+
+static void PrintTimingFrameLine(const char* label,
+                                 const RuntimeFrameTimingSample& sample,
+                                 const steady_time_point_t& trace_begin)
+{
+    if (!sample.valid)
+    {
+        std::cout << "[识别耗时] " << label << ": 无" << std::endl;
+        return;
+    }
+
+    std::cout << "[识别耗时] " << label
+              << ": 帧号=" << sample.frame_seq
+              << ", 相对起点_ms=" << std::fixed << std::setprecision(2)
+              << elapsed_ms_since(trace_begin, sample.read_begin)
+              << ", 阶段=" << RuntimeFrameStageText(sample.stage)
+              << ", 状态=" << VisionCodeText(sample.code_before)
+              << "->" << VisionCodeText(sample.code_after)
+              << ", 识别态=" << (sample.in_recognition_before ? "1" : "0")
+              << "->" << (sample.in_recognition_after ? "1" : "0")
+              << ", 读帧_ms=" << sample.capture_ms
+              << ", 预处理_ms=" << sample.prepare_ms
+              << ", 链路处理_ms=" << sample.chain_ms
+              << ", 叠字_ms=" << sample.overlay_ms
+              << ", 发包_ms=" << (sample.send_attempted ? sample.send_state_ms : 0.0)
+              << ", 图传_ms=" << sample.publish_ms
+              << ", 读帧到预处理完成_ms=" << sample.read_to_prepare_done_ms
+              << ", 读帧到链路完成_ms=" << sample.read_to_chain_done_ms
+              << ", 读帧到叠字完成_ms=" << sample.read_to_overlay_done_ms
+              << ", 读帧到发包完成_ms="
+              << (sample.send_attempted ? sample.read_to_send_done_ms : 0.0)
+              << ", 发包成功=" << (sample.send_ok ? "是" : "否")
+              << ", 包序号=" << static_cast<int>(sample.tx_seq)
+              << std::endl;
+
+    std::cout << "[识别耗时] " << label
+              << ".细分: 普通态总耗时_ms=" << std::fixed << std::setprecision(2)
+              << sample.perf.try_total_ms
+              << ", 识别态总耗时_ms=" << sample.perf.process_recog_total_ms
+              << ", ROI总耗时_ms=" << sample.perf.extract_roi_ms
+              << ", 搜索框_ms=" << sample.perf.roi_search_rect_ms
+              << ", 边线爬线_ms=" << sample.perf.roi_track_boundary_ms
+              << ", 红色掩码_ms=" << sample.perf.roi_red_mask_ms
+              << ", 红块选择_ms=" << sample.perf.roi_red_band_ms
+              << ", 赛道区域判定_ms=" << sample.perf.roi_track_classify_ms
+              << ", ROI构建透视_ms=" << sample.perf.roi_build_warp_ms
+              << ", 模型推理_ms=" << sample.perf.onnx_infer_ms
+              << ", 分类总耗时_ms=" << sample.perf.classify_total_ms
+              << std::endl;
+}
+
+static void PrintUToResultTimingTrace(const UToResultTimingState& state,
+                                      const RuntimeFrameTimingSample& trigger_frame,
+                                      const RuntimeFrameTimingSample& enter_frame,
+                                      const RuntimeFrameTimingSample& result_frame)
+{
+    if (!result_frame.valid || !result_frame.send_ok)
+    {
+        return;
+    }
+
+    const double total_ms = elapsed_ms_since(state.trigger_read_begin, result_frame.send_end);
+    const double trigger_to_first_u_send_ms =
+        state.first_u_sent ? state.first_u_send_offset_ms : -1.0;
+    const double trigger_to_enter_read_ms =
+        enter_frame.valid ? elapsed_ms_since(state.trigger_read_begin, enter_frame.read_begin) : -1.0;
+    const double trigger_to_enter_done_ms =
+        enter_frame.valid ? elapsed_ms_since(state.trigger_read_begin, enter_frame.chain_end) : -1.0;
+    const double trigger_to_result_read_ms =
+        elapsed_ms_since(state.trigger_read_begin, result_frame.read_begin);
+
+    std::cout << "[识别耗时] 起始帧=" << state.trigger_frame_seq
+              << ", 结果=" << VisionCodeText(result_frame.code_after)
+              << ", 总耗时_读帧到结果发包完成_ms=" << std::fixed << std::setprecision(2)
+              << total_ms
+              << ", 触发到首次u发包完成_ms=" << trigger_to_first_u_send_ms
+              << ", 触发到进入识别帧读取_ms=" << trigger_to_enter_read_ms
+              << ", 触发到进入识别帧处理完成_ms=" << trigger_to_enter_done_ms
+              << ", 触发到结果帧读取_ms=" << trigger_to_result_read_ms
+              << ", 经历帧数=" << state.frame_count
+              << ", u包数量=" << state.u_packet_count
+              << ", 首次u包序号="
+              << (state.first_u_sent ? static_cast<int>(state.first_u_tx_seq) : -1)
+              << ", 结果包序号=" << static_cast<int>(result_frame.tx_seq)
+              << std::endl;
+
+    PrintTimingFrameLine("触发u帧", trigger_frame, state.trigger_read_begin);
+    PrintTimingFrameLine("进入识别态帧", enter_frame, state.trigger_read_begin);
+    PrintTimingFrameLine("结果帧", result_frame, state.trigger_read_begin);
+}
+
+static void UpdateUToResultTimingAfterFrame(UToResultTimingState* state,
+                                            const RuntimeFrameTimingSample& sample)
+{
+    if (!kRecognitionUToResultTimingLog || state == nullptr || !sample.valid)
+    {
+        return;
+    }
+
+    static RuntimeFrameTimingSample trigger_frame;
+    static RuntimeFrameTimingSample enter_frame;
+
+    const bool triggers_u =
+        sample.code_before != BoardVisionCode::NO_RESULT &&
+        sample.code_after == BoardVisionCode::NO_RESULT;
+
+    if (!state->active)
+    {
+        if (!triggers_u)
+        {
+            return;
+        }
+
+        *state = UToResultTimingState();
+        state->active = true;
+        state->trigger_read_begin = sample.read_begin;
+        state->trigger_frame_seq = sample.frame_seq;
+        trigger_frame = sample;
+        enter_frame = RuntimeFrameTimingSample();
+    }
+
+    ++state->frame_count;
+
+    if (sample.entered_recognition && !enter_frame.valid)
+    {
+        enter_frame = sample;
+    }
+
+    if (sample.send_ok && sample.code_after == BoardVisionCode::NO_RESULT)
+    {
+        if (!state->first_u_sent)
+        {
+            state->first_u_sent = true;
+            state->first_u_tx_seq = sample.tx_seq;
+            state->first_u_send_offset_ms =
+                elapsed_ms_since(state->trigger_read_begin, sample.send_end);
+        }
+        ++state->u_packet_count;
+        return;
+    }
+
+    if (sample.send_ok && IsRecognitionSuccessCode(sample.code_after))
+    {
+        PrintUToResultTimingTrace(*state, trigger_frame, enter_frame, sample);
+        *state = UToResultTimingState();
+        trigger_frame = RuntimeFrameTimingSample();
+        enter_frame = RuntimeFrameTimingSample();
+        return;
+    }
+
+    if (sample.send_ok &&
+        sample.code_after != BoardVisionCode::NO_RESULT &&
+        sample.code_after != BoardVisionCode::INVALID)
+    {
+        const double abort_ms = sample.send_attempted
+            ? elapsed_ms_since(state->trigger_read_begin, sample.send_end)
+            : elapsed_ms_since(state->trigger_read_begin, sample.chain_end);
+        std::cout << "[识别耗时] 统计中止_ms=" << std::fixed << std::setprecision(2)
+                  << abort_ms
+                  << ", 中止状态=" << VisionCodeText(sample.code_after)
+                  << ", 经历帧数=" << state->frame_count
+                  << ", u包数量=" << state->u_packet_count
+                  << std::endl;
+        PrintTimingFrameLine("触发u帧", trigger_frame, state->trigger_read_begin);
+        PrintTimingFrameLine("中止帧", sample, state->trigger_read_begin);
+        *state = UToResultTimingState();
+        trigger_frame = RuntimeFrameTimingSample();
+        enter_frame = RuntimeFrameTimingSample();
     }
 }
 
@@ -514,6 +761,8 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
     BoardVisionCode last_sent_code = BoardVisionCode::INVALID;
     uint64_t last_send_ms = 0;
     uint64_t last_consumed_frame_seq = 0;
+    uint64_t runtime_frame_seq = 0;
+    UToResultTimingState u_to_result_timing;
     const bool render_debug = stream_enabled;
     const bool latest_frame_enabled = (BW_RECOG_LATEST_FRAME_ENABLE != 0);
     bool latest_frame_running = false;
@@ -552,12 +801,16 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
     {
         const steady_time_point_t loop_begin = steady_clock_t::now();
         double capture_ms = 0.0;
+        double prepare_ms = 0.0;
+        double chain_ms = 0.0;
         double overlay_ms = 0.0;
         double send_state_ms = 0.0;
         double publish_ms = 0.0;
         uint64_t current_frame_seq = 0;
         bool send_state_called = false;
+        bool send_state_ok = false;
         bool publish_called = false;
+        steady_time_point_t send_end_time;
 
         // 1. 测试模式下，按 c 手动启动一次检测与识别链
         HandleManualRecognitionStart(&recognition, &manual_test_started);
@@ -598,14 +851,31 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
             }
             last_consumed_frame_seq = current_frame_seq;
         }
+        if (current_frame_seq == 0)
+        {
+            current_frame_seq = ++runtime_frame_seq;
+        }
+        else
+        {
+            runtime_frame_seq = current_frame_seq;
+        }
 
+        const steady_time_point_t frame_read_begin = capture_begin;
+        const BoardVisionCode code_before_frame = recognition.GetCurrentVisionCode();
+        const bool in_recognition_before = recognition.IsInRecognitionMode();
         const uint64_t t_ms = recognition_runtime::now_ms();
+        const steady_time_point_t prepare_begin = steady_clock_t::now();
         recognition_runtime::prepare_frame_for_processing(
             &img,
-            !recognition.IsInRecognitionMode() && !recognition.HasRecentRedCandidate(t_ms));
+            !in_recognition_before && !recognition.HasRecentRedCandidate(t_ms));
+        const steady_time_point_t prepare_end = steady_clock_t::now();
+        prepare_ms = elapsed_ms_between(prepare_begin, prepare_end);
 
+        RuntimeFrameStage frame_stage = RuntimeFrameStage::TRY_ENTER;
+        const steady_time_point_t chain_begin = steady_clock_t::now();
         if (!recognition.IsEnabled())
         {
+            frame_stage = RuntimeFrameStage::DISABLED;
             if (render_debug)
             {
                 RenderRecognitionDisabledView(img, view);
@@ -617,11 +887,13 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         }
         else if (recognition.IsInRecognitionMode())
         {
+            frame_stage = RuntimeFrameStage::PROCESS_RECOG;
             // 3. 识别态直接消费当前 320x240 原图做 ROI 分类
             recognition.ProcessRecognitionFrame(img, t_ms, view, render_debug);
         }
         else if (BW_RECOG_REQUIRE_MANUAL_START != 0 && !manual_test_started)
         {
+            frame_stage = RuntimeFrameStage::MANUAL_IDLE;
             // 4. 测试门控开启且尚未按 c 时，只维持待机画面，不开始红块检测。
             if (render_debug)
             {
@@ -634,6 +906,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         }
         else
         {
+            frame_stage = RuntimeFrameStage::TRY_ENTER;
             if (!recognition.TryEnterRecognition(
                      img,
                      t_ms,
@@ -647,8 +920,11 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                 // 5. 普通态触发命中时，识别链已切入 RECOGNITION。
             }
         }
+        const steady_time_point_t chain_end = steady_clock_t::now();
+        chain_ms = elapsed_ms_between(chain_begin, chain_end);
 
         const bool in_recognition_now = recognition.IsInRecognitionMode();
+        const BoardVisionCode code_after_chain = recognition.GetCurrentVisionCode();
         manual_cycle_finished = false;
         if (BW_RECOG_REQUIRE_MANUAL_START != 0 &&
             manual_test_started &&
@@ -661,13 +937,13 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
 
         const steady_time_point_t overlay_begin = steady_clock_t::now();
         RenderVisionStateOverlay(view,
-                                 recognition.GetCurrentVisionCode(),
+                                 code_after_chain,
                                  recognition.GetCurrentBlobArea());
         const steady_time_point_t overlay_end = steady_clock_t::now();
         overlay_ms = elapsed_ms_between(overlay_begin, overlay_end);
 
         // 6. 状态流模式下，状态变化立即发包；未变化时按心跳周期补发。
-        const BoardVisionCode code = recognition.GetCurrentVisionCode();
+        const BoardVisionCode code = code_after_chain;
         bool should_send_state = false;
         if (code != last_sent_code)
         {
@@ -687,8 +963,9 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         if (should_send_state)
         {
             const steady_time_point_t send_begin = steady_clock_t::now();
-            comm.send_state(code, tx_seq);
+            send_state_ok = comm.send_state(code, tx_seq);
             const steady_time_point_t send_end = steady_clock_t::now();
+            send_end_time = send_end;
             send_state_ms = elapsed_ms_between(send_begin, send_end);
             send_state_called = true;
             last_send_ms = t_ms;
@@ -700,6 +977,38 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         const steady_time_point_t publish_end = steady_clock_t::now();
         publish_ms = elapsed_ms_between(publish_begin, publish_end);
         publish_called = true;
+
+        RuntimeFrameTimingSample timing_sample;
+        timing_sample.valid = true;
+        timing_sample.frame_seq = current_frame_seq;
+        timing_sample.t_ms = t_ms;
+        timing_sample.stage = frame_stage;
+        timing_sample.code_before = code_before_frame;
+        timing_sample.code_after = code_after_chain;
+        timing_sample.in_recognition_before = in_recognition_before;
+        timing_sample.in_recognition_after = in_recognition_now;
+        timing_sample.entered_recognition = !in_recognition_before && in_recognition_now;
+        timing_sample.exited_recognition = in_recognition_before && !in_recognition_now;
+        timing_sample.read_begin = frame_read_begin;
+        timing_sample.chain_end = chain_end;
+        timing_sample.send_end = send_end_time;
+        timing_sample.capture_ms = capture_ms;
+        timing_sample.prepare_ms = prepare_ms;
+        timing_sample.chain_ms = chain_ms;
+        timing_sample.overlay_ms = overlay_ms;
+        timing_sample.send_state_ms = send_state_ms;
+        timing_sample.publish_ms = publish_ms;
+        timing_sample.read_to_prepare_done_ms = elapsed_ms_between(frame_read_begin, prepare_end);
+        timing_sample.read_to_chain_done_ms = elapsed_ms_between(frame_read_begin, chain_end);
+        timing_sample.read_to_overlay_done_ms = elapsed_ms_between(frame_read_begin, overlay_end);
+        timing_sample.read_to_send_done_ms = send_state_called
+            ? elapsed_ms_between(frame_read_begin, send_end_time)
+            : 0.0;
+        timing_sample.send_attempted = send_state_called;
+        timing_sample.send_ok = send_state_ok;
+        timing_sample.tx_seq = tx_seq;
+        timing_sample.perf = recognition.GetLastPerfSample();
+        UpdateUToResultTimingAfterFrame(&u_to_result_timing, timing_sample);
 
         if (manual_cycle_finished)
         {

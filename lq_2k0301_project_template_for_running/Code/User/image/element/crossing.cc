@@ -30,6 +30,33 @@ int pts_right_corner_id = -1;
 static int g_lost_line_counter = 0;
 static CrossingState g_last_state = CrossingState::CROSSING_NONE;
 
+static inline int crossing_far_line_maxlen()
+{
+    int maxlen = BW_CROSSING_FAR_LINE_MAXLEN;
+    if (maxlen < 0) maxlen = 0;
+    if (maxlen > PT_MAXLEN) maxlen = PT_MAXLEN;
+    return maxlen;
+}
+
+static inline void clamp_crossing_far_line_counts(pts_well_processed& line)
+{
+    const int maxlen = crossing_far_line_maxlen();
+    if (line.pts_count > maxlen) line.pts_count = maxlen;
+    if (line.pts_inv_count > maxlen) line.pts_inv_count = maxlen;
+    if (line.pts_filter_count > maxlen) line.pts_filter_count = maxlen;
+    if (line.pts_resample_count > maxlen) line.pts_resample_count = maxlen;
+    if (line.curvature_num > maxlen) line.curvature_num = maxlen;
+    if (line.curvature_nms_num > maxlen) line.curvature_nms_num = maxlen;
+    if (line.mid_count > maxlen) line.mid_count = maxlen;
+}
+
+static inline void process_crossing_far_line(bool is_left, pts_well_processed& line)
+{
+    clamp_crossing_far_line_counts(line);
+    process_line(is_left, line);
+    clamp_crossing_far_line_counts(line);
+}
+
 // 功能: 十字状态机复位
 // 类型: 图像处理函数
 // 关键参数: 无
@@ -207,12 +234,16 @@ void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
             {
                 if(far_right_start_pt[1] - far_left_start_pt[1] > 0 && far_right_start_pt[1] - far_left_start_pt[1] < compare_dist_x)
                 {
-                    SearchLineAdaptive_Left(img, far_left_start_pt[0], far_left_start_pt[1], pts_far_left.pts, &pts_far_left.pts_count);
-                    SearchLineAdaptive_Right(img, far_right_start_pt[0], far_right_start_pt[1], pts_far_right.pts, &pts_far_right.pts_count);
+                    SearchLineAdaptive_Left(img, far_left_start_pt[0], far_left_start_pt[1],
+                                            pts_far_left.pts, &pts_far_left.pts_count,
+                                            crossing_far_line_maxlen());
+                    SearchLineAdaptive_Right(img, far_right_start_pt[0], far_right_start_pt[1],
+                                             pts_far_right.pts, &pts_far_right.pts_count,
+                                             crossing_far_line_maxlen());
 
                     // 走完整流水线，得到远端 mid
-                    process_line(true, pts_far_left);
-                    process_line(false, pts_far_right);
+                    process_crossing_far_line(true, pts_far_left);
+                    process_crossing_far_line(false, pts_far_right);
 
                     if_find_far_line = (pts_far_left.mid_count > 0 && pts_far_right.mid_count > 0);
                     break;
@@ -252,12 +283,16 @@ void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
             {
                 if(far_right_start_pt[1] - far_left_start_pt[1] > 0)
                 {
-                    SearchLineAdaptive_Left(img, far_left_start_pt[0], far_left_start_pt[1], pts_far_left.pts, &pts_far_left.pts_count);
-                    SearchLineAdaptive_Right(img, far_right_start_pt[0], far_right_start_pt[1], pts_far_right.pts, &pts_far_right.pts_count);
+                    SearchLineAdaptive_Left(img, far_left_start_pt[0], far_left_start_pt[1],
+                                            pts_far_left.pts, &pts_far_left.pts_count,
+                                            crossing_far_line_maxlen());
+                    SearchLineAdaptive_Right(img, far_right_start_pt[0], far_right_start_pt[1],
+                                             pts_far_right.pts, &pts_far_right.pts_count,
+                                             crossing_far_line_maxlen());
 
                     // 走完整流水线，得到远端 mid
-                    process_line(true, pts_far_left);
-                    process_line(false, pts_far_right);
+                    process_crossing_far_line(true, pts_far_left);
+                    process_crossing_far_line(false, pts_far_right);
 
                     if_find_far_line = (pts_far_left.mid_count > 0 && pts_far_right.mid_count > 0);
                     break;

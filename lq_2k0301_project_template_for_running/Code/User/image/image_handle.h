@@ -20,12 +20,14 @@ void SearchLine_Rpt(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, int
 // 类型: 图像处理函数
 // 关键参数: img-二值图, h/w-起点像素坐标, pts/line_num-输出点列
 void SearchLineAdaptive_Left(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h, int32_t w,
-                            int32_t (&pts)[PT_MAXLEN][2], int32_t* line_num);
+                            int32_t (&pts)[PT_MAXLEN][2], int32_t* line_num,
+                            int32_t max_points = PT_MAXLEN);
 // 功能: 右侧爬线（迷宫法）
 // 类型: 图像处理函数
 // 关键参数: img-二值图, h/w-起点像素坐标, pts/line_num-输出点列
 void SearchLineAdaptive_Right(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h, int32_t w,
-                             int32_t (&pts)[PT_MAXLEN][2], int32_t* line_num);
+                             int32_t (&pts)[PT_MAXLEN][2], int32_t* line_num,
+                             int32_t max_points = PT_MAXLEN);
 
 // 功能: 左侧寻线扩展版（可只找起点或完整爬线）
 // 类型: 图像处理函数

@@ -120,6 +120,13 @@ struct RoiExtractionResult
 
     bool has_ipm_backproject_height_ratio = false;
     float ipm_backproject_height_ratio = 0.0f;
+
+    double timing_search_rect_ms = 0.0;
+    double timing_track_boundary_ms = 0.0;
+    double timing_red_mask_ms = 0.0;
+    double timing_red_band_ms = 0.0;
+    double timing_track_classify_ms = 0.0;
+    double timing_roi_build_warp_ms = 0.0;
 };
 
 struct RoiQualityMetrics

@@ -18,6 +18,12 @@ public:
         double ultra_precheck_ms = 0.0;
         double hsv_precheck_ms = 0.0;
         double extract_roi_ms = 0.0;
+        double roi_search_rect_ms = 0.0;
+        double roi_track_boundary_ms = 0.0;
+        double roi_red_mask_ms = 0.0;
+        double roi_red_band_ms = 0.0;
+        double roi_track_classify_ms = 0.0;
+        double roi_build_warp_ms = 0.0;
         double onnx_infer_ms = 0.0;
         double classify_total_ms = 0.0;
         double try_total_ms = 0.0;

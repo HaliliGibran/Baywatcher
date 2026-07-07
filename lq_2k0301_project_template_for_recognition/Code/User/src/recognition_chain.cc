@@ -1046,6 +1046,22 @@ static ProbabilityDecisionSummary summarize_probabilities(const std::array<float
     return summary;
 }
 
+static void copy_roi_timing_to_perf(const RoiExtractionResult& roi_result,
+                                    RecognitionChain::PerfSample* perf_sample)
+{
+    if (perf_sample == nullptr)
+    {
+        return;
+    }
+
+    perf_sample->roi_search_rect_ms = roi_result.timing_search_rect_ms;
+    perf_sample->roi_track_boundary_ms = roi_result.timing_track_boundary_ms;
+    perf_sample->roi_red_mask_ms = roi_result.timing_red_mask_ms;
+    perf_sample->roi_red_band_ms = roi_result.timing_red_band_ms;
+    perf_sample->roi_track_classify_ms = roi_result.timing_track_classify_ms;
+    perf_sample->roi_build_warp_ms = roi_result.timing_roi_build_warp_ms;
+}
+
 } // namespace
 
 bool RecognitionChain::DefaultEnabled()
@@ -1303,6 +1319,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     last_perf_sample_.extract_roi_ms =
         std::chrono::duration<double, std::milli>(extract_end - extract_begin).count();
     last_perf_sample_.extract_roi_called = true;
+    copy_roi_timing_to_perf(trigger_roi, &last_perf_sample_);
     if (render_debug)
     {
         DrawRoiDebugOverlay(view, trigger_roi);
@@ -1576,6 +1593,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     last_perf_sample_.extract_roi_ms =
         std::chrono::duration<double, std::milli>(extract_end - extract_begin).count();
     last_perf_sample_.extract_roi_called = true;
+    copy_roi_timing_to_perf(roi_result, &last_perf_sample_);
     if (render_debug)
     {
         DrawRoiDebugOverlay(view, roi_result);

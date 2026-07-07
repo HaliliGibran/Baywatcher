@@ -3,11 +3,20 @@
 #include "common.h"
 #include "transform_table.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <sstream>
 
 namespace {
+
+using steady_clock_t = std::chrono::steady_clock;
+
+static double elapsed_ms(const steady_clock_t::time_point& begin,
+                         const steady_clock_t::time_point& end)
+{
+    return std::chrono::duration<double, std::milli>(end - begin).count();
+}
 
 constexpr int kIpmFrameWidth = BW_RECOG_TRANSFORM_TABLE_WIDTH;
 constexpr int kIpmFrameHeight = BW_RECOG_TRANSFORM_TABLE_HEIGHT;
@@ -1991,6 +2000,7 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     int reference_span_count = 0;
     bool has_reference_x_range = false;
     std::string reference_range_source = "fallback";
+    const auto search_rect_begin = steady_clock_t::now();
     const cv::Rect fallback_search_rect = BuildTaskSearchRect(
         frame_bgr,
         &reference_x_min,
@@ -1998,6 +2008,7 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
         &has_reference_x_range,
         &reference_span_count,
         &reference_range_source);
+    result.timing_search_rect_ms = elapsed_ms(search_rect_begin, steady_clock_t::now());
     result.reference_range_source = reference_range_source;
     if (has_reference_x_range)
     {
@@ -2008,12 +2019,14 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     }
 
     TaskTrackBoundaryState track_state;
+    const auto track_boundary_begin = steady_clock_t::now();
     const bool has_track_boundaries = BuildTaskTrackBoundaryState(
         frame_bgr,
         reference_x_min,
         reference_x_max,
         has_reference_x_range,
         &track_state);
+    result.timing_track_boundary_ms = elapsed_ms(track_boundary_begin, steady_clock_t::now());
     result.track_left_boundary =
         BuildTrackBoundaryDisplayPoints(track_state.seed_left_x, track_state.seed_y, track_state.left_points);
     result.track_right_boundary =
@@ -2032,6 +2045,7 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     }
     result.has_search_rect = true;
 
+    const auto red_mask_begin = steady_clock_t::now();
     cv::Mat red_mask = BuildTaskStrictRedMaskRect(frame_bgr, result.search_rect);
     int expand_steps = 0;
     while (expand_steps < kTaskEdgeExpandMaxSteps)
@@ -2061,15 +2075,19 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
         red_mask = BuildTaskStrictRedMaskRect(frame_bgr, result.search_rect);
         ++expand_steps;
     }
+    result.timing_red_mask_ms = elapsed_ms(red_mask_begin, steady_clock_t::now());
 
     std::vector<cv::Point> candidate_contour;
     cv::Rect candidate_box;
     double candidate_area = 0.0;
+    const auto red_band_begin = steady_clock_t::now();
     if (!ChooseLowestTaskRedBand(red_mask, result.search_rect, &candidate_contour, &candidate_box, &candidate_area))
     {
+        result.timing_red_band_ms = elapsed_ms(red_band_begin, steady_clock_t::now());
         result.status = "miss";
         return result;
     }
+    result.timing_red_band_ms = elapsed_ms(red_band_begin, steady_clock_t::now());
 
     result.has_loose_blob_box = true;
     result.loose_blob_box = candidate_box;
@@ -2089,10 +2107,12 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     result.candidate_height = candidate_box.height;
 
     TaskTrackClassification track_classification;
+    const auto track_classify_begin = steady_clock_t::now();
     if (has_track_boundaries)
     {
         track_classification = ClassifyTaskCandidateByTrackBoundary(track_state, candidate_box);
     }
+    result.timing_track_classify_ms = elapsed_ms(track_classify_begin, steady_clock_t::now());
 
     if (track_classification.classify_point.x >= 0 && track_classification.classify_point.y >= 0)
     {
@@ -2120,6 +2140,7 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     }
     result.target_type = "marker";
 
+    const auto roi_build_warp_begin = steady_clock_t::now();
     result.blob_quad = RotatedBoxPointsFromContour(candidate_contour);
     const BuildRoiQuadResult build_result =
         BuildRoiQuadFromBlobQuad(result.blob_quad, image_width, image_height, roi_method);
@@ -2133,6 +2154,7 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     result.ipm_reason = build_result.ipm_reason;
     if (!build_result.valid)
     {
+        result.timing_roi_build_warp_ms = elapsed_ms(roi_build_warp_begin, steady_clock_t::now());
         result.status = build_result.status;
         return result;
     }
@@ -2141,9 +2163,11 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     result.roi_bgr = WarpRoiFromQuad(frame_bgr, result.roi_quad, output_size);
     if (result.roi_bgr.empty())
     {
+        result.timing_roi_build_warp_ms = elapsed_ms(roi_build_warp_begin, steady_clock_t::now());
         result.status = "ipm_backproject_invalid";
         return result;
     }
+    result.timing_roi_build_warp_ms = elapsed_ms(roi_build_warp_begin, steady_clock_t::now());
 
     result.status = "rotated_roi";
     return result;
