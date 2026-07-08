@@ -88,7 +88,6 @@
 #define ROADWIDTH             (0.45f)  // 赛道宽度（米）
 
 #define PT_MAXLEN             (80)     // 近线/常规中线/路径点列最大长度
-#define BW_CROSSING_FAR_LINE_MAXLEN (20) // 十字远线边线/中线最大有效长度
 #pragma endregion
 
 #pragma region 图像预处理与寻线基础参数

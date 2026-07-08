@@ -32,17 +32,37 @@ static int g_lost_line_counter = 0;
 static int g_found_line_counter = 0;
 static CrossingState g_last_state = CrossingState::CROSSING_NONE;
 
-static inline int crossing_far_line_maxlen()
+static inline int crossing_clamp_far_line_maxlen(int maxlen)
 {
-    int maxlen = BW_CROSSING_FAR_LINE_MAXLEN;
     if (maxlen < 0) maxlen = 0;
     if (maxlen > PT_MAXLEN) maxlen = PT_MAXLEN;
     return maxlen;
 }
 
-static inline void clamp_crossing_far_line_counts(pts_well_processed& line)
+static inline int crossing_far_line_maxlen_for_start_y(int start_y)
 {
-    const int maxlen = crossing_far_line_maxlen();
+    const int far_y = 55;
+    const int near_y = 115;
+    const int far_len = 20;
+    const int near_len = 80;
+
+    if (start_y <= far_y) return crossing_clamp_far_line_maxlen(far_len);
+    if (start_y >= near_y) return crossing_clamp_far_line_maxlen(near_len);
+
+    const int maxlen = far_len + (start_y - far_y) * (near_len - far_len) / (near_y - far_y);
+    return crossing_clamp_far_line_maxlen(maxlen);
+}
+
+static inline int crossing_far_line_maxlen_for_start_pts(const int32_t (&left_pt)[2],
+                                                         const int32_t (&right_pt)[2])
+{
+    const int start_y = (left_pt[0] > right_pt[0]) ? left_pt[0] : right_pt[0];
+    return crossing_far_line_maxlen_for_start_y(start_y);
+}
+
+static inline void clamp_crossing_far_line_counts(pts_well_processed& line, int maxlen)
+{
+    maxlen = crossing_clamp_far_line_maxlen(maxlen);
     if (line.pts_count > maxlen) line.pts_count = maxlen;
     if (line.pts_inv_count > maxlen) line.pts_inv_count = maxlen;
     if (line.pts_filter_count > maxlen) line.pts_filter_count = maxlen;
@@ -52,11 +72,11 @@ static inline void clamp_crossing_far_line_counts(pts_well_processed& line)
     if (line.mid_count > maxlen) line.mid_count = maxlen;
 }
 
-static inline void process_crossing_far_line(bool is_left, pts_well_processed& line)
+static inline void process_crossing_far_line(bool is_left, pts_well_processed& line, int maxlen)
 {
-    clamp_crossing_far_line_counts(line);
+    clamp_crossing_far_line_counts(line, maxlen);
     process_line(is_left, line);
-    clamp_crossing_far_line_counts(line);
+    clamp_crossing_far_line_counts(line, maxlen);
 }
 
 static inline bool crossing_far_start_ipm_distance_ok(const int32_t (&left_pt)[2],
@@ -284,16 +304,18 @@ void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
             {
                 if(far_right_start_pt[1] - far_left_start_pt[1] > 0 && far_right_start_pt[1] - far_left_start_pt[1] < compare_dist_x)
                 {
+                    const int far_line_maxlen =
+                        crossing_far_line_maxlen_for_start_pts(far_left_start_pt, far_right_start_pt);
                     SearchLineAdaptive_Left(img, far_left_start_pt[0], far_left_start_pt[1],
                                             pts_far_left.pts, &pts_far_left.pts_count,
-                                            crossing_far_line_maxlen());
+                                            far_line_maxlen);
                     SearchLineAdaptive_Right(img, far_right_start_pt[0], far_right_start_pt[1],
                                              pts_far_right.pts, &pts_far_right.pts_count,
-                                             crossing_far_line_maxlen());
+                                             far_line_maxlen);
 
                     // 走完整流水线，得到远端 mid
-                    process_crossing_far_line(true, pts_far_left);
-                    process_crossing_far_line(false, pts_far_right);
+                    process_crossing_far_line(true, pts_far_left, far_line_maxlen);
+                    process_crossing_far_line(false, pts_far_right, far_line_maxlen);
 
                     if_find_far_line = (pts_far_left.mid_count > 0 && pts_far_right.mid_count > 0);
                     break;
@@ -334,16 +356,18 @@ void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
             {
                 if(far_right_start_pt[1] - far_left_start_pt[1] > 0)
                 {
+                    const int far_line_maxlen =
+                        crossing_far_line_maxlen_for_start_pts(far_left_start_pt, far_right_start_pt);
                     SearchLineAdaptive_Left(img, far_left_start_pt[0], far_left_start_pt[1],
                                             pts_far_left.pts, &pts_far_left.pts_count,
-                                            crossing_far_line_maxlen());
+                                            far_line_maxlen);
                     SearchLineAdaptive_Right(img, far_right_start_pt[0], far_right_start_pt[1],
                                              pts_far_right.pts, &pts_far_right.pts_count,
-                                             crossing_far_line_maxlen());
+                                             far_line_maxlen);
 
                     // 走完整流水线，得到远端 mid
-                    process_crossing_far_line(true, pts_far_left);
-                    process_crossing_far_line(false, pts_far_right);
+                    process_crossing_far_line(true, pts_far_left, far_line_maxlen);
+                    process_crossing_far_line(false, pts_far_right, far_line_maxlen);
 
                     if_find_far_line = (pts_far_left.mid_count > 0 && pts_far_right.mid_count > 0);
                     break;
