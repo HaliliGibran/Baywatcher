@@ -99,7 +99,7 @@
 
 // [一般别动] 正式红块搜索带上边界。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MIN
-#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 40
+#define BW_RECOG_TRIGGER_SEARCH_Y_MIN 60
 #endif
 
 // [谨慎调] 仅用于提前发 u / 减速的前置红色检测带上边界。
@@ -314,7 +314,7 @@
 #endif
 
 #ifndef BW_RECOG_U_TO_RESULT_TIMING_LOG_ENABLE
-#define BW_RECOG_U_TO_RESULT_TIMING_LOG_ENABLE 1
+#define BW_RECOG_U_TO_RESULT_TIMING_LOG_ENABLE 0
 #endif
 
 #ifndef BW_RECOG_VERBOSE_LOG

@@ -108,8 +108,8 @@ static inline float clamp_remote_follow_factor_no_reverse(float factor,
 
 #pragma region 长直道加速
 
-// bool cfg_straight_accel_enable = true;      // 是否开启直道加速
-bool cfg_straight_accel_enable = false;      // 是否开启直道加速
+bool cfg_straight_accel_enable = true;      // 是否开启直道加速
+// bool cfg_straight_accel_enable = false;      // 是否开启直道加速
 
 // float cfg_straight_accel_max_add = 8.0f;    // 作用上限：直道加速最大补偿速度
 float cfg_straight_accel_max_add = 6.0f;
@@ -922,10 +922,19 @@ static CubePIDSpecialOwner cube_pid_special_owner = CubePIDSpecialOwner::NONE;
 static CircleState last_circle_pid_state = CircleState::CIRCLE_NONE;
 static CircleDirection last_circle_pid_direction = CircleDirection::CIRCLE_DIR_NONE;
 
-// 20.04+6
+// // 20.04+6
+// // 左环岛特调参数：只区分入环和出环。
+// static const Cube_PID_Param_t left_circle_in_pid  = {6.845f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+// static const Cube_PID_Param_t left_circle_out_pid = {6.845f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+
+// // 右环岛特调参数：初值与左环岛相同，后续按实车表现分开修。
+// static const Cube_PID_Param_t right_circle_in_pid  = {6.925f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+// static const Cube_PID_Param_t right_circle_out_pid = {6.925f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+
+// 21+6
 // 左环岛特调参数：只区分入环和出环。
-static const Cube_PID_Param_t left_circle_in_pid  = {6.845f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
-static const Cube_PID_Param_t left_circle_out_pid = {6.845f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t left_circle_in_pid  = {6.885f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t left_circle_out_pid = {6.885f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
 
 // 右环岛特调参数：初值与左环岛相同，后续按实车表现分开修。
 static const Cube_PID_Param_t right_circle_in_pid  = {6.925f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
@@ -1084,11 +1093,17 @@ static CrossingBetweenFlowStage crossing_between_flow_stage = CrossingBetweenFlo
 static uint32_t crossing_between_no_crossing_ticks = 0;
 static CrossingState last_crossing_pid_state = CrossingState::CROSSING_NONE;
 
-// 20.04+6
-static const Cube_PID_Param_t crossing_between_pid = {6.745f, 0.5298f, 0.0f, 310.10f, 0.00100f, STEER_LIMIT, 100.0f};
+// // 20.04+6
+// static const Cube_PID_Param_t crossing_between_pid = {6.785f, 0.5298f, 0.0f, 310.10f, 0.00100f, STEER_LIMIT, 100.0f};
 
-static const Cube_PID_Param_t crossing_in_pid      = {6.845f, 0.5298f, 0.0f, 300.10f, 0.00100f, STEER_LIMIT, 100.0f};
-static const Cube_PID_Param_t crossing_running_pid = {6.845f, 0.5298f, 0.0f, 300.00f, 0.00100f, STEER_LIMIT, 100.0f};
+// static const Cube_PID_Param_t crossing_in_pid      = {6.845f, 0.5298f, 0.0f, 310.10f, 0.00100f, STEER_LIMIT, 100.0f};
+// static const Cube_PID_Param_t crossing_running_pid = {6.845f, 0.5298f, 0.0f, 310.00f, 0.00100f, STEER_LIMIT, 100.0f};
+
+// 21+6
+static const Cube_PID_Param_t crossing_between_pid = {6.785f, 0.5298f, 0.0f, 310.10f, 0.00100f, STEER_LIMIT, 100.0f};
+
+static const Cube_PID_Param_t crossing_in_pid      = {6.845f, 0.5298f, 0.0f, 310.10f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t crossing_running_pid = {6.845f, 0.5298f, 0.0f, 310.00f, 0.00100f, STEER_LIMIT, 100.0f};
 
 static const Cube_PID_Param_t& CubePID_Get_Base_Param()
 {
@@ -1321,19 +1336,19 @@ void BayWatcher_Control_Init(void) {
     // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
-    // 有负压 19-21.20 燕大
-    // 左轮速度环PID
-    // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
-    PID_Speed_L.Kp = 122.32f; PID_Speed_L.Ki = 27.50f; PID_Speed_L.Kd = 0.00f;
-    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
-    PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
+    // // 有负压 19-21.20 燕大
+    // // 左轮速度环PID
+    // // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
+    // PID_Speed_L.Kp = 122.32f; PID_Speed_L.Ki = 27.50f; PID_Speed_L.Kd = 0.00f;
+    // // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
+    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
 
-    // 右轮速度环PID
-    // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
-    PID_Speed_R.Kp = 122.00f; PID_Speed_R.Ki = 27.55f; PID_Speed_R.Kd = 0.00f;
-    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
-    PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
+    // // 右轮速度环PID
+    // // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
+    // PID_Speed_R.Kp = 122.00f; PID_Speed_R.Ki = 27.55f; PID_Speed_R.Kd = 0.00f;
+    // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
+    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
     // // 有负压 19-21.20 燕大
     // // 左轮速度环PID
@@ -1348,6 +1363,20 @@ void BayWatcher_Control_Init(void) {
     // PID_Speed_R.Kp = 132.00f; PID_Speed_R.Ki = 29.55f; PID_Speed_R.Kd = 0.00f;
     // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
+
+        // 有负压 19-21.20 燕大
+    // 左轮速度环PID
+    // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
+    PID_Speed_L.Kp = 138.32f; PID_Speed_L.Ki = 35.50f; PID_Speed_L.Kd = 0.00f;
+    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
+    PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
+
+
+    // 右轮速度环PID
+    // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
+    PID_Speed_R.Kp = 138.00f; PID_Speed_R.Ki = 35.55f; PID_Speed_R.Kd = 0.00f;
+    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
+    PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
     // // 左轮前进环PID
     // PID_Speed_F_L.Kp = 0.00f; PID_Speed_F_L.Ki = 0.00f; PID_Speed_F_L.Kd = 0.00f;
@@ -1429,8 +1458,12 @@ void BayWatcher_Control_Init(void) {
     // // 有负压 20.04 0.40 70% 燕大
     // PID_Cube.Kp_a = 6.57f ;  PID_Cube.Kp_b = 0.4848f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 302.10f ; PID_Cube.Kd_b = 0.00100f;
 
-    // 有负压 20.04 0.40 70% 7.5
-    PID_Cube.Kp_a = 6.745f ;  PID_Cube.Kp_b = 0.5298f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 310.10f ; PID_Cube.Kd_b = 0.00100f;
+    // // 有负压 20.04 0.40 70% 7.5
+    // PID_Cube.Kp_a = 6.745f ;  PID_Cube.Kp_b = 0.5298f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 310.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // 有负压 21 0.40 70% 7.5
+    PID_Cube.Kp_a = 6.705f ;  PID_Cube.Kp_b = 0.5298f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 310.10f ; PID_Cube.Kd_b = 0.00100f;
+
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
     CubePID_Save_Normal_Param();
