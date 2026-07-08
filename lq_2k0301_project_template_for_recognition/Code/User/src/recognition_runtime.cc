@@ -18,6 +18,7 @@ namespace {
 using steady_clock_t = std::chrono::steady_clock;
 using steady_time_point_t = std::chrono::time_point<steady_clock_t>;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
+constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
 constexpr bool kRecognitionUToResultTimingLog = (BW_RECOG_U_TO_RESULT_TIMING_LOG_ENABLE != 0);
 
 struct RuntimeWhiteReferenceStats
@@ -265,6 +266,12 @@ static bool IsRecognitionSuccessCode(BoardVisionCode code)
     return code == BoardVisionCode::VEHICLE ||
            code == BoardVisionCode::WEAPON ||
            code == BoardVisionCode::SUPPLY;
+}
+
+static bool IsBrickSideCode(BoardVisionCode code)
+{
+    return code == BoardVisionCode::BRICK_LEFT ||
+           code == BoardVisionCode::BRICK_RIGHT;
 }
 
 struct ClothStartDetectionResult
@@ -1146,6 +1153,14 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
             send_state_ms = elapsed_ms_between(send_begin, send_end);
             send_state_called = true;
             last_send_ms = t_ms;
+            if (kRecognitionResultLog && IsBrickSideCode(code))
+            {
+                std::cout << "[RECOG] tx_state=" << VisionCodeText(code)
+                          << ", seq=" << static_cast<int>(tx_seq)
+                          << ", ok=" << (send_state_ok ? "yes" : "no")
+                          << ", send_ms=" << std::fixed << std::setprecision(2)
+                          << send_state_ms << std::endl;
+            }
         }
 
         // 7. 发布图传画面
