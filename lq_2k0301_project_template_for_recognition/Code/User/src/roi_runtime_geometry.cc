@@ -1132,10 +1132,10 @@ static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(
     const int candidate_left = candidate_box.x;
     const int candidate_right = candidate_box.x + candidate_box.width - 1;
     const bool touches_left_outer_band =
-        candidate_left <= left_x - 1 &&
+        candidate_left <= left_x + kTrackBrickOuterExpandPixels &&
         candidate_right >= left_x - kTrackBrickOuterExpandPixels;
     const bool touches_right_outer_band =
-        candidate_right >= right_x + 1 &&
+        candidate_right >= right_x - kTrackBrickOuterExpandPixels &&
         candidate_left <= right_x + kTrackBrickOuterExpandPixels;
     if (touches_left_outer_band || touches_right_outer_band)
     {
@@ -1938,7 +1938,7 @@ static bool FindTrackBrickRedInOuterBand(const cv::Mat& red_mask,
         bool row_has_red = false;
         const unsigned char* row = red_mask.ptr<unsigned char>(y);
         const int left_band_x0 = std::max(0, left_x - kTrackBrickOuterExpandPixels);
-        const int left_band_x1 = std::max(-1, left_x - 1);
+        const int left_band_x1 = std::min(red_mask.cols - 1, left_x + kTrackBrickOuterExpandPixels);
         for (int x = left_band_x0; x <= left_band_x1; ++x)
         {
             if (row[x] == 0)
@@ -1953,7 +1953,7 @@ static bool FindTrackBrickRedInOuterBand(const cv::Mat& red_mask,
             row_has_red = true;
         }
 
-        const int right_band_x0 = std::min(red_mask.cols, right_x + 1);
+        const int right_band_x0 = std::max(0, right_x - kTrackBrickOuterExpandPixels);
         const int right_band_x1 = std::min(red_mask.cols - 1, right_x + kTrackBrickOuterExpandPixels);
         for (int x = right_band_x0; x <= right_band_x1; ++x)
         {

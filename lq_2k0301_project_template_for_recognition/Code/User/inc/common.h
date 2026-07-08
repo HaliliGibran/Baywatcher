@@ -91,7 +91,12 @@
 
 // [谨慎调] 成功识别后短暂丢目标时保持上次成功结果的时间。
 #ifndef BW_RECOG_SIGN_LOSS_HOLD_MS
-#define BW_RECOG_SIGN_LOSS_HOLD_MS 200
+#define BW_RECOG_SIGN_LOSS_HOLD_MS 100
+#endif
+
+// [谨慎调] 红砖 b/bl/br 短暂丢失时的输出保持帧数。
+#ifndef BW_RECOG_BRICK_LOSS_HOLD_FRAMES
+#define BW_RECOG_BRICK_LOSS_HOLD_FRAMES 2
 #endif
 
 #pragma endregion
@@ -113,7 +118,7 @@
 #define BW_RECOG_TRACK_BOUNDARY_Y_MIN BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN
 #endif
 
-// [先调] 边界外侧仍视为红砖带的扩张像素。
+// [先调] 边界内外侧仍视为红砖带的扩张像素。
 #ifndef BW_RECOG_TRACK_BRICK_OUTER_EXPAND_PIXELS
 #define BW_RECOG_TRACK_BRICK_OUTER_EXPAND_PIXELS 8
 #endif

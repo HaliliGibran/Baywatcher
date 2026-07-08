@@ -268,10 +268,40 @@ static bool IsRecognitionSuccessCode(BoardVisionCode code)
            code == BoardVisionCode::SUPPLY;
 }
 
-static bool IsBrickSideCode(BoardVisionCode code)
+static bool IsBrickCode(BoardVisionCode code)
 {
-    return code == BoardVisionCode::BRICK_LEFT ||
+    return code == BoardVisionCode::BRICK ||
+           code == BoardVisionCode::BRICK_LEFT ||
            code == BoardVisionCode::BRICK_RIGHT;
+}
+
+static BoardVisionCode ApplyBrickLossHold(BoardVisionCode raw_code,
+                                          BoardVisionCode* hold_code,
+                                          int* hold_remaining_frames)
+{
+    if (hold_code == nullptr || hold_remaining_frames == nullptr)
+    {
+        return raw_code;
+    }
+
+    if (IsBrickCode(raw_code))
+    {
+        *hold_code = raw_code;
+        *hold_remaining_frames = BW_RECOG_BRICK_LOSS_HOLD_FRAMES;
+        return raw_code;
+    }
+
+    if (raw_code == BoardVisionCode::UNKNOWN &&
+        IsBrickCode(*hold_code) &&
+        *hold_remaining_frames > 0)
+    {
+        --(*hold_remaining_frames);
+        return *hold_code;
+    }
+
+    *hold_code = BoardVisionCode::INVALID;
+    *hold_remaining_frames = 0;
+    return raw_code;
 }
 
 struct ClothStartDetectionResult
@@ -930,6 +960,8 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
     uint64_t last_send_ms = 0;
     uint64_t last_consumed_frame_seq = 0;
     uint64_t runtime_frame_seq = 0;
+    BoardVisionCode brick_hold_code = BoardVisionCode::INVALID;
+    int brick_hold_remaining_frames = 0;
     UToResultTimingState u_to_result_timing;
     const bool render_debug = stream_enabled;
     const bool latest_frame_enabled = (BW_RECOG_LATEST_FRAME_ENABLE != 0);
@@ -1107,8 +1139,10 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         chain_ms = elapsed_ms_between(chain_begin, chain_end);
 
         const bool in_recognition_now = recognition.IsInRecognitionMode();
-        const BoardVisionCode code_after_chain =
+        const BoardVisionCode raw_code_after_chain =
             cloth_stop_active ? BoardVisionCode::CLOTH_STOP : recognition.GetCurrentVisionCode();
+        const BoardVisionCode code_after_chain =
+            ApplyBrickLossHold(raw_code_after_chain, &brick_hold_code, &brick_hold_remaining_frames);
         manual_cycle_finished = false;
         if (BW_RECOG_REQUIRE_MANUAL_START != 0 &&
             manual_test_started &&
@@ -1129,6 +1163,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         // 6. 状态流模式下，状态变化立即发包；未变化时按心跳周期补发。
         const BoardVisionCode code = code_after_chain;
         bool should_send_state = false;
+        bool state_changed = false;
         if (code != last_sent_code)
         {
             if (last_sent_code != BoardVisionCode::INVALID)
@@ -1136,6 +1171,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                 ++tx_seq;
             }
             last_sent_code = code;
+            state_changed = true;
             should_send_state = true;
         }
         else if (last_send_ms == 0 ||
@@ -1153,7 +1189,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
             send_state_ms = elapsed_ms_between(send_begin, send_end);
             send_state_called = true;
             last_send_ms = t_ms;
-            if (kRecognitionResultLog && IsBrickSideCode(code))
+            if (kRecognitionResultLog && state_changed && IsBrickCode(code))
             {
                 std::cout << "[RECOG] tx_state=" << VisionCodeText(code)
                           << ", seq=" << static_cast<int>(tx_seq)
