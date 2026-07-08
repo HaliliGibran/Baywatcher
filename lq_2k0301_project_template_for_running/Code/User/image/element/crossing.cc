@@ -28,6 +28,7 @@ int pts_right_corner_id = -1;
 
 // 作用域: 文件内静态变量，十字状态机计数与上次状态
 static int g_lost_line_counter = 0;
+static int g_found_line_counter = 0;
 static CrossingState g_last_state = CrossingState::CROSSING_NONE;
 
 static inline int crossing_far_line_maxlen()
@@ -63,6 +64,7 @@ static inline void process_crossing_far_line(bool is_left, pts_well_processed& l
 void crossing_reset()
 {
     g_lost_line_counter = 0;
+    g_found_line_counter = 0;
     g_last_state = CrossingState::CROSSING_NONE;
     crossing_state = CrossingState::CROSSING_NONE;
     pts_left_corner_id = -1;
@@ -80,6 +82,7 @@ void crossing_update()
     if (g_last_state != crossing_state)
     {
         g_lost_line_counter = 0;
+        g_found_line_counter = 0;
         g_last_state = crossing_state;
     }
 
@@ -107,7 +110,20 @@ void crossing_update()
         case CrossingState::CROSSING_RUNNING:
         {    
             if (pts_left.pts_count > 0 && pts_right.pts_count > 0)
+            {
+                ++g_found_line_counter;
+            }
+            else
+            {
+                g_found_line_counter = 0;
+            }
+
+            if (g_found_line_counter >= FRAME_THRESHOLD_crossing_running_to_none_found_line_counter)
+            {
                 crossing_state = CrossingState::CROSSING_NONE;
+                g_found_line_counter = 0;
+                image_reset_far_line_state();
+            }
             break;
         }    
         default:

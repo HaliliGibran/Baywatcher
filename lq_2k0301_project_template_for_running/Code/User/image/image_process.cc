@@ -436,7 +436,14 @@ static void update_track_state_machine(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     if (element_type == ElementType::CROSSING)
     {
         crossing_update();
-        crossing_far_line_check(img);
+        if (crossing_state != CrossingState::CROSSING_NONE)
+        {
+            crossing_far_line_check(img);
+        }
+        else
+        {
+            image_reset_far_line_state();
+        }
     }
 
     if (element_type == ElementType::NORMAL)

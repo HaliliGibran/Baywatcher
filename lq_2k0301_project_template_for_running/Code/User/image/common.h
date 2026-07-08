@@ -438,6 +438,8 @@
 // 元素帧数阈值（全局宏）
 // 十字路口丢线帧数阈值
 #define FRAME_THRESHOLD_crossing_lost_line_counter (2) // 十字入内阶段允许的连续丢线帧
+// 十字 RUNNING 退出找线确认帧数
+#define FRAME_THRESHOLD_crossing_running_to_none_found_line_counter (2) // RUNNING->NONE 找线确认帧
 // 环岛入环丢线阈值
 #define FRAME_THRESHOLD_roundabout_begin_to_in_lost_line_counter (2) // BEGIN->IN 丢线阈值
 // 环岛入环重新找线阈值
