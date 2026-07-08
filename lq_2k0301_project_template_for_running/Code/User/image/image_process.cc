@@ -593,10 +593,96 @@ static void build_midline_from_current_state()
                                                     follow_mode);
 }
 
+// 功能: 收到 bl/br 后，在送入 path 前把中线向红砖反方向侧移
+// 类型: 局部功能函数
+// 关键参数: direction-+1 向右侧移，-1 向左侧移
+static void apply_remote_brick_avoid_shift_to_midline(int direction)
+{
+    if (direction == 0 || midline.mid_count <= 0)
+    {
+        return;
+    }
+
+    int n = midline.mid_count;
+    if (n > PT_MAXLEN)
+    {
+        n = PT_MAXLEN;
+    }
+
+    const float offset = ROADWIDTH * PIXPERMETER * BW_REMOTE_BRICK_AVOID_OFFSET_RATIO;
+    if (!(offset > 0.0f))
+    {
+        return;
+    }
+
+    int span = (int)(ANGLEDIST / RESAMPLEDIST + 0.5f);
+    if (span < 1)
+    {
+        span = 1;
+    }
+
+    float shifted[PT_MAXLEN][2] = {};
+    for (int i = 0; i < n; ++i)
+    {
+        int im = i - span;
+        if (im < 0)
+        {
+            im = 0;
+        }
+        int ip = i + span;
+        if (ip > n - 1)
+        {
+            ip = n - 1;
+        }
+
+        const float dx = midline.mid[ip][1] - midline.mid[im][1];
+        const float dy = midline.mid[ip][0] - midline.mid[im][0];
+        const float len2 = dx * dx + dy * dy;
+        if (len2 <= 1e-12f)
+        {
+            if (i > 0)
+            {
+                shifted[i][0] = shifted[i - 1][0];
+                shifted[i][1] = shifted[i - 1][1];
+            }
+            else
+            {
+                shifted[i][0] = midline.mid[i][0];
+                shifted[i][1] = midline.mid[i][1];
+            }
+            continue;
+        }
+
+        float inv_len = fast_rsqrt(len2);
+        inv_len = inv_len * (1.5f - 0.5f * len2 * inv_len * inv_len);
+        const float cosv = dx * inv_len;
+        const float sinv = dy * inv_len;
+
+        if (direction > 0)
+        {
+            shifted[i][1] = midline.mid[i][1] - sinv * offset;
+            shifted[i][0] = midline.mid[i][0] + cosv * offset;
+        }
+        else
+        {
+            shifted[i][1] = midline.mid[i][1] + sinv * offset;
+            shifted[i][0] = midline.mid[i][0] - cosv * offset;
+        }
+    }
+
+    copy_point_line(shifted, n, midline.mid, &midline.mid_count);
+}
+
 // 功能: 从最终中线构建路径并计算当帧测量角
 // 类型: 局部功能函数
 static void build_path_and_measure_pure_angle()
 {
+    int brick_shift_direction = 0;
+    if (image_remote_recognition_get_brick_avoid_shift_direction(&brick_shift_direction))
+    {
+        apply_remote_brick_avoid_shift_to_midline(brick_shift_direction);
+    }
+
     BuildPathFromCoreToMidlineArc(midline.mid, midline.mid_count,
                                   midline.path, &midline.path_count,
                                   RESAMPLEDIST * PIXPERMETER);
@@ -775,7 +861,7 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     {
         // 远端 w/s/v 期间只“冻结”当前元素状态机，不再推进；u 进 vehicle 特殊巡线但不进此分支。
         // 不清 element_type/circle_state/crossing_state，便于退出远端接管后继续沿原上下文恢复。
-        // 只有 b（remote_circle_block）会走清状态机分支。
+        // 只有 b/bl/br（remote_circle_block）会走清状态机分支。
     }
     else if (remote_circle_block)
     {

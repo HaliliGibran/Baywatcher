@@ -335,7 +335,8 @@
 // - v：vehicle 特殊巡线，短时保持收到包当下 pure_angle
 // - u：进入 vehicle 特殊巡线并减速，但不冻结运行板元素状态机
 // - c：软件盲盒色布停车，只限制速度到极低值，不冻结状态机
-// - b：若正处于 CIRCLE_BEGIN / CIRCLE_IN，则短时打掉一次环岛状态机并回到 MIXED
+// - bl/br：若正处于 CIRCLE_BEGIN / CIRCLE_IN，则短时打掉一次环岛状态机，并把中线向另一侧额外侧移
+// - b：兼容旧无侧别砖块码，只做短时环岛压制，不做中线侧移
 //
 // 下列参数只服务于这条“当前活跃”的双板接管链。
 // 旧 TargetHandler 分阶段绕行参数已移出 common.h，不再作为公共调参入口暴露。
@@ -376,6 +377,12 @@
 // 调小：更快恢复普通状态机。
 #ifndef BW_REMOTE_BRICK_BLOCK_MS
 #define BW_REMOTE_BRICK_BLOCK_MS 120
+#endif
+
+// 收到 bl/br 后，中线在送入 path 前向红砖反方向额外平移的赛道宽比例。
+// bl：砖在左侧，中线向右平移；br：砖在右侧，中线向左平移。
+#ifndef BW_REMOTE_BRICK_AVOID_OFFSET_RATIO
+#define BW_REMOTE_BRICK_AVOID_OFFSET_RATIO 0.25f
 #endif
 
 // 收到 u 后的强制慢速上限。

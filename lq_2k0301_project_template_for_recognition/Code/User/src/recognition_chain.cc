@@ -206,11 +206,20 @@ static const char* vision_code_text(BoardVisionCode code)
     case BoardVisionCode::WEAPON: return "w";
     case BoardVisionCode::SUPPLY: return "s";
     case BoardVisionCode::BRICK: return "b";
+    case BoardVisionCode::BRICK_LEFT: return "bl";
+    case BoardVisionCode::BRICK_RIGHT: return "br";
     case BoardVisionCode::NO_RESULT: return "u";
     case BoardVisionCode::CLOTH_STOP: return "c";
     case BoardVisionCode::UNKNOWN: return "n";
     default: return "-";
     }
+}
+
+static bool is_brick_vision_code(BoardVisionCode code)
+{
+    return code == BoardVisionCode::BRICK ||
+           code == BoardVisionCode::BRICK_LEFT ||
+           code == BoardVisionCode::BRICK_RIGHT;
 }
 
 static bool is_success_symbol_code(BoardVisionCode code)
@@ -267,7 +276,33 @@ static const char* roi_blob_side_lower(const RoiExtractionResult& roi_result, in
     }
 
     const int center_x = box->x + box->width / 2;
-    return (center_x < frame_width / 2) ? "left" : "right";
+    int split_x = frame_width / 2;
+    if (roi_result.has_track_classify_bounds)
+    {
+        split_x = (roi_result.track_classify_left_x + roi_result.track_classify_right_x) / 2;
+    }
+    return (center_x < split_x) ? "left" : "right";
+}
+
+static BoardVisionCode brick_code_from_roi_result(const RoiExtractionResult& roi_result, int frame_width)
+{
+    const cv::Rect* box =
+        roi_result.has_loose_blob_box ? &roi_result.loose_blob_box :
+        (roi_result.has_max_red_contour_box ? &roi_result.max_red_contour_box :
+         (roi_result.has_blob_box ? &roi_result.blob_box : nullptr));
+    if (box == nullptr)
+    {
+        return BoardVisionCode::BRICK;
+    }
+
+    const int center_x = box->x + box->width / 2;
+    int split_x = (frame_width > 0) ? (frame_width / 2) : center_x;
+    if (roi_result.has_track_classify_bounds)
+    {
+        split_x = (roi_result.track_classify_left_x + roi_result.track_classify_right_x) / 2;
+    }
+
+    return (center_x < split_x) ? BoardVisionCode::BRICK_LEFT : BoardVisionCode::BRICK_RIGHT;
 }
 
 static const char* roi_blob_side_upper(const RoiExtractionResult& roi_result, int frame_width)
@@ -287,7 +322,12 @@ static const char* roi_blob_side_upper(const RoiExtractionResult& roi_result, in
     }
 
     const int center_x = box->x + box->width / 2;
-    return (center_x < frame_width / 2) ? "LEFT" : "RIGHT";
+    int split_x = frame_width / 2;
+    if (roi_result.has_track_classify_bounds)
+    {
+        split_x = (roi_result.track_classify_left_x + roi_result.track_classify_right_x) / 2;
+    }
+    return (center_x < split_x) ? "LEFT" : "RIGHT";
 }
 
 static std::string roi_reject_reason_text(const RoiExtractionResult& roi_result)
@@ -371,11 +411,11 @@ static bool roi_is_valid_track_red_observation(const RoiExtractionResult& roi_re
 }
 
 
-static BoardVisionCode fallback_code_from_roi_result(const RoiExtractionResult& roi_result)
+static BoardVisionCode fallback_code_from_roi_result(const RoiExtractionResult& roi_result, int frame_width)
 {
     if (roi_result.target_type == "roadblock" || roi_result.status == "roadblock")
     {
-        return BoardVisionCode::BRICK;
+        return brick_code_from_roi_result(roi_result, frame_width);
     }
     if (roi_result.target_type == "marker")
     {
@@ -1519,7 +1559,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
         latched_release_deadline_ms_ = 0;
-        current_vision_code_ = fallback_code_from_roi_result(trigger_roi);
+        current_vision_code_ = fallback_code_from_roi_result(trigger_roi, frame_bgr.cols);
         if (current_vision_code_ == BoardVisionCode::UNKNOWN && has_slowdown_red_candidate)
         {
             current_vision_code_ = BoardVisionCode::NO_RESULT;
@@ -1537,7 +1577,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
                           << std::fixed << std::setprecision(1)
                           << current_blob_area_ << std::endl;
             }
-            else if (current_vision_code_ == BoardVisionCode::BRICK)
+            else if (is_brick_vision_code(current_vision_code_))
             {
                 std::cout << "[RECOG] brick detected: side="
                           << roi_blob_side_lower(trigger_roi, frame_bgr.cols)
@@ -1574,7 +1614,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
         latched_release_deadline_ms_ = 0;
-        current_vision_code_ = fallback_code_from_roi_result(trigger_roi);
+        current_vision_code_ = fallback_code_from_roi_result(trigger_roi, frame_bgr.cols);
         if (current_vision_code_ == BoardVisionCode::UNKNOWN && has_slowdown_red_candidate)
         {
             current_vision_code_ = BoardVisionCode::NO_RESULT;
@@ -1594,7 +1634,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
                               << std::fixed << std::setprecision(1)
                               << current_blob_area_ << std::endl;
                 }
-                else if (current_vision_code_ == BoardVisionCode::BRICK)
+                else if (is_brick_vision_code(current_vision_code_))
                 {
                     std::cout << "[RECOG] brick detected: side="
                               << roi_blob_side_lower(trigger_roi, frame_bgr.cols)
@@ -1762,7 +1802,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     if (roi_result.status == "miss")
     {
-        current_vision_code_ = fallback_code_from_roi_result(roi_result);
+        current_vision_code_ = fallback_code_from_roi_result(roi_result, frame_bgr.cols);
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
         latched_release_deadline_ms_ = 0;
@@ -1794,7 +1834,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     if (roi_result.status != "rotated_roi")
     {
-        current_vision_code_ = fallback_code_from_roi_result(roi_result);
+        current_vision_code_ = fallback_code_from_roi_result(roi_result, frame_bgr.cols);
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
         latched_release_deadline_ms_ = 0;
@@ -1814,7 +1854,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
             if (roi_has_non_noise_red(roi_result))
             {
                 std::cout << ", area=" << std::fixed << std::setprecision(1) << current_blob_area_;
-                if (current_vision_code_ == BoardVisionCode::BRICK)
+                if (is_brick_vision_code(current_vision_code_))
                 {
                     std::cout << ", side=" << roi_blob_side_lower(roi_result, frame_bgr.cols);
                 }

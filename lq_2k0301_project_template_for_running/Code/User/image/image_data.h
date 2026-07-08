@@ -270,5 +270,11 @@ bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode);
 // 关键参数: t_ms-当前时间戳（毫秒）
 bool image_remote_recognition_should_block_circle(uint64_t t_ms);
 
+// 功能: 查询当前是否需要因左/右红砖对中线做反向侧移
+// 类型: 全局状态查询函数
+// 关键参数:
+// - out_direction: 输出侧移方向，+1 表示向右，-1 表示向左
+bool image_remote_recognition_get_brick_avoid_shift_direction(int* out_direction);
+
 
 #endif

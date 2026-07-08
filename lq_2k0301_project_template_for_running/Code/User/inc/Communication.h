@@ -14,13 +14,17 @@
 
 // 双板视觉状态码：
 // - 识别板持续发送当前状态
-// - 运行板对 w/s/v 触发绕行动作，对 u/c 做速度覆盖，对 b 做砖块处理
+// - 运行板对 w/s/v 触发绕行动作，对 u/c 做速度覆盖，对 bl/br 做砖块避让
 enum class BoardVisionCode : uint8_t {
     INVALID = 0,
     VEHICLE = 'v',
     WEAPON  = 'w',
     SUPPLY  = 's',
+    // 兼容旧砖块状态：无侧别，只做旧砖块处理。
     BRICK   = 'b',
+    // bl/br: 红砖在左/右侧。串口仍是单字节码，日志显示为 bl/br。
+    BRICK_LEFT = 'L',
+    BRICK_RIGHT = 'R',
     // u: 已命中识别标识型红块，但当前没有 v/w/s 结果输出
     NO_RESULT = 'u',
     // c: 软件盲盒色布发车停车状态

@@ -143,6 +143,8 @@ static const char* board_comm_code_text(BoardVisionCode code)
     case BoardVisionCode::WEAPON: return "w";
     case BoardVisionCode::SUPPLY: return "s";
     case BoardVisionCode::BRICK: return "b";
+    case BoardVisionCode::BRICK_LEFT: return "bl";
+    case BoardVisionCode::BRICK_RIGHT: return "br";
     case BoardVisionCode::NO_RESULT: return "u";
     case BoardVisionCode::CLOTH_STOP: return "c";
     case BoardVisionCode::UNKNOWN: return "n";

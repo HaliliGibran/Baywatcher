@@ -43,6 +43,13 @@ void remote_vehicle_route_apply(float current_pure_angle, uint64_t t_ms)
     g_remote_recognition.vehicle_hold_until_ms = t_ms + kRemoteVehicleHoldMs;
 }
 
+bool is_remote_brick_code(BoardVisionCode code)
+{
+    return code == BoardVisionCode::BRICK ||
+           code == BoardVisionCode::BRICK_LEFT ||
+           code == BoardVisionCode::BRICK_RIGHT;
+}
+
 } // namespace
 
 bool zebra_stop = false;
@@ -146,13 +153,13 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         return;
     }
 
-    if (code == BoardVisionCode::BRICK)
+    if (is_remote_brick_code(code))
     {
         g_remote_recognition.follow_state = remote_follow_state_t::NONE;
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
         follow_mode = FollowLine::MIXED;
-        if (previous_code != BoardVisionCode::BRICK &&
+        if (!is_remote_brick_code(previous_code) &&
             (circle_state == CircleState::CIRCLE_BEGIN ||
              circle_state == CircleState::CIRCLE_IN))
         {
@@ -323,4 +330,26 @@ bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode)
 bool image_remote_recognition_should_block_circle(uint64_t t_ms)
 {
     return t_ms < g_remote_recognition.brick_block_until_ms;
+}
+
+bool image_remote_recognition_get_brick_avoid_shift_direction(int* out_direction)
+{
+    if (out_direction == nullptr)
+    {
+        return false;
+    }
+
+    if (g_remote_recognition.current_code == BoardVisionCode::BRICK_LEFT)
+    {
+        *out_direction = 1;
+        return true;
+    }
+
+    if (g_remote_recognition.current_code == BoardVisionCode::BRICK_RIGHT)
+    {
+        *out_direction = -1;
+        return true;
+    }
+
+    return false;
 }
