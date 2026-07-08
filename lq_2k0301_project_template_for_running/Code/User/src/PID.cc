@@ -1152,10 +1152,10 @@ static CrossingState last_crossing_pid_state = CrossingState::CROSSING_NONE;
 // static const Cube_PID_Param_t crossing_running_pid = {6.845f, 0.5298f, 0.0f, 310.00f, 0.00100f, STEER_LIMIT, 100.0f};
 
 // 21+6
-static const Cube_PID_Param_t crossing_between_pid = {7.245f, 0.5298f, 0.0f, 312.10f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t crossing_between_pid = {6.845f, 0.5298f, 0.0f, 312.10f, 0.00100f, STEER_LIMIT, 100.0f};
 
-static const Cube_PID_Param_t crossing_in_pid      = {6.845f, 0.5298f, 0.0f, 310.10f, 0.00100f, STEER_LIMIT, 100.0f};
-static const Cube_PID_Param_t crossing_running_pid = {7.295f, 0.5298f, 0.0f, 310.00f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t crossing_in_pid      = {6.945f, 0.5298f, 0.0f, 310.10f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t crossing_running_pid = {6.995f, 0.5298f, 0.0f, 310.00f, 0.00100f, STEER_LIMIT, 100.0f};
 
 static const Cube_PID_Param_t& CubePID_Get_Base_Param()
 {
