@@ -917,6 +917,39 @@ static void RasterizeTaskTrackBoundaryPoints(const std::vector<cv::Point>& point
     }
 }
 
+static bool FindTrackBoundaryBoundsAtRow(const TaskTrackBoundaryState& state,
+                                         int row_y,
+                                         int* out_left_x,
+                                         int* out_right_x,
+                                         int* out_row_y)
+{
+    if (out_left_x == nullptr || out_right_x == nullptr || out_row_y == nullptr ||
+        state.left_x_by_row.empty() || state.right_x_by_row.empty())
+    {
+        return false;
+    }
+
+    const int rows = std::min(static_cast<int>(state.left_x_by_row.size()),
+                              static_cast<int>(state.right_x_by_row.size()));
+    if (rows <= 0)
+    {
+        return false;
+    }
+
+    const int y = std::max(0, std::min(row_y, rows - 1));
+    if (state.left_x_by_row[y] >= 0 &&
+        state.right_x_by_row[y] >= 0 &&
+        state.left_x_by_row[y] < state.right_x_by_row[y])
+    {
+        *out_left_x = state.left_x_by_row[y];
+        *out_right_x = state.right_x_by_row[y];
+        *out_row_y = y;
+        return true;
+    }
+
+    return false;
+}
+
 static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
                                         int reference_x_min,
                                         int reference_x_max,
@@ -1078,9 +1111,17 @@ static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(
         return result;
     }
 
-    result.left_boundary_x = state.seed_left_x;
-    result.right_boundary_x = state.seed_right_x;
-    result.boundary_row_y = state.seed_y;
+    int left_x = -1;
+    int right_x = -1;
+    int boundary_y = -1;
+    if (!FindTrackBoundaryBoundsAtRow(state, classify_y, &left_x, &right_x, &boundary_y))
+    {
+        return result;
+    }
+
+    result.left_boundary_x = left_x;
+    result.right_boundary_x = right_x;
+    result.boundary_row_y = boundary_y;
     const double inside = cv::pointPolygonTest(polygon, cv::Point2f((float)classify_x, (float)classify_y), false);
     if (inside >= 0.0)
     {
@@ -1088,7 +1129,18 @@ static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(
         return result;
     }
 
-    result.type = TaskTrackCandidateType::ROADBLOCK;
+    const int candidate_left = candidate_box.x;
+    const int candidate_right = candidate_box.x + candidate_box.width - 1;
+    const bool touches_left_outer_band =
+        candidate_left <= left_x - 1 &&
+        candidate_right >= left_x - kTrackBrickOuterExpandPixels;
+    const bool touches_right_outer_band =
+        candidate_right >= right_x + 1 &&
+        candidate_left <= right_x + kTrackBrickOuterExpandPixels;
+    if (touches_left_outer_band || touches_right_outer_band)
+    {
+        result.type = TaskTrackCandidateType::ROADBLOCK;
+    }
     return result;
 }
 
@@ -2055,6 +2107,12 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
         bool touch_right = false;
         bool touch_bottom = false;
         TaskTouchedSides(red_mask, result.search_rect, &touch_left, &touch_top, &touch_right, &touch_bottom);
+        if (has_track_boundaries)
+        {
+            // Track boundaries already define the allowed brick outer band.
+            touch_left = false;
+            touch_right = false;
+        }
         if (!(touch_left || touch_top || touch_right || touch_bottom))
         {
             break;

@@ -3,6 +3,7 @@
 namespace {
 
 constexpr uint64_t kRemoteVehicleHoldMs = static_cast<uint64_t>(BW_REMOTE_VEHICLE_HOLD_MS);
+constexpr uint64_t kRemoteBrickBlockMs = static_cast<uint64_t>(BW_REMOTE_BRICK_BLOCK_MS);
 
 enum class remote_follow_state_t : uint8_t
 {
@@ -21,7 +22,7 @@ struct remote_recognition_runtime_t
     uint64_t vehicle_hold_until_ms;
     float vehicle_hold_yaw;
     remote_follow_state_t follow_state;
-    bool block_circle_until_n;
+    uint64_t brick_block_until_ms;
 };
 
 remote_recognition_runtime_t g_remote_recognition = {
@@ -32,7 +33,7 @@ remote_recognition_runtime_t g_remote_recognition = {
     0,
     0.0f,
     remote_follow_state_t::NONE,
-    false,
+    0,
 };
 
 void remote_vehicle_route_apply(float current_pure_angle, uint64_t t_ms)
@@ -102,7 +103,7 @@ void image_remote_recognition_reset()
     g_remote_recognition.vehicle_hold_until_ms = 0;
     g_remote_recognition.vehicle_hold_yaw = 0.0f;
     g_remote_recognition.follow_state = remote_follow_state_t::NONE;
-    g_remote_recognition.block_circle_until_n = false;
+    g_remote_recognition.brick_block_until_ms = 0;
     follow_mode = FollowLine::MIXED;
 }
 
@@ -132,6 +133,7 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
     g_remote_recognition.last_seq_valid = true;
     g_remote_recognition.last_seq = seq;
 
+    const BoardVisionCode previous_code = g_remote_recognition.current_code;
     g_remote_recognition.current_code = code;
 
     if (code == BoardVisionCode::UNKNOWN)
@@ -139,7 +141,7 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.follow_state = remote_follow_state_t::NONE;
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
-        g_remote_recognition.block_circle_until_n = false;
+        g_remote_recognition.brick_block_until_ms = 0;
         follow_mode = FollowLine::MIXED;
         return;
     }
@@ -150,11 +152,22 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
         follow_mode = FollowLine::MIXED;
-        if (circle_state == CircleState::CIRCLE_BEGIN ||
-            circle_state == CircleState::CIRCLE_IN)
+        if (previous_code != BoardVisionCode::BRICK &&
+            (circle_state == CircleState::CIRCLE_BEGIN ||
+             circle_state == CircleState::CIRCLE_IN))
         {
-            g_remote_recognition.block_circle_until_n = true;
+            g_remote_recognition.brick_block_until_ms = t_ms + kRemoteBrickBlockMs;
         }
+        return;
+    }
+
+    if (code == BoardVisionCode::CLOTH_STOP)
+    {
+        g_remote_recognition.follow_state = remote_follow_state_t::NONE;
+        g_remote_recognition.vehicle_hold_until_ms = 0;
+        g_remote_recognition.vehicle_hold_yaw = 0.0f;
+        g_remote_recognition.brick_block_until_ms = 0;
+        follow_mode = FollowLine::MIXED;
         return;
     }
 
@@ -163,6 +176,7 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.follow_state = remote_follow_state_t::LEFT_EDGE_ROUTE;
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
+        g_remote_recognition.brick_block_until_ms = 0;
         return;
     }
 
@@ -171,17 +185,20 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
         g_remote_recognition.follow_state = remote_follow_state_t::RIGHT_EDGE_ROUTE;
         g_remote_recognition.vehicle_hold_until_ms = 0;
         g_remote_recognition.vehicle_hold_yaw = 0.0f;
+        g_remote_recognition.brick_block_until_ms = 0;
         return;
     }
 
     if (code == BoardVisionCode::VEHICLE)
     {
+        g_remote_recognition.brick_block_until_ms = 0;
         remote_vehicle_route_apply(current_pure_angle, t_ms);
         return;
     }
 
     if (code == BoardVisionCode::NO_RESULT)
     {
+        g_remote_recognition.brick_block_until_ms = 0;
         remote_vehicle_route_apply(current_pure_angle, t_ms);
         return;
     }
@@ -189,6 +206,7 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
     g_remote_recognition.follow_state = remote_follow_state_t::NONE;
     g_remote_recognition.vehicle_hold_until_ms = 0;
     g_remote_recognition.vehicle_hold_yaw = 0.0f;
+    g_remote_recognition.brick_block_until_ms = 0;
 }
 
 void image_remote_recognition_tick(uint64_t t_ms)
@@ -224,6 +242,11 @@ float image_remote_recognition_get_speed_ratio_override()
         return BW_REMOTE_U_SLOWDOWN_RATIO;
     }
 
+    if (g_remote_recognition.current_code == BoardVisionCode::CLOTH_STOP)
+    {
+        return BW_REMOTE_CLOTH_STOP_SPEED_CAP;
+    }
+
     return 1.0f;
 }
 
@@ -237,6 +260,16 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
     if (g_remote_recognition.current_code == BoardVisionCode::NO_RESULT)
     {
         *out_cap = BW_REMOTE_U_SLOWDOWN_RATIO;
+        if (*out_cap < 0.0f)
+        {
+            *out_cap = 0.0f;
+        }
+        return true;
+    }
+
+    if (g_remote_recognition.current_code == BoardVisionCode::CLOTH_STOP)
+    {
+        *out_cap = BW_REMOTE_CLOTH_STOP_SPEED_CAP;
         if (*out_cap < 0.0f)
         {
             *out_cap = 0.0f;
@@ -287,7 +320,7 @@ bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode)
     return false;
 }
 
-bool image_remote_recognition_should_block_circle()
+bool image_remote_recognition_should_block_circle(uint64_t t_ms)
 {
-    return g_remote_recognition.block_circle_until_n;
+    return t_ms < g_remote_recognition.brick_block_until_ms;
 }

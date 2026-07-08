@@ -207,6 +207,7 @@ static const char* vision_code_text(BoardVisionCode code)
     case BoardVisionCode::SUPPLY: return "s";
     case BoardVisionCode::BRICK: return "b";
     case BoardVisionCode::NO_RESULT: return "u";
+    case BoardVisionCode::CLOTH_STOP: return "c";
     case BoardVisionCode::UNKNOWN: return "n";
     default: return "-";
     }
@@ -362,6 +363,12 @@ static bool roi_should_hold_success_latch(const RoiExtractionResult& roi_result)
     return roi_result.target_type == "marker";
 }
 
+static bool roi_is_valid_track_red_observation(const RoiExtractionResult& roi_result)
+{
+    return roi_result.target_type == "marker" ||
+           roi_result.target_type == "roadblock" ||
+           roi_result.status == "roadblock";
+}
 
 
 static BoardVisionCode fallback_code_from_roi_result(const RoiExtractionResult& roi_result)
@@ -990,16 +997,21 @@ static void warmup_recognition_net(cv::dnn::Net& net,
 }
 
 static bool detect_red_candidate_for_early_slowdown(const cv::Mat& frame_bgr,
+                                                    const cv::Rect& limit_rect,
                                                     cv::Rect* best_rect)
 {
-    if (frame_bgr.empty())
+    if (frame_bgr.empty() || limit_rect.width <= 0 || limit_rect.height <= 0)
     {
         return false;
     }
 
     const int y0 = std::max(0, std::min(kRecognitionSlowdownMinSearchYInclusive, frame_bgr.rows - 1));
     const int y1 = std::max(y0 + 1, std::min(kRecognitionSlowdownMaxSearchYExclusive, frame_bgr.rows));
-    if (y1 <= y0)
+    const int scan_x0 = std::max(0, limit_rect.x);
+    const int scan_x1 = std::min(frame_bgr.cols, limit_rect.x + limit_rect.width);
+    const int scan_y0 = std::max(y0, limit_rect.y);
+    const int scan_y1 = std::min(y1, limit_rect.y + limit_rect.height);
+    if (scan_y1 <= scan_y0 || scan_x1 <= scan_x0)
     {
         return false;
     }
@@ -1013,14 +1025,14 @@ static bool detect_red_candidate_for_early_slowdown(const cv::Mat& frame_bgr,
 
     int min_x = frame_bgr.cols;
     int max_x = -1;
-    int min_y = y1;
+    int min_y = scan_y1;
     int max_y = -1;
     int red_count = 0;
 
-    for (int y = y0; y < y1; ++y)
+    for (int y = scan_y0; y < scan_y1; ++y)
     {
         const cv::Vec3b* row_ptr = frame_bgr.ptr<cv::Vec3b>(y);
-        for (int x = 0; x < frame_bgr.cols; ++x)
+        for (int x = scan_x0; x < scan_x1; ++x)
         {
             const int b = static_cast<int>(row_ptr[x][0]);
             const int g = static_cast<int>(row_ptr[x][1]);
@@ -1384,21 +1396,6 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         view.release();
     }
 
-    cv::Rect slowdown_red_rect;
-    const bool has_slowdown_red_candidate =
-        detect_red_candidate_for_early_slowdown(frame_bgr, &slowdown_red_rect);
-    if (has_slowdown_red_candidate)
-    {
-        recent_red_candidate_until_ms_ = t_ms + kRecognitionRecentCandidateHoldMs;
-        current_vision_code_ = BoardVisionCode::NO_RESULT;
-        if (render_debug)
-        {
-            cv::rectangle(view, slowdown_red_rect, cv::Scalar(0, 255, 255), 2);
-            cv::putText(view, "EARLY RED -> u", cv::Point(16, 112), cv::FONT_HERSHEY_SIMPLEX,
-                        0.60, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
-        }
-    }
-
     const RoiMethod roi_method = DefaultRoiMethod();
     const auto extract_begin = steady_clock_t::now();
     RoiExtractionResult trigger_roi =
@@ -1414,12 +1411,31 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         draw_roi_preview_inset(view, trigger_roi.roi_bgr);
     }
     current_blob_area_ = roi_observed_red_area(trigger_roi);
-    if (roi_has_non_noise_red(trigger_roi))
+    const bool valid_track_red_observation = roi_is_valid_track_red_observation(trigger_roi);
+    if (valid_track_red_observation && roi_has_non_noise_red(trigger_roi))
     {
         recent_red_candidate_until_ms_ = t_ms + kRecognitionRecentCandidateHoldMs;
     }
     const bool symbol_candidate_visible = roi_is_visible_sign_candidate(trigger_roi);
     const bool holdable_sign_red_visible = roi_should_hold_success_latch(trigger_roi);
+    cv::Rect slowdown_red_rect;
+    bool has_slowdown_red_candidate = false;
+    if (symbol_candidate_visible && trigger_roi.has_search_rect)
+    {
+        has_slowdown_red_candidate =
+            detect_red_candidate_for_early_slowdown(frame_bgr, trigger_roi.search_rect, &slowdown_red_rect);
+        if (has_slowdown_red_candidate)
+        {
+            recent_red_candidate_until_ms_ = t_ms + kRecognitionRecentCandidateHoldMs;
+            current_vision_code_ = BoardVisionCode::NO_RESULT;
+            if (render_debug)
+            {
+                cv::rectangle(view, slowdown_red_rect, cv::Scalar(0, 255, 255), 2);
+                cv::putText(view, "EARLY RED -> u", cv::Point(16, 112), cv::FONT_HERSHEY_SIMPLEX,
+                            0.60, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+            }
+        }
+    }
     if (is_success_symbol_code(latched_symbol_code_))
     {
         current_vision_code_ = latched_symbol_code_;
@@ -1691,7 +1707,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         draw_trigger_search_info(view);
     }
     current_blob_area_ = roi_observed_red_area(roi_result);
-    if (roi_has_non_noise_red(roi_result))
+    if (roi_is_valid_track_red_observation(roi_result) && roi_has_non_noise_red(roi_result))
     {
         recent_red_candidate_until_ms_ = t_ms + kRecognitionRecentCandidateHoldMs;
     }

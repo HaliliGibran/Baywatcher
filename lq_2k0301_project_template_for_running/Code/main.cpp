@@ -144,6 +144,7 @@ static const char* board_comm_code_text(BoardVisionCode code)
     case BoardVisionCode::SUPPLY: return "s";
     case BoardVisionCode::BRICK: return "b";
     case BoardVisionCode::NO_RESULT: return "u";
+    case BoardVisionCode::CLOTH_STOP: return "c";
     case BoardVisionCode::UNKNOWN: return "n";
     default: return "-";
     }

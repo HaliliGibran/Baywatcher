@@ -28,7 +28,47 @@
 
 #pragma endregion
 
-#pragma region B. 现场常调：处理有效区与采光
+#pragma region B. 现场常调：软件盲盒任务
+
+// [先调] 软件盲盒任务选择。
+// 0：关闭软件盲盒支链；1：色布发车。
+#ifndef BW_SOFTWARE_BLIND_BOX_TASK_NONE
+#define BW_SOFTWARE_BLIND_BOX_TASK_NONE 0
+#endif
+
+#ifndef BW_SOFTWARE_BLIND_BOX_TASK_COLOR_CLOTH_START
+#define BW_SOFTWARE_BLIND_BOX_TASK_COLOR_CLOTH_START 1
+#endif
+
+#ifndef BW_SOFTWARE_BLIND_BOX_TASK
+#define BW_SOFTWARE_BLIND_BOX_TASK BW_SOFTWARE_BLIND_BOX_TASK_COLOR_CLOTH_START
+#endif
+
+// [先调] 色布发车颜色。当前实现 GREEN：中心看到绿布时发停车状态，绿布消失恢复正常。
+#ifndef GREEN
+#define GREEN 1
+#endif
+
+#ifndef BW_CLOTH_COLOR_GREEN
+#define BW_CLOTH_COLOR_GREEN GREEN
+#endif
+
+#ifndef BW_SOFTWARE_BLIND_BOX_CLOTH_COLOR
+#define BW_SOFTWARE_BLIND_BOX_CLOTH_COLOR GREEN
+#endif
+
+// [先调] 色布发车中心检测窗口半宽/半高，作用于已经裁掉 y<30/y>=161 后的帧。
+#ifndef BW_RECOG_CLOTH_CENTER_HALF_WIDTH
+#define BW_RECOG_CLOTH_CENTER_HALF_WIDTH 42
+#endif
+
+#ifndef BW_RECOG_CLOTH_CENTER_HALF_HEIGHT
+#define BW_RECOG_CLOTH_CENTER_HALF_HEIGHT 32
+#endif
+
+#pragma endregion
+
+#pragma region C. 现场常调：处理有效区与采光
 
 // [先调] 拿到单帧后保留的处理区间：[Y_MIN, Y_MAX)。
 #ifndef BW_RECOG_PROCESS_KEEP_Y_MIN
@@ -46,7 +86,7 @@
 
 #pragma endregion
 
-#pragma region C. 现场常调：识别结果保持
+#pragma region D. 现场常调：识别结果保持
 
 // [谨慎调] 成功识别后短暂丢目标时保持上次成功结果的时间。
 #ifndef BW_RECOG_SIGN_LOSS_HOLD_MS
@@ -55,7 +95,7 @@
 
 #pragma endregion
 
-#pragma region D. 现场常调：红块搜索带与边界
+#pragma region E. 现场常调：红块搜索带与边界
 
 // [一般别动] 正式红块搜索带上边界。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MIN
@@ -79,7 +119,7 @@
 
 #pragma endregion
 
-#pragma region E. 几乎不调的参数
+#pragma region F. 几乎不调的参数
 
 // --- 顶层默认与模型 ---
 
@@ -461,6 +501,34 @@
 
 #ifndef BW_RECOG_TASK_RED_DOM_MAX_CEIL
 #define BW_RECOG_TASK_RED_DOM_MAX_CEIL 120
+#endif
+
+#ifndef BW_RECOG_CLOTH_GREEN_H_MIN
+#define BW_RECOG_CLOTH_GREEN_H_MIN 35
+#endif
+
+#ifndef BW_RECOG_CLOTH_GREEN_H_MAX
+#define BW_RECOG_CLOTH_GREEN_H_MAX 90
+#endif
+
+#ifndef BW_RECOG_CLOTH_GREEN_S_MIN
+#define BW_RECOG_CLOTH_GREEN_S_MIN 55
+#endif
+
+#ifndef BW_RECOG_CLOTH_GREEN_V_MIN
+#define BW_RECOG_CLOTH_GREEN_V_MIN 45
+#endif
+
+#ifndef BW_RECOG_CLOTH_GREEN_DOM_MIN
+#define BW_RECOG_CLOTH_GREEN_DOM_MIN 18
+#endif
+
+#ifndef BW_RECOG_CLOTH_GREEN_MIN_PIXELS
+#define BW_RECOG_CLOTH_GREEN_MIN_PIXELS 90
+#endif
+
+#ifndef BW_RECOG_CLOTH_GREEN_MIN_RATIO
+#define BW_RECOG_CLOTH_GREEN_MIN_RATIO 0.035f
 #endif
 
 #pragma endregion

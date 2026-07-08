@@ -326,7 +326,8 @@
 // - s：锁右巡线
 // - v：vehicle 特殊巡线，短时保持收到包当下 pure_angle
 // - u：进入 vehicle 特殊巡线并减速，但不冻结运行板元素状态机
-// - b：若正处于 CIRCLE_BEGIN / CIRCLE_IN，则打掉环岛状态机并回到 MIXED
+// - c：软件盲盒色布停车，只限制速度到极低值，不冻结状态机
+// - b：若正处于 CIRCLE_BEGIN / CIRCLE_IN，则短时打掉一次环岛状态机并回到 MIXED
 //
 // 下列参数只服务于这条“当前活跃”的双板接管链。
 // 旧 TargetHandler 分阶段绕行参数已移出 common.h，不再作为公共调参入口暴露。
@@ -359,6 +360,16 @@
 #define BW_REMOTE_VEHICLE_SKIP_HALF_WIDTH 2
 #endif
 
+// 收到 b 后压制环岛状态机的短时窗口（毫秒）。
+// 作用：
+// - b 只用于打断一次砖块附近的环岛误判，不作为停车或长期锁状态命令。
+// - 连续 b 不会无限续期；离开 b 再重新进入 b 才会再次触发。
+// 调大：砖块附近更不容易重新进环岛，但更容易短时影响普通状态机。
+// 调小：更快恢复普通状态机。
+#ifndef BW_REMOTE_BRICK_BLOCK_MS
+#define BW_REMOTE_BRICK_BLOCK_MS 120
+#endif
+
 // 收到 u 后的强制慢速上限。
 // 作用：
 // - 当前活跃 Control_Loop 仍会先把 base_target_speed 乘这个值。
@@ -367,6 +378,14 @@
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
 #define BW_REMOTE_U_SLOWDOWN_RATIO 0.3f
+#endif
+
+// 收到 c 后的强制停车级速度上限。
+// 作用：
+// - 软件盲盒色布发车：识别板中心看到目标色布时持续发送 c。
+// - 绿布消失后识别板恢复普通状态码，运行板解除此速度上限。
+#ifndef BW_REMOTE_CLOTH_STOP_SPEED_CAP
+#define BW_REMOTE_CLOTH_STOP_SPEED_CAP 0.01f
 #endif
 #pragma endregion
 

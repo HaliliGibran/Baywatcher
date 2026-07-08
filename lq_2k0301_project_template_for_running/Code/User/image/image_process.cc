@@ -693,7 +693,7 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     FollowLine forced_follow_mode = FollowLine::MIXED;
     const bool remote_follow_locked =
         image_remote_recognition_get_forced_follow_mode(&forced_follow_mode);
-    const bool remote_circle_block = image_remote_recognition_should_block_circle();
+    const bool remote_circle_block = image_remote_recognition_should_block_circle(t_ms);
     const bool remote_route_active = image_remote_recognition_should_freeze_state_machine(t_ms);
 
     // follow_mode 由上层策略决定，这里只消费，不在主链入口硬重置。

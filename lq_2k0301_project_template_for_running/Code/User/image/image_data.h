@@ -265,10 +265,10 @@ bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms);
 // - out_mode: 输出 MIDLEFT / MIDRIGHT
 bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode);
 
-// 功能: 查询当前是否因砖块观测而持续压制环岛状态机
+// 功能: 查询当前是否处于砖块触发的短时环岛压制窗口
 // 类型: 全局状态查询函数
-// 关键参数: 无
-bool image_remote_recognition_should_block_circle();
+// 关键参数: t_ms-当前时间戳（毫秒）
+bool image_remote_recognition_should_block_circle(uint64_t t_ms);
 
 
 #endif

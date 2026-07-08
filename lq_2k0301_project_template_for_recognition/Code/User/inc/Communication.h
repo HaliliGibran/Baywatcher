@@ -13,7 +13,7 @@
 
 // 双板视觉状态码：
 // - 识别板持续回传当前观察到的状态
-// - 运行板只对 w/s/v 的状态上升沿触发动作
+// - 运行板对 w/s/v 触发绕行动作，对 u/c 做速度覆盖，对 b 做砖块处理
 enum class BoardVisionCode : uint8_t {
     INVALID = 0,
     VEHICLE = 'v',
@@ -22,6 +22,8 @@ enum class BoardVisionCode : uint8_t {
     BRICK   = 'b',
     // u: 已命中识别标识型红块，但当前没有 v/w/s 结果输出
     NO_RESULT = 'u',
+    // c: 软件盲盒色布发车停车状态
+    CLOTH_STOP = 'c',
     // n: 检测区间内没有红色色块，或只有小的非标识红色色块
     UNKNOWN = 'n',
 };

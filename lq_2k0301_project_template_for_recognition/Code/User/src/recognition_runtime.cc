@@ -252,6 +252,7 @@ const char* VisionCodeText(BoardVisionCode code)
     case BoardVisionCode::SUPPLY: return "s";
     case BoardVisionCode::BRICK: return "b";
     case BoardVisionCode::NO_RESULT: return "u";
+    case BoardVisionCode::CLOTH_STOP: return "c";
     case BoardVisionCode::UNKNOWN: return "n";
     default: return "-";
     }
@@ -262,6 +263,142 @@ static bool IsRecognitionSuccessCode(BoardVisionCode code)
     return code == BoardVisionCode::VEHICLE ||
            code == BoardVisionCode::WEAPON ||
            code == BoardVisionCode::SUPPLY;
+}
+
+struct ClothStartDetectionResult
+{
+    bool active = false;
+    cv::Rect search_rect;
+    int green_pixels = 0;
+    float green_ratio = 0.0f;
+};
+
+static bool IsBlindBoxGreenClothStartEnabled()
+{
+    return BW_SOFTWARE_BLIND_BOX_TASK == BW_SOFTWARE_BLIND_BOX_TASK_COLOR_CLOTH_START &&
+           BW_SOFTWARE_BLIND_BOX_CLOTH_COLOR == BW_CLOTH_COLOR_GREEN;
+}
+
+static cv::Rect BuildClothCenterSearchRect(const cv::Mat& frame_bgr)
+{
+    if (frame_bgr.empty())
+    {
+        return cv::Rect();
+    }
+
+    const int cols = frame_bgr.cols;
+    const int rows = frame_bgr.rows;
+    const int keep_y_min = std::max(0, std::min(BW_RECOG_PROCESS_KEEP_Y_MIN, rows));
+    const int keep_y_max = std::max(keep_y_min + 1, std::min(BW_RECOG_PROCESS_KEEP_Y_MAX, rows));
+    const int center_x = cols / 2;
+    const int center_y = (keep_y_min + keep_y_max - 1) / 2;
+    const int half_width = std::max(1, BW_RECOG_CLOTH_CENTER_HALF_WIDTH);
+    const int half_height = std::max(1, BW_RECOG_CLOTH_CENTER_HALF_HEIGHT);
+
+    const int x0 = std::max(0, center_x - half_width);
+    const int x1 = std::min(cols, center_x + half_width + 1);
+    const int y0 = std::max(keep_y_min, center_y - half_height);
+    const int y1 = std::min(keep_y_max, center_y + half_height + 1);
+    if (x1 <= x0 || y1 <= y0)
+    {
+        return cv::Rect();
+    }
+    return cv::Rect(x0, y0, x1 - x0, y1 - y0);
+}
+
+static bool IsGreenClothPixel(const cv::Vec3b& bgr, const cv::Vec3b& hsv)
+{
+    const int h = static_cast<int>(hsv[0]);
+    const int s = static_cast<int>(hsv[1]);
+    const int v = static_cast<int>(hsv[2]);
+    const int b = static_cast<int>(bgr[0]);
+    const int g = static_cast<int>(bgr[1]);
+    const int r = static_cast<int>(bgr[2]);
+    const bool hue_match = (BW_RECOG_CLOTH_GREEN_H_MIN <= BW_RECOG_CLOTH_GREEN_H_MAX)
+        ? (h >= BW_RECOG_CLOTH_GREEN_H_MIN && h <= BW_RECOG_CLOTH_GREEN_H_MAX)
+        : (h >= BW_RECOG_CLOTH_GREEN_H_MIN || h <= BW_RECOG_CLOTH_GREEN_H_MAX);
+
+    return hue_match &&
+           s >= BW_RECOG_CLOTH_GREEN_S_MIN &&
+           v >= BW_RECOG_CLOTH_GREEN_V_MIN &&
+           (g - std::max(r, b)) >= BW_RECOG_CLOTH_GREEN_DOM_MIN;
+}
+
+static bool DetectBlindBoxGreenClothStart(const cv::Mat& frame_bgr,
+                                          ClothStartDetectionResult* out_result)
+{
+    if (out_result != nullptr)
+    {
+        *out_result = ClothStartDetectionResult();
+    }
+    if (!IsBlindBoxGreenClothStartEnabled() || frame_bgr.empty())
+    {
+        return false;
+    }
+
+    const cv::Rect search_rect = BuildClothCenterSearchRect(frame_bgr);
+    if (search_rect.width <= 0 || search_rect.height <= 0)
+    {
+        return false;
+    }
+
+    const cv::Mat roi_bgr = frame_bgr(search_rect);
+    cv::Mat roi_hsv;
+    cv::cvtColor(roi_bgr, roi_hsv, cv::COLOR_BGR2HSV);
+
+    int green_pixels = 0;
+    for (int y = 0; y < roi_bgr.rows; ++y)
+    {
+        const cv::Vec3b* bgr_row = roi_bgr.ptr<cv::Vec3b>(y);
+        const cv::Vec3b* hsv_row = roi_hsv.ptr<cv::Vec3b>(y);
+        for (int x = 0; x < roi_bgr.cols; ++x)
+        {
+            if (IsGreenClothPixel(bgr_row[x], hsv_row[x]))
+            {
+                ++green_pixels;
+            }
+        }
+    }
+
+    const int total_pixels = std::max(1, search_rect.area());
+    const float green_ratio = static_cast<float>(green_pixels) / static_cast<float>(total_pixels);
+    const bool active =
+        green_pixels >= BW_RECOG_CLOTH_GREEN_MIN_PIXELS &&
+        green_ratio >= BW_RECOG_CLOTH_GREEN_MIN_RATIO;
+
+    if (out_result != nullptr)
+    {
+        out_result->active = active;
+        out_result->search_rect = search_rect;
+        out_result->green_pixels = green_pixels;
+        out_result->green_ratio = green_ratio;
+    }
+    return active;
+}
+
+static void RenderClothStopView(const cv::Mat& frame_bgr,
+                                const ClothStartDetectionResult& detection,
+                                cv::Mat& view)
+{
+    view = frame_bgr.clone();
+    if (view.empty())
+    {
+        return;
+    }
+
+    if (detection.search_rect.width > 0 && detection.search_rect.height > 0)
+    {
+        cv::rectangle(view, detection.search_rect, cv::Scalar(0, 255, 0), 2);
+    }
+    cv::putText(view, "BLIND BOX GREEN CLOTH -> c", cv::Point(10, 28),
+                cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+
+    std::ostringstream oss;
+    oss << "green_pixels=" << detection.green_pixels
+        << ", ratio=" << std::fixed << std::setprecision(3) << detection.green_ratio
+        << ", speed_cap=0.01";
+    cv::putText(view, oss.str(), cv::Point(10, 56),
+                cv::FONT_HERSHEY_SIMPLEX, 0.50, cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
 }
 
 struct UToResultTimingState
@@ -280,6 +417,7 @@ enum class RuntimeFrameStage
 {
     DISABLED = 0,
     MANUAL_IDLE,
+    CLOTH_STOP,
     TRY_ENTER,
     PROCESS_RECOG,
 };
@@ -321,6 +459,7 @@ static const char* RuntimeFrameStageText(RuntimeFrameStage stage)
     {
     case RuntimeFrameStage::DISABLED: return "识别关闭";
     case RuntimeFrameStage::MANUAL_IDLE: return "手动待机";
+    case RuntimeFrameStage::CLOTH_STOP: return "色布停车";
     case RuntimeFrameStage::TRY_ENTER: return "普通态触发";
     case RuntimeFrameStage::PROCESS_RECOG: return "识别态推理";
     default: return "未知阶段";
@@ -891,9 +1030,24 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         const steady_time_point_t prepare_end = steady_clock_t::now();
         prepare_ms = elapsed_ms_between(prepare_begin, prepare_end);
 
+        ClothStartDetectionResult cloth_detection;
+        const bool cloth_stop_active = DetectBlindBoxGreenClothStart(img, &cloth_detection);
+
         RuntimeFrameStage frame_stage = RuntimeFrameStage::TRY_ENTER;
         const steady_time_point_t chain_begin = steady_clock_t::now();
-        if (!recognition.IsEnabled())
+        if (cloth_stop_active)
+        {
+            frame_stage = RuntimeFrameStage::CLOTH_STOP;
+            if (render_debug)
+            {
+                RenderClothStopView(img, cloth_detection, view);
+            }
+            else
+            {
+                view.release();
+            }
+        }
+        else if (!recognition.IsEnabled())
         {
             frame_stage = RuntimeFrameStage::DISABLED;
             if (render_debug)
@@ -944,7 +1098,8 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         chain_ms = elapsed_ms_between(chain_begin, chain_end);
 
         const bool in_recognition_now = recognition.IsInRecognitionMode();
-        const BoardVisionCode code_after_chain = recognition.GetCurrentVisionCode();
+        const BoardVisionCode code_after_chain =
+            cloth_stop_active ? BoardVisionCode::CLOTH_STOP : recognition.GetCurrentVisionCode();
         manual_cycle_finished = false;
         if (BW_RECOG_REQUIRE_MANUAL_START != 0 &&
             manual_test_started &&
@@ -958,7 +1113,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         const steady_time_point_t overlay_begin = steady_clock_t::now();
         RenderVisionStateOverlay(view,
                                  code_after_chain,
-                                 recognition.GetCurrentBlobArea());
+                                 cloth_stop_active ? 0.0 : recognition.GetCurrentBlobArea());
         const steady_time_point_t overlay_end = steady_clock_t::now();
         overlay_ms = elapsed_ms_between(overlay_begin, overlay_end);
 

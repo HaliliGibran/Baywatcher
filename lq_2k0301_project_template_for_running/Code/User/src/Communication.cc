@@ -106,6 +106,7 @@ bool BoardComm::try_parse_cached_packet(BoardVisionCode* out_code, uint8_t* out_
             pkt.code == static_cast<uint8_t>(BoardVisionCode::SUPPLY) ||
             pkt.code == static_cast<uint8_t>(BoardVisionCode::BRICK) ||
             pkt.code == static_cast<uint8_t>(BoardVisionCode::NO_RESULT) ||
+            pkt.code == static_cast<uint8_t>(BoardVisionCode::CLOTH_STOP) ||
             pkt.code == static_cast<uint8_t>(BoardVisionCode::UNKNOWN);
 
         if (pkt.version == kBoardEventVersion &&
