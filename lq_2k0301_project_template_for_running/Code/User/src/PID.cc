@@ -933,11 +933,11 @@ static CircleDirection last_circle_pid_direction = CircleDirection::CIRCLE_DIR_N
 
 // 21+6
 // 左环岛特调参数：只区分入环和出环。
-static const Cube_PID_Param_t left_circle_in_pid  = {6.885f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t left_circle_in_pid  = {6.985f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
 static const Cube_PID_Param_t left_circle_out_pid = {6.885f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
 
 // 右环岛特调参数：初值与左环岛相同，后续按实车表现分开修。
-static const Cube_PID_Param_t right_circle_in_pid  = {6.925f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t right_circle_in_pid  = {6.935f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
 static const Cube_PID_Param_t right_circle_out_pid = {6.925f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
 
 static const Cube_PID_Param_t& CubePID_Get_Base_Param();
@@ -1088,8 +1088,8 @@ static Inner_PID_Param_t normal_inner_pid_param;
 
 //20.04/21 + 6
 static const Inner_PID_Param_t recog_inner_pid_param = {
-    138.32f, 65.50f, 0.00f, 9999.0f,
-    138.00f, 65.55f, 0.00f, 9999.0f,
+    155.32f, 68.50f, 0.00f, 9999.0f,
+    155.00f, 68.55f, 0.00f, 9999.0f,
 };
 
 static void Save_Normal_Inner_PID_Param()
@@ -1152,10 +1152,10 @@ static CrossingState last_crossing_pid_state = CrossingState::CROSSING_NONE;
 // static const Cube_PID_Param_t crossing_running_pid = {6.845f, 0.5298f, 0.0f, 310.00f, 0.00100f, STEER_LIMIT, 100.0f};
 
 // 21+6
-static const Cube_PID_Param_t crossing_between_pid = {6.785f, 0.5298f, 0.0f, 310.10f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t crossing_between_pid = {7.245f, 0.5298f, 0.0f, 312.10f, 0.00100f, STEER_LIMIT, 100.0f};
 
 static const Cube_PID_Param_t crossing_in_pid      = {6.845f, 0.5298f, 0.0f, 310.10f, 0.00100f, STEER_LIMIT, 100.0f};
-static const Cube_PID_Param_t crossing_running_pid = {6.845f, 0.5298f, 0.0f, 310.00f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t crossing_running_pid = {7.295f, 0.5298f, 0.0f, 310.00f, 0.00100f, STEER_LIMIT, 100.0f};
 
 static const Cube_PID_Param_t& CubePID_Get_Base_Param()
 {
@@ -1514,7 +1514,7 @@ void BayWatcher_Control_Init(void) {
     // PID_Cube.Kp_a = 6.745f ;  PID_Cube.Kp_b = 0.5298f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 310.10f ; PID_Cube.Kd_b = 0.00100f;
 
     // 有负压 21 0.40 70% 7.5
-    PID_Cube.Kp_a = 6.705f ;  PID_Cube.Kp_b = 0.5298f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 310.10f ; PID_Cube.Kd_b = 0.00100f;
+    PID_Cube.Kp_a = 6.705f ;  PID_Cube.Kp_b = 0.5289f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 314.10f ; PID_Cube.Kd_b = 0.00100f;
 
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100;

@@ -18,6 +18,7 @@
 
 // [先调] 图传编译期默认开关，可被 --stream / --no-stream 覆盖。
 #ifndef BW_ENABLE_STREAM
+// #define BW_ENABLE_STREAM 1
 #define BW_ENABLE_STREAM 0
 #endif
 
@@ -41,7 +42,7 @@
 #endif
 
 #ifndef BW_SOFTWARE_BLIND_BOX_TASK
-#define BW_SOFTWARE_BLIND_BOX_TASK BW_SOFTWARE_BLIND_BOX_TASK_COLOR_CLOTH_START
+#define BW_SOFTWARE_BLIND_BOX_TASK 0
 #endif
 
 // [先调] 色布发车颜色。当前实现 GREEN：中心看到绿布时发停车状态，绿布消失恢复正常。
