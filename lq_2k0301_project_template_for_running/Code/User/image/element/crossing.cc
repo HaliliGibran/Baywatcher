@@ -4,6 +4,7 @@
 #include "image_data.h"
 #include "image_handle.h"
 #include "image_math.h"
+#include "transform_table.h"
 
 // 功能: 十字状态转字符串（日志用）
 // 类型: 局部功能函数
@@ -56,6 +57,39 @@ static inline void process_crossing_far_line(bool is_left, pts_well_processed& l
     clamp_crossing_far_line_counts(line);
     process_line(is_left, line);
     clamp_crossing_far_line_counts(line);
+}
+
+static inline bool crossing_far_start_ipm_distance_ok(const int32_t (&left_pt)[2],
+                                                      const int32_t (&right_pt)[2])
+{
+    const int ly = left_pt[0];
+    const int lx = left_pt[1];
+    const int ry = right_pt[0];
+    const int rx = right_pt[1];
+    if (ly < 0 || ly >= IMAGE_H || lx < 0 || lx >= IMAGE_W ||
+        ry < 0 || ry >= IMAGE_H || rx < 0 || rx >= IMAGE_W)
+    {
+        return false;
+    }
+
+    const float left_x = UndistInverseMapW[ly][lx];
+    const float left_y = UndistInverseMapH[ly][lx];
+    const float right_x = UndistInverseMapW[ry][rx];
+    const float right_y = UndistInverseMapH[ry][rx];
+    const bool valid =
+        left_x >= 0.0f && left_y >= 0.0f &&
+        right_x >= 0.0f && right_y >= 0.0f &&
+        left_x <= (float)(IMAGE_W - 1) && right_x <= (float)(IMAGE_W - 1) &&
+        left_y <= (float)(IMAGE_H - 1) && right_y <= (float)(IMAGE_H - 1);
+    if (!valid)
+    {
+        return false;
+    }
+
+    const float dx = right_x - left_x;
+    const float dy = right_y - left_y;
+    const float max_dist = 1.25f * ROADWIDTH * PIXPERMETER;
+    return (dx > 0.0f) && (dx * dx + dy * dy < max_dist * max_dist);
 }
 
 // 功能: 十字状态机复位
@@ -295,7 +329,8 @@ void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
             SearchLine_LptEx(img, start_x, start_y, pts_far_left.pts, &dummy_count, false, &if_find_far_left_start_pt, far_left_start_pt);
             SearchLine_RptEx(img, start_x, start_y, pts_far_right.pts, &dummy_count, false, &if_find_far_right_start_pt, far_right_start_pt);
 
-            if(if_find_far_left_start_pt && if_find_far_right_start_pt && far_right_start_pt[1] - far_left_start_pt[1] < 50)
+            if(if_find_far_left_start_pt && if_find_far_right_start_pt &&
+               crossing_far_start_ipm_distance_ok(far_left_start_pt, far_right_start_pt))
             {
                 if(far_right_start_pt[1] - far_left_start_pt[1] > 0)
                 {

@@ -423,7 +423,7 @@
 #pragma region 元素判定参数
 // 元素判定（全局宏）
 // 双角点切换十字状态的 id 阈值
-#define ID_THRESHOLD_crossing_state_change (20) // 十字判定角点索引阈值
+#define ID_THRESHOLD_crossing_state_change (80) // 十字判定角点索引阈值
 // 环岛保护帧数
 #define FRAME_THRESHOLD_roundabout_protect_frame (3) // 环岛状态保护帧
 // 环岛或斜入十字判定帧数
