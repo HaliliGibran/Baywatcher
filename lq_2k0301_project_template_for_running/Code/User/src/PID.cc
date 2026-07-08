@@ -1069,6 +1069,58 @@ static void circle_pid_update_by_state()
 
 #pragma endregion
 
+#pragma region Recog PIDs
+// ============================ 识别模式内环 PID 参数 ============================
+// Motor2 = 左轮，Motor1 = 右轮。
+// 初始化时会先保存旧内环参数到 normal_inner_pid_param；RECOGNITION 模式只改 recog_inner_pid_param。
+struct Inner_PID_Param_t {
+    float left_Kp;
+    float left_Ki;
+    float left_Kd;
+    float left_output_limit;
+    float right_Kp;
+    float right_Ki;
+    float right_Kd;
+    float right_output_limit;
+};
+
+static Inner_PID_Param_t normal_inner_pid_param;
+
+//20.04/21 + 6
+static const Inner_PID_Param_t recog_inner_pid_param = {
+    138.32f, 65.50f, 0.00f, 9999.0f,
+    138.00f, 65.55f, 0.00f, 9999.0f,
+};
+
+static void Save_Normal_Inner_PID_Param()
+{
+    normal_inner_pid_param.left_Kp = PID_Speed_L.Kp;
+    normal_inner_pid_param.left_Ki = PID_Speed_L.Ki;
+    normal_inner_pid_param.left_Kd = PID_Speed_L.Kd;
+    normal_inner_pid_param.left_output_limit = PID_Speed_L.output_limit;
+    normal_inner_pid_param.right_Kp = PID_Speed_R.Kp;
+    normal_inner_pid_param.right_Ki = PID_Speed_R.Ki;
+    normal_inner_pid_param.right_Kd = PID_Speed_R.Kd;
+    normal_inner_pid_param.right_output_limit = PID_Speed_R.output_limit;
+}
+
+static void Apply_Inner_PID_Param(const Inner_PID_Param_t& param)
+{
+    PID_Speed_L.Kp = param.left_Kp;
+    PID_Speed_L.Ki = param.left_Ki;
+    PID_Speed_L.Kd = param.left_Kd;
+    PID_Speed_L.output = 0.0f;
+    PID_Speed_L.output_limit = param.left_output_limit;
+
+    PID_Speed_R.Kp = param.right_Kp;
+    PID_Speed_R.Ki = param.right_Ki;
+    PID_Speed_R.Kd = param.right_Kd;
+    PID_Speed_R.output = 0.0f;
+    PID_Speed_R.output_limit = param.right_output_limit;
+}
+
+#pragma endregion
+
 #pragma region Cross PIDs
 // ============================ 十字分段 PID 参数 ============================
 
@@ -1364,19 +1416,19 @@ void BayWatcher_Control_Init(void) {
     // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
-        // 有负压 19-21.20 燕大
+    // 有负压 19-21.20 燕大
     // 左轮速度环PID
-    // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
     PID_Speed_L.Kp = 138.32f; PID_Speed_L.Ki = 35.50f; PID_Speed_L.Kd = 0.00f;
-    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
     PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
-
     // 右轮速度环PID
-    // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
     PID_Speed_R.Kp = 138.00f; PID_Speed_R.Ki = 35.55f; PID_Speed_R.Kd = 0.00f;
-    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
     PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
+
+    Save_Normal_Inner_PID_Param();
+#if BW_PID_RECOGNITION_MODE
+    Apply_Inner_PID_Param(recog_inner_pid_param);
+#endif
 
     // // 左轮前进环PID
     // PID_Speed_F_L.Kp = 0.00f; PID_Speed_F_L.Ki = 0.00f; PID_Speed_F_L.Kd = 0.00f;
@@ -1465,7 +1517,7 @@ void BayWatcher_Control_Init(void) {
     PID_Cube.Kp_a = 6.705f ;  PID_Cube.Kp_b = 0.5298f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 310.10f ; PID_Cube.Kd_b = 0.00100f;
 
 
-    PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100 ;
+    PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100;
     CubePID_Save_Normal_Param();
     reset_curve_slowdown_state(0.0f);
 

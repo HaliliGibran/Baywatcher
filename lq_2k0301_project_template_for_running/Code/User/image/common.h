@@ -7,6 +7,14 @@
 // - 当前“绕行/远端接管”只以 image_data.cc + image_process.cc 这条活跃双板链为准。
 
 #pragma region 图像总开关与模式切换
+
+// PID 内环参数模式。
+// - 0：普通 running 内环参数。
+// - 1：RECOGNITION 模式内环参数，参数写在 PID.cc 的 Recog PIDs 区域。
+#ifndef BW_PID_RECOGNITION_MODE
+#define BW_PID_RECOGNITION_MODE 0
+#endif
+
 // 双板 w/s 锁边绕行时，强制 path 相对锁定边线“向外”偏移的赛道宽比例。
 // 使用位置：image_handle.cc / BuildRemoteFollowOuterLine()。
 // 当前语义：
