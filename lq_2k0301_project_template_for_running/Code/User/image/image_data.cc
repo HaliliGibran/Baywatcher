@@ -23,6 +23,7 @@ struct remote_recognition_runtime_t
     float vehicle_hold_yaw;
     remote_follow_state_t follow_state;
     uint64_t brick_block_until_ms;
+    bool inner_bypass_active;
 };
 
 remote_recognition_runtime_t g_remote_recognition = {
@@ -34,6 +35,7 @@ remote_recognition_runtime_t g_remote_recognition = {
     0.0f,
     remote_follow_state_t::NONE,
     0,
+    false,
 };
 
 void remote_vehicle_route_apply(float current_pure_angle, uint64_t t_ms)
@@ -111,6 +113,7 @@ void image_remote_recognition_reset()
     g_remote_recognition.vehicle_hold_yaw = 0.0f;
     g_remote_recognition.follow_state = remote_follow_state_t::NONE;
     g_remote_recognition.brick_block_until_ms = 0;
+    g_remote_recognition.inner_bypass_active = false;
     follow_mode = FollowLine::MIXED;
 }
 
@@ -284,6 +287,16 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
         return true;
     }
 
+    if (g_remote_recognition.inner_bypass_active)
+    {
+        *out_cap = BW_REMOTE_FOLLOW_INNER_SPEED_CAP;
+        if (*out_cap < 0.0f)
+        {
+            *out_cap = 0.0f;
+        }
+        return true;
+    }
+
     return false;
 }
 
@@ -325,6 +338,16 @@ bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode)
     }
 
     return false;
+}
+
+void image_remote_recognition_set_inner_bypass_active(bool active)
+{
+    g_remote_recognition.inner_bypass_active = active;
+}
+
+bool image_remote_recognition_is_inner_bypass_active()
+{
+    return g_remote_recognition.inner_bypass_active;
 }
 
 bool image_remote_recognition_should_block_circle(uint64_t t_ms)

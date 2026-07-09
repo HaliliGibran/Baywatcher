@@ -9,6 +9,7 @@
 #include "element/zebra.h"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <opencv2/core.hpp>
@@ -508,9 +509,188 @@ static int32_t compute_preview_curve_split_index_for_mixed(int32_t left_mid_coun
     return overlap_count;
 }
 
-// 功能: 远端 w/s 锁边时，基于锁定侧边线生成“外推强制线”并直接覆盖 path
+static float remote_follow_segment_heading_deg(const float (&line)[PT_MAXLEN][2],
+                                               int32_t from,
+                                               int32_t to)
+{
+    if (from < 0) from = 0;
+    if (to < 0) to = 0;
+    if (from > PT_MAXLEN - 1) from = PT_MAXLEN - 1;
+    if (to > PT_MAXLEN - 1) to = PT_MAXLEN - 1;
+
+    const float dy = line[to][0] - line[from][0];
+    const float dx = line[to][1] - line[from][1];
+    const float forward = -dy;
+    if (dx * dx + forward * forward <= 1e-8f)
+    {
+        return 0.0f;
+    }
+
+    return -atan2f(dx, forward) * 180.0f / PI32;
+}
+
+static float remote_follow_normalize_delta_deg(float angle)
+{
+    while (angle > 180.0f) angle -= 360.0f;
+    while (angle < -180.0f) angle += 360.0f;
+    return angle;
+}
+
+static float estimate_remote_follow_signed_curve_deg(const float (&line)[PT_MAXLEN][2],
+                                                     int32_t line_count)
+{
+    int32_t n = line_count;
+    if (n > PT_MAXLEN)
+    {
+        n = PT_MAXLEN;
+    }
+    if (n < 3)
+    {
+        return 0.0f;
+    }
+
+    int32_t k = PUREANGLE_PREVIEW_CURV_DIST;
+    if (k < 1)
+    {
+        k = 1;
+    }
+    if (k > (n - 1) / 2)
+    {
+        k = (n - 1) / 2;
+    }
+    if (k < 1)
+    {
+        k = 1;
+    }
+
+    const float near_heading = remote_follow_segment_heading_deg(line, 0, k);
+    const float far_heading = remote_follow_segment_heading_deg(line, k, n - 1);
+    const float delta = remote_follow_normalize_delta_deg(far_heading - near_heading);
+
+    if (std::fabs(delta) >= BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG)
+    {
+        return delta;
+    }
+    if (std::fabs(far_heading) >= BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG)
+    {
+        return far_heading;
+    }
+    return 0.0f;
+}
+
+static bool is_remote_follow_inner_bypass(bool is_left,
+                                          const float (&forced_line)[PT_MAXLEN][2],
+                                          int32_t forced_count)
+{
+    if (BW_REMOTE_FOLLOW_INNER_ENABLE == 0)
+    {
+        return false;
+    }
+
+    const float signed_curve_deg =
+        estimate_remote_follow_signed_curve_deg(forced_line, forced_count);
+    if (is_left)
+    {
+        return signed_curve_deg >= BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG;
+    }
+    return signed_curve_deg <= -BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG;
+}
+
+static int32_t nearest_line_index_by_y(const float (&line)[PT_MAXLEN][2],
+                                       int32_t line_count,
+                                       float y)
+{
+    int32_t n = line_count;
+    if (n > PT_MAXLEN)
+    {
+        n = PT_MAXLEN;
+    }
+    if (n <= 0)
+    {
+        return 0;
+    }
+
+    int32_t best = 0;
+    float best_abs = 1e30f;
+    for (int32_t i = 0; i < n; ++i)
+    {
+        float dy = line[i][0] - y;
+        if (dy < 0.0f)
+        {
+            dy = -dy;
+        }
+        if (dy < best_abs)
+        {
+            best_abs = dy;
+            best = i;
+        }
+    }
+    return best;
+}
+
+static bool build_remote_follow_inner_smooth_line(const pts_well_processed& src,
+                                                  const float (&forced_line)[PT_MAXLEN][2],
+                                                  int32_t forced_count,
+                                                  float (&out_line)[PT_MAXLEN][2],
+                                                  int32_t* out_count)
+{
+    if (out_count == nullptr)
+    {
+        return false;
+    }
+    *out_count = 0;
+
+    int32_t n = forced_count;
+    if (n > PT_MAXLEN)
+    {
+        n = PT_MAXLEN;
+    }
+    if (n <= 0)
+    {
+        return false;
+    }
+
+    int32_t base_count = src.mid_count;
+    if (base_count > PT_MAXLEN)
+    {
+        base_count = PT_MAXLEN;
+    }
+    if (base_count <= 0)
+    {
+        copy_point_line(forced_line, n, out_line, out_count);
+        return *out_count > 0;
+    }
+
+    int blend_points = BW_REMOTE_FOLLOW_INNER_BLEND_POINTS;
+    if (blend_points < 1)
+    {
+        blend_points = 1;
+    }
+
+    for (int32_t i = 0; i < n; ++i)
+    {
+        float t = 1.0f;
+        if (blend_points > 1)
+        {
+            t = (float)i / (float)(blend_points - 1);
+            t = fclip(t, 0.0f, 1.0f);
+            t = t * t * (3.0f - 2.0f * t);
+        }
+
+        const int32_t base_idx =
+            nearest_line_index_by_y(src.mid, base_count, forced_line[i][0]);
+        out_line[i][0] = src.mid[base_idx][0] * (1.0f - t) + forced_line[i][0] * t;
+        out_line[i][1] = src.mid[base_idx][1] * (1.0f - t) + forced_line[i][1] * t;
+    }
+
+    *out_count = n;
+    return true;
+}
+
+// 功能: 远端 w/s 锁边时，基于锁定侧边线生成绕行 path
 // 类型: 局部功能函数
 // 关键参数: forced_mode-锁定到左/右边线
+// 说明：外绕直接跟随外推线；急弯内绕从单侧中线平滑横移到外推线。
 static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 {
     follow_mode = forced_mode;
@@ -548,14 +728,35 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         return false;
     }
 
-    copy_point_line(forced_line, forced_count, midline.mid, &midline.mid_count);
-    copy_point_line(forced_line, forced_count, midline.path, &midline.path_count);
+    float path_line[PT_MAXLEN][2] = {};
+    int32_t path_count = 0;
+    const bool inner_bypass =
+        is_remote_follow_inner_bypass(is_left, forced_line, forced_count);
+    if (inner_bypass)
+    {
+        if (!build_remote_follow_inner_smooth_line(*src,
+                                                   forced_line,
+                                                   forced_count,
+                                                   path_line,
+                                                   &path_count))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        copy_point_line(forced_line, forced_count, path_line, &path_count);
+    }
+
+    copy_point_line(path_line, path_count, midline.mid, &midline.mid_count);
+    copy_point_line(path_line, path_count, midline.path, &midline.path_count);
 
     if (midline.mid_count <= 0 || midline.path_count <= 0)
     {
         return false;
     }
 
+    image_remote_recognition_set_inner_bypass_active(inner_bypass);
     CalculatePureAngleFromPath(midline.path, midline.path_count, &pure_angle);
     return true;
 }
@@ -777,6 +978,7 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 {
     const uint64_t t_ms = image_now_ms();
     image_remote_recognition_tick(t_ms);
+    image_remote_recognition_set_inner_bypass_active(false);
     if (handle_zebra_stop_lifecycle(t_ms))
     {
         return;

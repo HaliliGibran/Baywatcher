@@ -28,6 +28,37 @@
 #define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.05f
 #endif
 
+// 双板 w/s 锁边绕行时，是否启用“急弯内绕”专用路径。
+// 当前不改变识别板决定的左/右绕方向，只在内绕时把 path 从原单侧中线平滑横移到锁边外推线。
+#ifndef BW_REMOTE_FOLLOW_INNER_ENABLE
+#define BW_REMOTE_FOLLOW_INNER_ENABLE 1
+#endif
+
+// 判断内绕/外绕的最小弯向角度阈值（度）。
+// 左弯 + 锁左边线、右弯 + 锁右边线会被视为内绕。
+#ifndef BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG
+#define BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG 10.0f
+#endif
+
+// 内绕平滑横移占用的近端点数。
+// 调大：更平顺、不容易原地旋转，但绕开目标版建立更慢。
+// 调小：绕行动作更快，但急弯内绕更容易过冲。
+#ifndef BW_REMOTE_FOLLOW_INNER_BLEND_POINTS
+#define BW_REMOTE_FOLLOW_INNER_BLEND_POINTS 32
+#endif
+
+// 内绕时最终速度上限。
+// 作用：只在识别绕行被判为内绕时生效，不影响外绕。
+#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP
+#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP 0.22f
+#endif
+
+// 内绕时启用差速防反转限幅。
+// 旧 BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 仍是全绕行总开关；本开关只管内绕。
+#ifndef BW_REMOTE_FOLLOW_INNER_NO_REVERSE_ENABLE
+#define BW_REMOTE_FOLLOW_INNER_NO_REVERSE_ENABLE 1
+#endif
+
 // pure_angle 预瞄图像行过渡总开关。
 // 使用位置：image_handle.cc / pure_angle_apply_preview_transition()。
 // - 1：限制 preview_img_y 帧间跳变。
