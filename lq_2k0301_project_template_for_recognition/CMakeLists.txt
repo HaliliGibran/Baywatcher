@@ -232,6 +232,8 @@ set(RECOGNITION_BOARD_SRC
     ${PROJECT_SOURCE_DIR}/Code/User/src/Communication.cc
     ${PROJECT_SOURCE_DIR}/Code/User/src/latest_frame_grabber.cc
     ${PROJECT_SOURCE_DIR}/Code/User/src/recognition_runtime.cc
+    ${PROJECT_SOURCE_DIR}/Code/User/src/recognition_mlp_weights.cc
+    ${PROJECT_SOURCE_DIR}/Code/User/src/recognition_white_reference.cc
     ${PROJECT_SOURCE_DIR}/Code/User/src/recognition_chain.cc
     ${PROJECT_SOURCE_DIR}/Code/User/src/roi_capture_runtime.cc
     ${PROJECT_SOURCE_DIR}/Code/User/src/roi_runtime_geometry.cc

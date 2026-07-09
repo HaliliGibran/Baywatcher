@@ -138,12 +138,34 @@ struct RoiQualityMetrics
     double lap_var_top = 0.0;
 };
 
+struct RoiTrackRedPrefilterResult
+{
+    bool has_track_boundaries = false;
+
+    bool has_early_marker_red = false;
+    cv::Rect early_marker_rect;
+
+    bool has_recognition_marker_red = false;
+    cv::Rect recognition_marker_rect;
+
+    bool has_recognition_brick_red = false;
+    cv::Rect recognition_brick_rect;
+};
+
 RoiMethod DefaultRoiMethod();
 const char* RoiMethodName(RoiMethod method);
 
+bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
+                                  int early_y_min,
+                                  int early_y_max,
+                                  int recognition_y_min,
+                                  int recognition_y_max,
+                                  RoiTrackRedPrefilterResult* out_result);
+
 RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
                                       int output_size,
-                                      RoiMethod roi_method);
+                                      RoiMethod roi_method,
+                                      bool render_debug);
 
 RoiQualityMetrics ComputeLowInformationRoiMetrics(const cv::Mat& roi_bgr,
                                                   RoiMethod roi_method,

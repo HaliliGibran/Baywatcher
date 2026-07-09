@@ -5,6 +5,7 @@
 #include "latest_frame_grabber.h"
 #include "main.hpp"
 #include "recognition_runtime.h"
+#include "recognition_white_reference.h"
 #include "roi_runtime_geometry.h"
 #include "stream_chain.h"
 
@@ -293,7 +294,9 @@ static cv::Mat build_fullframe_capture_crop(const cv::Mat& frame_bgr)
         return cv::Mat();
     }
 
-    return frame_bgr.rowRange(y0, y1).clone();
+    cv::Mat crop = frame_bgr.rowRange(y0, y1).clone();
+    recognition_white_reference::ApplyGainsToMat(&crop);
+    return crop;
 }
 
 static void draw_roi_preview_panel(cv::Mat& view, const cv::Mat& roi_bgr)
@@ -589,7 +592,8 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             roi_result = ExtractRotatedRoi(
                 img,
                 BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE,
-                DefaultRoiMethod());
+                DefaultRoiMethod(),
+                render_debug);
         }
 
         char key = 0;
@@ -733,7 +737,10 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             view.release();
         }
 
-        stream.PublishFrame(recognition_runtime::build_publish_view(view));
+        if (stream_enabled)
+        {
+            stream.PublishFrame(recognition_runtime::build_publish_view(view));
+        }
 
         const double target_loop_ms =
             (BW_RECOG_LOOP_TARGET_FPS > 0)

@@ -18,7 +18,7 @@ uint64_t now_ms();
 
 // 对单帧执行识别板统一预处理：
 // 1) 按配置裁掉上下无效 y 区域
-// 2) 按白参考带做轻量亮度/白平衡归一化
+// 2) 更新白参考 gain；红白绿判定、ROI 和拍摄导出按需应用 gain
 void prepare_frame_for_processing(cv::Mat* frame_bgr, bool allow_adapt);
 
 // 图传发布前统一裁剪视图。

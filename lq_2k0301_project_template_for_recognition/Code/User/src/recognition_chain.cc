@@ -2,6 +2,8 @@
 
 #include "common.h"
 #include "image_switch_utils.h"
+#include "recognition_mlp_weights.h"
+#include "recognition_white_reference.h"
 #include "roi_runtime_geometry.h"
 #include <algorithm>
 #include <cctype>
@@ -37,6 +39,14 @@ constexpr float kRecognitionSingleFrameHighConfMarginThreshold =
 constexpr int kRecognitionAdaptiveTwoFrameMaxBadFrames =
     BW_RECOG_ADAPTIVE_TWO_FRAME_MAX_BAD_FRAMES;
 constexpr int kRecognitionOnnxWarmupRuns = BW_RECOG_ONNX_WARMUP_RUNS;
+constexpr bool kRecognitionManualMlpInferEnable =
+    (BW_RECOG_MANUAL_MLP_INFER_ENABLE != 0);
+constexpr bool kRecognitionManualMlpCompareOnnx =
+    (BW_RECOG_MANUAL_MLP_COMPARE_ONNX != 0);
+constexpr bool kRecognitionLightweightRedPrefilterEnable =
+    (BW_RECOG_LIGHTWEIGHT_RED_PREFILTER_ENABLE != 0);
+constexpr bool kRecognitionTriggerFrameInferEnable =
+    (BW_RECOG_TRIGGER_FRAME_INFER_ENABLE != 0);
 constexpr int kRecognitionModelVariant = BW_RECOG_MODEL_VARIANT;
 constexpr bool kRecognitionUseGrayRed32Model =
     (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_GRAYRED32);
@@ -63,6 +73,17 @@ constexpr const char* kRecognitionModelVariantName =
     (kRecognitionUseRgb32SubclassModel ? "rgb32_boardroi8_mlp_128" :
      (kRecognitionUseGrayRed32Model ? "grayred32_mlp_wider" : "rgb64_classic"));
 constexpr size_t kRecognitionMaxClasses = RecognitionChain::kMaxModelClasses;
+
+static_assert(recognition_mlp_weights::kInputSize == 32,
+              "recognition_mlp_weights input size mismatch");
+static_assert(recognition_mlp_weights::kChannels == 3,
+              "recognition_mlp_weights channel count mismatch");
+static_assert(recognition_mlp_weights::kInputElements == 3 * 32 * 32,
+              "recognition_mlp_weights input element count mismatch");
+static_assert(recognition_mlp_weights::kHiddenUnits == 128,
+              "recognition_mlp_weights hidden size mismatch");
+static_assert(recognition_mlp_weights::kClassCount == 8,
+              "recognition_mlp_weights class count mismatch");
 
 struct RoiClassificationResult
 {
@@ -96,17 +117,22 @@ struct ProbabilityDecisionSummary
     float margin = 0.0f;
 };
 
-static RoiClassificationResult finalize_logits_to_result(const cv::Mat& logits_f32,
+static RoiClassificationResult finalize_logits_to_result(const float* logits,
+                                                         int logits_count,
                                                          float calibration_temperature,
                                                          const std::array<float, kRecognitionMaxClasses>& logit_bias)
 {
     RoiClassificationResult result;
-    const int count = std::min(static_cast<int>(logits_f32.total()),
-                               static_cast<int>(kRecognitionMaxClasses));
+    if (logits == nullptr || logits_count <= 0)
+    {
+        return result;
+    }
+
+    const int count = std::min(logits_count, static_cast<int>(kRecognitionMaxClasses));
     float max_logit = -std::numeric_limits<float>::infinity();
     for (int i = 0; i < count; ++i)
     {
-        const float value = logits_f32.at<float>(0, i) / std::max(calibration_temperature, 1e-4f)
+        const float value = logits[i] / std::max(calibration_temperature, 1e-4f)
             + logit_bias[static_cast<size_t>(i)];
         if (value > max_logit)
         {
@@ -121,7 +147,7 @@ static RoiClassificationResult finalize_logits_to_result(const cv::Mat& logits_f
     float exp_sum = 0.0f;
     for (int i = 0; i < count; ++i)
     {
-        const float adjusted = logits_f32.at<float>(0, i) / std::max(calibration_temperature, 1e-4f)
+        const float adjusted = logits[i] / std::max(calibration_temperature, 1e-4f)
             + logit_bias[static_cast<size_t>(i)];
         const float exp_value = std::exp(adjusted - max_logit);
         result.probabilities[static_cast<size_t>(i)] = exp_value;
@@ -145,6 +171,22 @@ static RoiClassificationResult finalize_logits_to_result(const cv::Mat& logits_f
     }
     result.predicted_index = best_index;
     return result;
+}
+
+static RoiClassificationResult finalize_logits_to_result(const cv::Mat& logits_f32,
+                                                         float calibration_temperature,
+                                                         const std::array<float, kRecognitionMaxClasses>& logit_bias)
+{
+    if (logits_f32.empty())
+    {
+        return RoiClassificationResult();
+    }
+    const cv::Mat logits_row = logits_f32.reshape(1, 1);
+    return finalize_logits_to_result(
+        logits_row.ptr<float>(0),
+        static_cast<int>(logits_row.total()),
+        calibration_temperature,
+        logit_bias);
 }
 
 static void draw_trigger_search_info(cv::Mat& view)
@@ -857,13 +899,154 @@ static uint8_t runtime_decision_target_code(int decision_index,
     }
     return 0;
 }
+
+static ProbabilityDecisionSummary summarize_classification_result(const RoiClassificationResult& cls,
+                                                                  int class_count)
+{
+    ProbabilityDecisionSummary summary;
+    const int count = std::min(class_count, static_cast<int>(kRecognitionMaxClasses));
+    for (int i = 0; i < count; ++i)
+    {
+        const float prob = cls.probabilities[static_cast<size_t>(i)];
+        if (summary.top1_index < 0 || prob > summary.top1_prob)
+        {
+            summary.top2_index = summary.top1_index;
+            summary.top2_prob = summary.top1_prob;
+            summary.top1_index = i;
+            summary.top1_prob = prob;
+        }
+        else if (summary.top2_index < 0 || prob > summary.top2_prob)
+        {
+            summary.top2_index = i;
+            summary.top2_prob = prob;
+        }
+    }
+    summary.margin = summary.top1_prob - summary.top2_prob;
+    return summary;
+}
+
+static void build_rgb32_subclass_input(const cv::Mat& roi_bgr,
+                                       std::array<float, recognition_mlp_weights::kInputElements>& input)
+{
+    input.fill(0.0f);
+    if (roi_bgr.empty() || roi_bgr.channels() != 3)
+    {
+        return;
+    }
+
+    cv::Mat resized;
+    const cv::Mat* src = &roi_bgr;
+    if (roi_bgr.cols != recognition_mlp_weights::kInputSize ||
+        roi_bgr.rows != recognition_mlp_weights::kInputSize)
+    {
+        cv::resize(roi_bgr, resized,
+                   cv::Size(recognition_mlp_weights::kInputSize,
+                            recognition_mlp_weights::kInputSize),
+                   0, 0, cv::INTER_AREA);
+        src = &resized;
+    }
+
+    constexpr int plane = recognition_mlp_weights::kInputSize * recognition_mlp_weights::kInputSize;
+    for (int y = 0; y < recognition_mlp_weights::kInputSize; ++y)
+    {
+        const cv::Vec3b* row = src->ptr<cv::Vec3b>(y);
+        for (int x = 0; x < recognition_mlp_weights::kInputSize; ++x)
+        {
+            const int idx = y * recognition_mlp_weights::kInputSize + x;
+            const float b = static_cast<float>(row[x][0]) * (1.0f / 255.0f);
+            const float g = static_cast<float>(row[x][1]) * (1.0f / 255.0f);
+            const float r = static_cast<float>(row[x][2]) * (1.0f / 255.0f);
+            input[idx] = (r - recognition_mlp_weights::kMean[0]) / recognition_mlp_weights::kStd[0];
+            input[plane + idx] = (g - recognition_mlp_weights::kMean[1]) / recognition_mlp_weights::kStd[1];
+            input[2 * plane + idx] = (b - recognition_mlp_weights::kMean[2]) / recognition_mlp_weights::kStd[2];
+        }
+    }
+}
+
+static void run_manual_rgb32_mlp(const float* input,
+                                 std::array<float, recognition_mlp_weights::kClassCount>& logits)
+{
+    std::array<float, recognition_mlp_weights::kHiddenUnits> hidden = {};
+    for (int o = 0; o < recognition_mlp_weights::kHiddenUnits; ++o)
+    {
+        const float* weight = recognition_mlp_weights::kFc1Weight +
+            o * recognition_mlp_weights::kInputElements;
+        float sum = recognition_mlp_weights::kFc1Bias[o];
+        for (int i = 0; i < recognition_mlp_weights::kInputElements; ++i)
+        {
+            sum += input[i] * weight[i];
+        }
+        hidden[static_cast<size_t>(o)] = std::max(sum, 0.0f);
+    }
+
+    for (int o = 0; o < recognition_mlp_weights::kClassCount; ++o)
+    {
+        const float* weight = recognition_mlp_weights::kFc2Weight +
+            o * recognition_mlp_weights::kHiddenUnits;
+        float sum = recognition_mlp_weights::kFc2Bias[o];
+        for (int i = 0; i < recognition_mlp_weights::kHiddenUnits; ++i)
+        {
+            sum += hidden[static_cast<size_t>(i)] * weight[i];
+        }
+        logits[static_cast<size_t>(o)] = sum;
+    }
+}
+
+static RoiClassificationResult classify_roi_index_manual_rgb32(
+    const cv::Mat& roi_bgr,
+    float calibration_temperature,
+    const std::array<float, kRecognitionMaxClasses>& logit_bias,
+    RoiClassificationTiming* timing,
+    std::array<float, kRecognitionMaxClasses>* out_logits)
+{
+    const auto preprocess_begin = std::chrono::steady_clock::now();
+    std::array<float, recognition_mlp_weights::kInputElements> input = {};
+    build_rgb32_subclass_input(roi_bgr, input);
+    const auto preprocess_end = std::chrono::steady_clock::now();
+
+    const auto forward_begin = preprocess_end;
+    std::array<float, recognition_mlp_weights::kClassCount> logits = {};
+    run_manual_rgb32_mlp(input.data(), logits);
+    const auto forward_end = std::chrono::steady_clock::now();
+
+    if (out_logits != nullptr)
+    {
+        out_logits->fill(0.0f);
+        for (int i = 0; i < recognition_mlp_weights::kClassCount; ++i)
+        {
+            (*out_logits)[static_cast<size_t>(i)] = logits[static_cast<size_t>(i)];
+        }
+    }
+
+    const auto postprocess_begin = forward_end;
+    RoiClassificationResult result = finalize_logits_to_result(
+        logits.data(),
+        recognition_mlp_weights::kClassCount,
+        calibration_temperature,
+        logit_bias);
+    const auto postprocess_end = std::chrono::steady_clock::now();
+
+    if (timing != nullptr)
+    {
+        timing->preprocess_ms =
+            std::chrono::duration<double, std::milli>(preprocess_end - preprocess_begin).count();
+        timing->set_input_ms = 0.0;
+        timing->forward_ms =
+            std::chrono::duration<double, std::milli>(forward_end - forward_begin).count();
+        timing->postprocess_ms =
+            std::chrono::duration<double, std::milli>(postprocess_end - postprocess_begin).count();
+    }
+    return result;
+}
+
 // [Recognition Chain] 单个 ROI 的 Top-1 分类推理。
 // 作用：按当前模型模式把 ROI 预处理成对应 blob，再送入 ONNX，输出当前帧的类别索引。
-static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
-                                                  const cv::Mat& roi_bgr,
-                                                  float calibration_temperature,
-                                                  const std::array<float, kRecognitionMaxClasses>& logit_bias,
-                                                  RoiClassificationTiming* timing = nullptr)
+static RoiClassificationResult classify_roi_index_onnx(cv::dnn::Net& net,
+                                                       const cv::Mat& roi_bgr,
+                                                       float calibration_temperature,
+                                                       const std::array<float, kRecognitionMaxClasses>& logit_bias,
+                                                       RoiClassificationTiming* timing = nullptr,
+                                                       std::array<float, kRecognitionMaxClasses>* out_logits = nullptr)
 {
     const auto preprocess_begin = std::chrono::steady_clock::now();
     cv::Mat blob;
@@ -991,6 +1174,18 @@ static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
     const auto postprocess_begin = forward_end;
     cv::Mat out_f;
     out.convertTo(out_f, CV_32F);
+    if (out_logits != nullptr)
+    {
+        out_logits->fill(0.0f);
+        const cv::Mat logits_row = out_f.reshape(1, 1);
+        const int count = std::min(static_cast<int>(logits_row.total()),
+                                   static_cast<int>(kRecognitionMaxClasses));
+        const float* logits_ptr = logits_row.ptr<float>(0);
+        for (int i = 0; i < count; ++i)
+        {
+            (*out_logits)[static_cast<size_t>(i)] = logits_ptr[i];
+        }
+    }
     RoiClassificationResult result =
         finalize_logits_to_result(out_f, calibration_temperature, logit_bias);
     const auto postprocess_end = std::chrono::steady_clock::now();
@@ -1010,6 +1205,117 @@ static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
     return result;
 }
 
+static void maybe_log_manual_mlp_compare(const RoiClassificationResult& manual_result,
+                                         const RoiClassificationResult& onnx_result,
+                                         const std::array<float, kRecognitionMaxClasses>& manual_logits,
+                                         const std::array<float, kRecognitionMaxClasses>& onnx_logits)
+{
+    if (!kRecognitionResultLog)
+    {
+        return;
+    }
+
+    constexpr int kClassCount = recognition_mlp_weights::kClassCount;
+    float max_logit_abs_diff = 0.0f;
+    float max_prob_abs_diff = 0.0f;
+    for (int i = 0; i < kClassCount; ++i)
+    {
+        max_logit_abs_diff = std::max(
+            max_logit_abs_diff,
+            std::fabs(manual_logits[static_cast<size_t>(i)] - onnx_logits[static_cast<size_t>(i)]));
+        max_prob_abs_diff = std::max(
+            max_prob_abs_diff,
+            std::fabs(manual_result.probabilities[static_cast<size_t>(i)] -
+                      onnx_result.probabilities[static_cast<size_t>(i)]));
+    }
+
+    const ProbabilityDecisionSummary manual_summary =
+        summarize_classification_result(manual_result, kClassCount);
+    const ProbabilityDecisionSummary onnx_summary =
+        summarize_classification_result(onnx_result, kClassCount);
+    const bool top1_same = (manual_summary.top1_index == onnx_summary.top1_index);
+    const bool warn =
+        !top1_same ||
+        max_logit_abs_diff > BW_RECOG_MANUAL_MLP_COMPARE_LOGIT_DIFF_WARN ||
+        max_prob_abs_diff > BW_RECOG_MANUAL_MLP_COMPARE_PROB_DIFF_WARN;
+
+    static auto last_log_time = std::chrono::steady_clock::time_point();
+    const auto now = std::chrono::steady_clock::now();
+    const bool interval_elapsed =
+        last_log_time.time_since_epoch().count() == 0 ||
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_log_time).count() >=
+            BW_RECOG_MANUAL_MLP_COMPARE_LOG_INTERVAL_MS;
+    if (!warn && !interval_elapsed)
+    {
+        return;
+    }
+    last_log_time = now;
+
+    std::cout << "[MLP_COMPARE]"
+              << " status=" << (warn ? "warn" : "ok")
+              << ", max_logit_abs_diff=" << std::fixed << std::setprecision(6)
+              << max_logit_abs_diff
+              << ", max_prob_abs_diff=" << max_prob_abs_diff
+              << ", manual_top1=" << manual_summary.top1_index
+              << ", manual_top2=" << manual_summary.top2_index
+              << ", manual_margin=" << manual_summary.margin
+              << ", onnx_top1=" << onnx_summary.top1_index
+              << ", onnx_top2=" << onnx_summary.top2_index
+              << ", onnx_margin=" << onnx_summary.margin
+              << ", top1_same=" << (top1_same ? "yes" : "no")
+              << std::endl;
+}
+
+static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
+                                                  const cv::Mat& roi_bgr,
+                                                  float calibration_temperature,
+                                                  const std::array<float, kRecognitionMaxClasses>& logit_bias,
+                                                  RoiClassificationTiming* timing = nullptr)
+{
+    const bool can_use_manual =
+        kRecognitionUseRgb32SubclassModel &&
+        (kRecognitionManualMlpInferEnable || kRecognitionManualMlpCompareOnnx);
+    if (!can_use_manual)
+    {
+        return classify_roi_index_onnx(net, roi_bgr, calibration_temperature, logit_bias, timing);
+    }
+
+    RoiClassificationTiming manual_timing;
+    std::array<float, kRecognitionMaxClasses> manual_logits = {};
+    const RoiClassificationResult manual_result = classify_roi_index_manual_rgb32(
+        roi_bgr,
+        calibration_temperature,
+        logit_bias,
+        &manual_timing,
+        &manual_logits);
+
+    if (!kRecognitionManualMlpCompareOnnx)
+    {
+        if (timing != nullptr)
+        {
+            *timing = manual_timing;
+        }
+        return manual_result;
+    }
+
+    RoiClassificationTiming onnx_timing;
+    std::array<float, kRecognitionMaxClasses> onnx_logits = {};
+    const RoiClassificationResult onnx_result = classify_roi_index_onnx(
+        net,
+        roi_bgr,
+        calibration_temperature,
+        logit_bias,
+        &onnx_timing,
+        &onnx_logits);
+    maybe_log_manual_mlp_compare(manual_result, onnx_result, manual_logits, onnx_logits);
+
+    if (timing != nullptr)
+    {
+        *timing = kRecognitionManualMlpInferEnable ? manual_timing : onnx_timing;
+    }
+    return kRecognitionManualMlpInferEnable ? manual_result : onnx_result;
+}
+
 static void warmup_recognition_net(cv::dnn::Net& net,
                                    float calibration_temperature,
                                    const std::array<float, kRecognitionMaxClasses>& logit_bias)
@@ -1024,7 +1330,7 @@ static void warmup_recognition_net(cv::dnn::Net& net,
     for (int i = 0; i < kRecognitionOnnxWarmupRuns; ++i)
     {
         const auto begin = std::chrono::steady_clock::now();
-        (void)classify_roi_index(net, dummy_roi, calibration_temperature, logit_bias);
+        (void)classify_roi_index_onnx(net, dummy_roi, calibration_temperature, logit_bias);
         const auto end = std::chrono::steady_clock::now();
         if (kRecognitionResultLog)
         {
@@ -1036,17 +1342,76 @@ static void warmup_recognition_net(cv::dnn::Net& net,
     }
 }
 
-static bool detect_red_candidate_for_early_slowdown(const cv::Mat& frame_bgr,
-                                                    const cv::Rect& limit_rect,
-                                                    cv::Rect* best_rect)
+struct RedCandidateBounds
+{
+    int min_x = std::numeric_limits<int>::max();
+    int max_x = -1;
+    int min_y = std::numeric_limits<int>::max();
+    int max_y = -1;
+    int count = 0;
+
+    void Add(int x, int y)
+    {
+        ++count;
+        min_x = std::min(min_x, x);
+        max_x = std::max(max_x, x);
+        min_y = std::min(min_y, y);
+        max_y = std::max(max_y, y);
+    }
+
+    bool ToRect(int min_pixel_count, int min_width, int min_height, cv::Rect* out_rect) const
+    {
+        if (count < min_pixel_count || max_x < min_x || max_y < min_y)
+        {
+            return false;
+        }
+        const int width = max_x - min_x + 1;
+        const int height = max_y - min_y + 1;
+        if (width < min_width || height < min_height)
+        {
+            return false;
+        }
+        if (out_rect != nullptr)
+        {
+            *out_rect = cv::Rect(min_x, min_y, width, height);
+        }
+        return true;
+    }
+};
+
+static bool red_pixel_passes_thresholds(int b,
+                                        int g,
+                                        int r,
+                                        int red_score_threshold,
+                                        int min_r_threshold,
+                                        int red_dom_threshold)
+{
+    const int red_score = 2 * r - g - b;
+    const int dom = r - std::max(g, b);
+    return red_score >= red_score_threshold &&
+           r >= min_r_threshold &&
+           dom >= red_dom_threshold;
+}
+
+static bool detect_red_candidate_in_y_range(const cv::Mat& frame_bgr,
+                                            const cv::Rect& limit_rect,
+                                            int y_min_inclusive,
+                                            int y_max_exclusive,
+                                            cv::Rect* best_rect,
+                                            int red_score_threshold,
+                                            int min_r_threshold,
+                                            int red_dom_threshold,
+                                            int min_pixel_count,
+                                            int min_width,
+                                            int min_height)
 {
     if (frame_bgr.empty() || limit_rect.width <= 0 || limit_rect.height <= 0)
     {
         return false;
     }
 
-    const int y0 = std::max(0, std::min(kRecognitionSlowdownMinSearchYInclusive, frame_bgr.rows - 1));
-    const int y1 = std::max(y0 + 1, std::min(kRecognitionSlowdownMaxSearchYExclusive, frame_bgr.rows));
+    const int y0 = std::max(0, std::min(y_min_inclusive, frame_bgr.rows - 1));
+    const int y1 = std::max(y0 + 1, std::min(y_max_exclusive, frame_bgr.rows));
     const int scan_x0 = std::max(0, limit_rect.x);
     const int scan_x1 = std::min(frame_bgr.cols, limit_rect.x + limit_rect.width);
     const int scan_y0 = std::max(y0, limit_rect.y);
@@ -1056,61 +1421,121 @@ static bool detect_red_candidate_for_early_slowdown(const cv::Mat& frame_bgr,
         return false;
     }
 
-    constexpr int kEarlyRedScoreThreshold = 130;
-    constexpr int kEarlyRedMinR = 70;
-    constexpr int kEarlyRedDomThreshold = 60;
-    constexpr int kEarlyMinPixelCount = 24;
-    constexpr int kEarlyMinWidth = 4;
-    constexpr int kEarlyMinHeight = 4;
-
-    int min_x = frame_bgr.cols;
-    int max_x = -1;
-    int min_y = scan_y1;
-    int max_y = -1;
-    int red_count = 0;
+    RedCandidateBounds bounds;
 
     for (int y = scan_y0; y < scan_y1; ++y)
     {
         const cv::Vec3b* row_ptr = frame_bgr.ptr<cv::Vec3b>(y);
         for (int x = scan_x0; x < scan_x1; ++x)
         {
-            const int b = static_cast<int>(row_ptr[x][0]);
-            const int g = static_cast<int>(row_ptr[x][1]);
-            const int r = static_cast<int>(row_ptr[x][2]);
-            const int red_score = 2 * r - g - b;
-            const int dom = r - std::max(g, b);
-            if (red_score < kEarlyRedScoreThreshold ||
-                r < kEarlyRedMinR ||
-                dom < kEarlyRedDomThreshold)
+            const cv::Vec3b adjusted_bgr =
+                recognition_white_reference::ApplyGainsToPixel(row_ptr[x]);
+            const int b = static_cast<int>(adjusted_bgr[0]);
+            const int g = static_cast<int>(adjusted_bgr[1]);
+            const int r = static_cast<int>(adjusted_bgr[2]);
+            if (!red_pixel_passes_thresholds(
+                    b, g, r, red_score_threshold, min_r_threshold, red_dom_threshold))
             {
                 continue;
             }
 
-            ++red_count;
-            min_x = std::min(min_x, x);
-            max_x = std::max(max_x, x);
-            min_y = std::min(min_y, y);
-            max_y = std::max(max_y, y);
+            bounds.Add(x, y);
         }
     }
 
-    if (red_count < kEarlyMinPixelCount || max_x < min_x || max_y < min_y)
+    return bounds.ToRect(min_pixel_count, min_width, min_height, best_rect);
+}
+
+static bool detect_red_candidate_for_early_slowdown(const cv::Mat& frame_bgr,
+                                                    const cv::Rect& limit_rect,
+                                                    cv::Rect* best_rect)
+{
+    return detect_red_candidate_in_y_range(
+        frame_bgr,
+        limit_rect,
+        kRecognitionSlowdownMinSearchYInclusive,
+        kRecognitionSlowdownMaxSearchYExclusive,
+        best_rect,
+        130,
+        70,
+        60,
+        24,
+        4,
+        4);
+}
+
+static void detect_lightweight_red_prefilter(const cv::Mat& frame_bgr,
+                                             const cv::Rect& limit_rect,
+                                             bool* out_slowdown_red,
+                                             cv::Rect* slowdown_rect,
+                                             bool* out_recognition_red,
+                                             cv::Rect* recognition_rect)
+{
+    if (out_slowdown_red != nullptr)
     {
-        return false;
+        *out_slowdown_red = false;
+    }
+    if (out_recognition_red != nullptr)
+    {
+        *out_recognition_red = false;
+    }
+    if (frame_bgr.empty() || limit_rect.width <= 0 || limit_rect.height <= 0)
+    {
+        return;
     }
 
-    const int width = max_x - min_x + 1;
-    const int height = max_y - min_y + 1;
-    if (width < kEarlyMinWidth || height < kEarlyMinHeight)
+    const int early_slowdown_y_max =
+        std::min(kRecognitionSlowdownMaxSearchYExclusive, kRecognitionMinSearchYInclusive);
+    RoiTrackRedPrefilterResult track_prefilter;
+    if (DetectTrackAwareRedPrefilter(
+            frame_bgr,
+            kRecognitionSlowdownMinSearchYInclusive,
+            early_slowdown_y_max,
+            kRecognitionMinSearchYInclusive,
+            kRecognitionMaxSearchYExclusive,
+            &track_prefilter))
     {
-        return false;
+        if (out_slowdown_red != nullptr)
+        {
+            *out_slowdown_red = track_prefilter.has_early_marker_red;
+        }
+        if (slowdown_rect != nullptr && track_prefilter.has_early_marker_red)
+        {
+            *slowdown_rect = track_prefilter.early_marker_rect;
+        }
+
+        const bool has_recognition_red =
+            track_prefilter.has_recognition_marker_red ||
+            track_prefilter.has_recognition_brick_red;
+        if (out_recognition_red != nullptr)
+        {
+            *out_recognition_red = has_recognition_red;
+        }
+        if (recognition_rect != nullptr && has_recognition_red)
+        {
+            *recognition_rect = track_prefilter.has_recognition_marker_red
+                ? track_prefilter.recognition_marker_rect
+                : track_prefilter.recognition_brick_rect;
+        }
+        return;
     }
 
-    if (best_rect != nullptr)
+    // 边线不可用时不做 40~60 提前减速，避免边界外红砖误触发 u。
+    if (out_recognition_red != nullptr)
     {
-        *best_rect = cv::Rect(min_x, min_y, width, height);
+        *out_recognition_red = detect_red_candidate_in_y_range(
+            frame_bgr,
+            limit_rect,
+            kRecognitionMinSearchYInclusive,
+            kRecognitionMaxSearchYExclusive,
+            recognition_rect,
+            BW_RECOG_TASK_RED_SCORE_MIN_FLOOR,
+            BW_RECOG_TASK_RED_MIN_R_FLOOR,
+            BW_RECOG_TASK_RED_DOM_MIN_FLOOR,
+            8,
+            2,
+            2);
     }
-    return true;
 }
 
 static ProbabilityDecisionSummary summarize_probabilities(const std::array<float, kRecognitionMaxClasses>& prob_sum,
@@ -1250,6 +1675,9 @@ RecognitionChain::RecognitionChain()
       adaptive_prob_sum_(),
       adaptive_valid_frame_count_(0),
       adaptive_bad_frame_count_(0),
+      pending_trigger_roi_valid_(false),
+      pending_trigger_roi_(),
+      pending_trigger_perf_(),
       last_perf_sample_()
 {
 }
@@ -1295,8 +1723,8 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
         const DeployCalibration calibration = load_deploy_calibration_json(calibration_path);
         calibration_temperature_ = calibration.temperature;
         logit_bias_ = calibration.logit_bias;
-        decision_top1_threshold_ = kRecognitionDecisionTop1Threshold;
-        decision_margin_threshold_ = kRecognitionDecisionMarginThreshold;
+        decision_top1_threshold_ = calibration.decision_top1_threshold;
+        decision_margin_threshold_ = calibration.decision_margin_threshold;
         enabled_ = !net_.empty();
         if (enabled_)
         {
@@ -1323,6 +1751,9 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
                       << std::endl;
             std::cout << "[ONNX] enabled, model=" << model_path << std::endl;
             std::cout << "[ONNX] classes=" << class_path << std::endl;
+            std::cout << "[MLP] manual_infer=" << (kRecognitionManualMlpInferEnable ? "on" : "off")
+                      << ", compare_onnx=" << (kRecognitionManualMlpCompareOnnx ? "on" : "off")
+                      << std::endl;
             std::cout << "[RECOG] roi_method=" << RoiMethodName(DefaultRoiMethod()) << std::endl;
             std::cout << "[RECOG] decision=adaptive_1_or_2_frame"
                       << ", top1_threshold=" << decision_top1_threshold_
@@ -1355,6 +1786,9 @@ void RecognitionChain::Reset()
     latched_release_pending_ = false;
     current_blob_area_ = 0.0;
     recent_red_candidate_until_ms_ = 0;
+    pending_trigger_roi_valid_ = false;
+    pending_trigger_roi_ = RoiExtractionResult();
+    pending_trigger_perf_ = PerfSample();
     ClearAdaptiveDecision();
     last_perf_sample_ = PerfSample();
 }
@@ -1410,6 +1844,21 @@ const RecognitionChain::PerfSample& RecognitionChain::GetLastPerfSample() const
     return last_perf_sample_;
 }
 
+bool RecognitionChain::HasPendingTriggerRoiForImmediateInference() const
+{
+    return kRecognitionTriggerFrameInferEnable &&
+           pending_trigger_roi_valid_ &&
+           mode_ == Mode::RECOGNITION;
+}
+
+void RecognitionChain::ProcessPendingTriggerRoi(const cv::Mat& frame_bgr,
+                                                uint64_t t_ms,
+                                                cv::Mat& view,
+                                                bool render_debug)
+{
+    ProcessRecognitionFrame(frame_bgr, t_ms, view, render_debug);
+}
+
 bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug)
 {
     using steady_clock_t = std::chrono::steady_clock;
@@ -1436,10 +1885,61 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         view.release();
     }
 
+    if (kRecognitionLightweightRedPrefilterEnable &&
+        !is_success_symbol_code(latched_symbol_code_))
+    {
+        const auto prefilter_begin = steady_clock_t::now();
+        const cv::Rect full_frame_rect(0, 0, frame_bgr.cols, frame_bgr.rows);
+        cv::Rect lightweight_slowdown_rect;
+        cv::Rect lightweight_recognition_rect;
+        bool has_lightweight_slowdown_red = false;
+        bool has_lightweight_recognition_red = false;
+        detect_lightweight_red_prefilter(
+            frame_bgr,
+            full_frame_rect,
+            &has_lightweight_slowdown_red,
+            &lightweight_slowdown_rect,
+            &has_lightweight_recognition_red,
+            &lightweight_recognition_rect);
+        last_perf_sample_.ultra_precheck_ms =
+            std::chrono::duration<double, std::milli>(steady_clock_t::now() - prefilter_begin).count();
+        last_perf_sample_.ultra_precheck_called = true;
+
+        if (!has_lightweight_recognition_red)
+        {
+            current_blob_area_ = has_lightweight_slowdown_red
+                ? static_cast<double>(lightweight_slowdown_rect.area())
+                : 0.0;
+            current_vision_code_ = has_lightweight_slowdown_red
+                ? BoardVisionCode::NO_RESULT
+                : BoardVisionCode::UNKNOWN;
+            latched_symbol_code_ = BoardVisionCode::INVALID;
+            latched_release_pending_ = false;
+            latched_release_deadline_ms_ = 0;
+            pending_trigger_roi_valid_ = false;
+            pending_trigger_roi_ = RoiExtractionResult();
+            pending_trigger_perf_ = PerfSample();
+            ClearAdaptiveDecision();
+            if (has_lightweight_slowdown_red)
+            {
+                recent_red_candidate_until_ms_ = t_ms + kRecognitionRecentCandidateHoldMs;
+                if (render_debug)
+                {
+                    cv::rectangle(view, lightweight_slowdown_rect, cv::Scalar(0, 255, 255), 2);
+                    cv::putText(view, "EARLY RED ONLY -> u", cv::Point(16, 112),
+                                cv::FONT_HERSHEY_SIMPLEX, 0.60, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+                }
+            }
+            last_perf_sample_.try_total_ms =
+                std::chrono::duration<double, std::milli>(steady_clock_t::now() - try_begin).count();
+            return false;
+        }
+    }
+
     const RoiMethod roi_method = DefaultRoiMethod();
     const auto extract_begin = steady_clock_t::now();
     RoiExtractionResult trigger_roi =
-        ExtractRotatedRoi(frame_bgr, kRecognitionModelInputSize, roi_method);
+        ExtractRotatedRoi(frame_bgr, kRecognitionModelInputSize, roi_method, render_debug);
     const auto extract_end = steady_clock_t::now();
     last_perf_sample_.extract_roi_ms =
         std::chrono::duration<double, std::milli>(extract_end - extract_begin).count();
@@ -1475,6 +1975,26 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
                             0.60, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
             }
         }
+    }
+    if (trigger_roi.target_type == "roadblock" || trigger_roi.status == "roadblock")
+    {
+        current_vision_code_ = brick_code_from_roi_result(trigger_roi, frame_bgr.cols);
+        latched_symbol_code_ = BoardVisionCode::INVALID;
+        latched_release_pending_ = false;
+        latched_release_deadline_ms_ = 0;
+        pending_trigger_roi_valid_ = false;
+        pending_trigger_roi_ = RoiExtractionResult();
+        pending_trigger_perf_ = PerfSample();
+        ClearAdaptiveDecision();
+        if (render_debug)
+        {
+            const std::string brick_text = red_observation_text(trigger_roi, frame_bgr.cols);
+            cv::putText(view, brick_text, cv::Point(16, 112), cv::FONT_HERSHEY_SIMPLEX,
+                        0.65, cv::Scalar(0, 0, 255), 2, cv::LINE_AA);
+        }
+        last_perf_sample_.try_total_ms =
+            std::chrono::duration<double, std::milli>(steady_clock_t::now() - try_begin).count();
+        return false;
     }
     if (is_success_symbol_code(latched_symbol_code_))
     {
@@ -1680,6 +2200,17 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     latched_release_pending_ = false;
     latched_release_deadline_ms_ = 0;
     ClearAdaptiveDecision();
+    pending_trigger_roi_valid_ = kRecognitionTriggerFrameInferEnable;
+    if (pending_trigger_roi_valid_)
+    {
+        pending_trigger_roi_ = trigger_roi;
+        pending_trigger_perf_ = last_perf_sample_;
+    }
+    else
+    {
+        pending_trigger_roi_ = RoiExtractionResult();
+        pending_trigger_perf_ = PerfSample();
+    }
     if (kRecognitionTextLog)
     {
         std::cout << "[RECOG] sign board accepted: entering recognition"
@@ -1695,6 +2226,10 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     }
     last_perf_sample_.try_total_ms =
         std::chrono::duration<double, std::milli>(steady_clock_t::now() - try_begin).count();
+    if (pending_trigger_roi_valid_)
+    {
+        pending_trigger_perf_ = last_perf_sample_;
+    }
     return true;
 }
 
@@ -1702,7 +2237,19 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 {
     using steady_clock_t = std::chrono::steady_clock;
     const auto process_begin = steady_clock_t::now();
-    last_perf_sample_ = PerfSample();
+    const bool use_pending_trigger_roi = HasPendingTriggerRoiForImmediateInference();
+    RoiExtractionResult pending_trigger_roi;
+    PerfSample pending_trigger_perf;
+    if (use_pending_trigger_roi)
+    {
+        pending_trigger_roi = pending_trigger_roi_;
+        pending_trigger_perf = pending_trigger_perf_;
+        pending_trigger_roi_valid_ = false;
+        pending_trigger_roi_ = RoiExtractionResult();
+        pending_trigger_perf_ = PerfSample();
+    }
+
+    last_perf_sample_ = use_pending_trigger_roi ? pending_trigger_perf : PerfSample();
     last_perf_sample_.process_recog_total_called = true;
 
     if (!enabled_ || mode_ != Mode::RECOGNITION)
@@ -1731,15 +2278,23 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     {
         view.release();
     }
-    const RoiMethod roi_method = DefaultRoiMethod();
-    const auto extract_begin = steady_clock_t::now();
-    RoiExtractionResult roi_result =
-        ExtractRotatedRoi(frame_bgr, kRecognitionModelInputSize, roi_method);
-    const auto extract_end = steady_clock_t::now();
-    last_perf_sample_.extract_roi_ms =
-        std::chrono::duration<double, std::milli>(extract_end - extract_begin).count();
-    last_perf_sample_.extract_roi_called = true;
-    copy_roi_timing_to_perf(roi_result, &last_perf_sample_);
+    RoiMethod roi_method = DefaultRoiMethod();
+    RoiExtractionResult roi_result;
+    if (use_pending_trigger_roi)
+    {
+        roi_result = pending_trigger_roi;
+        roi_method = roi_result.roi_method;
+    }
+    else
+    {
+        const auto extract_begin = steady_clock_t::now();
+        roi_result = ExtractRotatedRoi(frame_bgr, kRecognitionModelInputSize, roi_method, render_debug);
+        const auto extract_end = steady_clock_t::now();
+        last_perf_sample_.extract_roi_ms =
+            std::chrono::duration<double, std::milli>(extract_end - extract_begin).count();
+        last_perf_sample_.extract_roi_called = true;
+        copy_roi_timing_to_perf(roi_result, &last_perf_sample_);
+    }
     if (render_debug)
     {
         DrawRoiDebugOverlay(view, roi_result);

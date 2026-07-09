@@ -7,6 +7,7 @@
 #include <opencv2/dnn.hpp>
 #include <opencv2/opencv.hpp>
 #include "Communication.h"
+#include "roi_runtime_geometry.h"
 
 class RecognitionChain
 {
@@ -68,6 +69,8 @@ public:
     // [Recognition Chain Step 2-3] 在普通态里检测红色触发器并切入识别态。
     // 作用：识别链自己管理 NORMAL -> RECOGNITION 的切换，并进入自适应判定。
     bool TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
+    bool HasPendingTriggerRoiForImmediateInference() const;
+    void ProcessPendingTriggerRoi(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
     // [Recognition Chain Step 4-5A] 识别态自适应 1/2 帧推理并给出结果。
     // 作用：高置信单帧输出，低置信首帧保留识别态等待第二帧聚合。
     void ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
@@ -106,5 +109,8 @@ private:
     std::array<float, kMaxModelClasses> adaptive_prob_sum_;
     int adaptive_valid_frame_count_;
     int adaptive_bad_frame_count_;
+    bool pending_trigger_roi_valid_;
+    RoiExtractionResult pending_trigger_roi_;
+    PerfSample pending_trigger_perf_;
     PerfSample last_perf_sample_;
 };

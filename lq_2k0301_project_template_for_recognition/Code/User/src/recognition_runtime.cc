@@ -3,6 +3,7 @@
 #include "latest_frame_grabber.h"
 #include "recognition_chain.h"
 #include "stream_chain.h"
+#include "recognition_white_reference.h"
 #include "main.hpp"
 #include <algorithm>
 #include <chrono>
@@ -20,135 +21,8 @@ using steady_time_point_t = std::chrono::time_point<steady_clock_t>;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
 constexpr bool kRecognitionUToResultTimingLog = (BW_RECOG_U_TO_RESULT_TIMING_LOG_ENABLE != 0);
-
-struct RuntimeWhiteReferenceStats
-{
-    bool valid = false;
-    int sample_count = 0;
-    float mean_b = 0.0f;
-    float mean_g = 0.0f;
-    float mean_r = 0.0f;
-    float mean_luma = 0.0f;
-};
-
-struct RuntimeWhiteReferenceNormalizeState
-{
-    bool initialized = false;
-    float gain_b = 1.0f;
-    float gain_g = 1.0f;
-    float gain_r = 1.0f;
-};
-
-static float clamp_float(float value, float min_value, float max_value)
-{
-    return std::max(min_value, std::min(value, max_value));
-}
-
-static bool IsRuntimeWhiteReferenceSeed(const cv::Vec3b& bgr, const cv::Vec3b& hsv)
-{
-    const int max_rgb = std::max(std::max(static_cast<int>(bgr[0]), static_cast<int>(bgr[1])),
-                                 static_cast<int>(bgr[2]));
-    const int min_rgb = std::min(std::min(static_cast<int>(bgr[0]), static_cast<int>(bgr[1])),
-                                 static_cast<int>(bgr[2]));
-    return hsv[1] <= static_cast<unsigned char>(BW_RECOG_WHITE_REF_SEED_MAX_SATURATION) &&
-           hsv[2] >= static_cast<unsigned char>(BW_RECOG_WHITE_REF_SEED_MIN_VALUE) &&
-           min_rgb >= BW_RECOG_WHITE_REF_SEED_MIN_RGB &&
-           (max_rgb - min_rgb) <= BW_RECOG_WHITE_REF_SEED_MAX_CHANNEL_DIFF;
-}
-
-static bool ComputeRuntimeWhiteReferenceStats(const cv::Mat& frame_bgr,
-                                              RuntimeWhiteReferenceStats* out_stats)
-{
-    if (out_stats == nullptr)
-    {
-        return false;
-    }
-    *out_stats = RuntimeWhiteReferenceStats();
-    if (frame_bgr.empty())
-    {
-        return false;
-    }
-
-    const int row_y = std::max(0, std::min(BW_RECOG_WHITE_REFERENCE_ROW_Y, frame_bgr.rows - 1));
-    const int half_height = std::max(0, BW_RECOG_WHITE_REF_STATS_HALF_HEIGHT);
-    const int y0 = std::max(0, row_y - half_height);
-    const int y1 = std::min(frame_bgr.rows - 1, row_y + half_height);
-    if (y1 < y0)
-    {
-        return false;
-    }
-
-    const cv::Mat roi_bgr = frame_bgr.rowRange(y0, y1 + 1);
-    cv::Mat roi_hsv;
-    cv::cvtColor(roi_bgr, roi_hsv, cv::COLOR_BGR2HSV);
-
-    double sum_b = 0.0;
-    double sum_g = 0.0;
-    double sum_r = 0.0;
-    double sum_luma = 0.0;
-    int sample_count = 0;
-
-    for (int y = 0; y < roi_bgr.rows; ++y)
-    {
-        const cv::Vec3b* bgr_row = roi_bgr.ptr<cv::Vec3b>(y);
-        const cv::Vec3b* hsv_row = roi_hsv.ptr<cv::Vec3b>(y);
-        for (int x = 0; x < roi_bgr.cols; ++x)
-        {
-            if (!IsRuntimeWhiteReferenceSeed(bgr_row[x], hsv_row[x]))
-            {
-                continue;
-            }
-
-            const float b = static_cast<float>(bgr_row[x][0]);
-            const float g = static_cast<float>(bgr_row[x][1]);
-            const float r = static_cast<float>(bgr_row[x][2]);
-            sum_b += b;
-            sum_g += g;
-            sum_r += r;
-            sum_luma += 0.114 * b + 0.587 * g + 0.299 * r;
-            ++sample_count;
-        }
-    }
-
-    if (sample_count <= 0)
-    {
-        return false;
-    }
-
-    out_stats->valid = true;
-    out_stats->sample_count = sample_count;
-    out_stats->mean_b = static_cast<float>(sum_b / sample_count);
-    out_stats->mean_g = static_cast<float>(sum_g / sample_count);
-    out_stats->mean_r = static_cast<float>(sum_r / sample_count);
-    out_stats->mean_luma = static_cast<float>(sum_luma / sample_count);
-    return true;
-}
-
-static RuntimeWhiteReferenceNormalizeState& GetRuntimeWhiteReferenceNormalizeState()
-{
-    static RuntimeWhiteReferenceNormalizeState state;
-    return state;
-}
-
-static void ApplyRuntimeWhiteReferenceGains(cv::Mat* frame_bgr,
-                                            const RuntimeWhiteReferenceNormalizeState& state)
-{
-    if (frame_bgr == nullptr || frame_bgr->empty() || !state.initialized)
-    {
-        return;
-    }
-
-    for (int y = 0; y < frame_bgr->rows; ++y)
-    {
-        cv::Vec3b* row = frame_bgr->ptr<cv::Vec3b>(y);
-        for (int x = 0; x < frame_bgr->cols; ++x)
-        {
-            row[x][0] = cv::saturate_cast<unsigned char>(row[x][0] * state.gain_b);
-            row[x][1] = cv::saturate_cast<unsigned char>(row[x][1] * state.gain_g);
-            row[x][2] = cv::saturate_cast<unsigned char>(row[x][2] * state.gain_r);
-        }
-    }
-}
+constexpr bool kRecognitionTriggerFrameEarlyUSend =
+    (BW_RECOG_TRIGGER_FRAME_EARLY_U_SEND_ENABLE != 0);
 
 static void ApplyRecognitionWhiteReferenceNormalization(cv::Mat* frame_bgr, bool allow_adapt)
 {
@@ -161,57 +35,7 @@ static void ApplyRecognitionWhiteReferenceNormalization(cv::Mat* frame_bgr, bool
         return;
     }
 
-    RuntimeWhiteReferenceNormalizeState& state = GetRuntimeWhiteReferenceNormalizeState();
-    RuntimeWhiteReferenceStats stats;
-    const bool has_stats = ComputeRuntimeWhiteReferenceStats(*frame_bgr, &stats);
-
-    if (allow_adapt && has_stats && stats.valid)
-    {
-        const float safe_luma = std::max(stats.mean_luma, 1.0f);
-        const float safe_b = std::max(stats.mean_b, 1.0f);
-        const float safe_g = std::max(stats.mean_g, 1.0f);
-        const float safe_r = std::max(stats.mean_r, 1.0f);
-        const float target_luma = std::max(1.0f, BW_RECOG_WHITE_REF_NORMALIZE_TARGET_LUMA);
-        const float avg_channel = (stats.mean_b + stats.mean_g + stats.mean_r) / 3.0f;
-        const float alpha = clamp_float(BW_RECOG_WHITE_REF_NORMALIZE_ALPHA, 0.0f, 1.0f);
-
-        const float luma_gain = clamp_float(
-            target_luma / safe_luma,
-            BW_RECOG_WHITE_REF_NORMALIZE_LUMA_GAIN_MIN,
-            BW_RECOG_WHITE_REF_NORMALIZE_LUMA_GAIN_MAX);
-        const float wb_gain_b = clamp_float(
-            avg_channel / safe_b,
-            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MIN,
-            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MAX);
-        const float wb_gain_g = clamp_float(
-            avg_channel / safe_g,
-            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MIN,
-            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MAX);
-        const float wb_gain_r = clamp_float(
-            avg_channel / safe_r,
-            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MIN,
-            BW_RECOG_WHITE_REF_NORMALIZE_WB_GAIN_MAX);
-
-        const float target_gain_b = luma_gain * wb_gain_b;
-        const float target_gain_g = luma_gain * wb_gain_g;
-        const float target_gain_r = luma_gain * wb_gain_r;
-
-        if (!state.initialized)
-        {
-            state.initialized = true;
-            state.gain_b = target_gain_b;
-            state.gain_g = target_gain_g;
-            state.gain_r = target_gain_r;
-        }
-        else
-        {
-            state.gain_b += (target_gain_b - state.gain_b) * alpha;
-            state.gain_g += (target_gain_g - state.gain_g) * alpha;
-            state.gain_r += (target_gain_r - state.gain_r) * alpha;
-        }
-    }
-
-    ApplyRuntimeWhiteReferenceGains(frame_bgr, state);
+    recognition_white_reference::UpdateFromFrame(*frame_bgr, allow_adapt);
 #endif
 }
 
@@ -381,7 +205,8 @@ static bool DetectBlindBoxGreenClothStart(const cv::Mat& frame_bgr,
         return false;
     }
 
-    const cv::Mat roi_bgr = frame_bgr(search_rect);
+    cv::Mat roi_bgr = frame_bgr(search_rect).clone();
+    recognition_white_reference::ApplyGainsToMat(&roi_bgr);
     cv::Mat roi_hsv;
     cv::cvtColor(roi_bgr, roi_hsv, cv::COLOR_BGR2HSV);
 
@@ -458,6 +283,7 @@ enum class RuntimeFrameStage
     MANUAL_IDLE,
     CLOTH_STOP,
     TRY_ENTER,
+    TRIGGER_FRAME_INFER,
     PROCESS_RECOG,
 };
 
@@ -481,6 +307,7 @@ struct RuntimeFrameTimingSample
     double chain_ms = 0.0;
     double overlay_ms = 0.0;
     double send_state_ms = 0.0;
+    double early_u_send_ms = 0.0;
     double publish_ms = 0.0;
     double read_to_prepare_done_ms = 0.0;
     double read_to_chain_done_ms = 0.0;
@@ -489,6 +316,10 @@ struct RuntimeFrameTimingSample
     bool send_attempted = false;
     bool send_ok = false;
     uint8_t tx_seq = 0;
+    bool early_u_send_attempted = false;
+    bool early_u_send_ok = false;
+    uint8_t early_u_tx_seq = 0;
+    steady_time_point_t early_u_send_end;
     RecognitionChain::PerfSample perf;
 };
 
@@ -500,6 +331,7 @@ static const char* RuntimeFrameStageText(RuntimeFrameStage stage)
     case RuntimeFrameStage::MANUAL_IDLE: return "手动待机";
     case RuntimeFrameStage::CLOTH_STOP: return "色布停车";
     case RuntimeFrameStage::TRY_ENTER: return "普通态触发";
+    case RuntimeFrameStage::TRIGGER_FRAME_INFER: return "触发帧推理";
     case RuntimeFrameStage::PROCESS_RECOG: return "识别态推理";
     default: return "未知阶段";
     }
@@ -513,7 +345,15 @@ static double elapsed_ms_since(const steady_time_point_t& begin,
 
 static steady_time_point_t timing_frame_trace_end(const RuntimeFrameTimingSample& sample)
 {
-    return sample.send_attempted ? sample.send_end : sample.chain_end;
+    if (sample.send_attempted)
+    {
+        return sample.send_end;
+    }
+    if (sample.early_u_send_attempted)
+    {
+        return sample.early_u_send_end;
+    }
+    return sample.chain_end;
 }
 
 static void PrintTimingFrameLine(const char* label,
@@ -539,6 +379,7 @@ static void PrintTimingFrameLine(const char* label,
               << ", 预处理_ms=" << sample.prepare_ms
               << ", 链路处理_ms=" << sample.chain_ms
               << ", 叠字_ms=" << sample.overlay_ms
+              << ", 提前u发包_ms=" << (sample.early_u_send_attempted ? sample.early_u_send_ms : 0.0)
               << ", 发包_ms=" << (sample.send_attempted ? sample.send_state_ms : 0.0)
               << ", 图传_ms=" << sample.publish_ms
               << ", 读帧到预处理完成_ms=" << sample.read_to_prepare_done_ms
@@ -548,6 +389,9 @@ static void PrintTimingFrameLine(const char* label,
               << (sample.send_attempted ? sample.read_to_send_done_ms : 0.0)
               << ", 发包成功=" << (sample.send_ok ? "是" : "否")
               << ", 包序号=" << static_cast<int>(sample.tx_seq)
+              << ", 提前u发包=" << (sample.early_u_send_attempted ? "是" : "否")
+              << ", 提前u成功=" << (sample.early_u_send_ok ? "是" : "否")
+              << ", 提前u包序号=" << static_cast<int>(sample.early_u_tx_seq)
               << std::endl;
 
     std::cout << "[识别耗时] " << label
@@ -626,7 +470,7 @@ static void UpdateUToResultTimingAfterFrame(UToResultTimingState* state,
 
     const bool triggers_u =
         sample.code_before != BoardVisionCode::NO_RESULT &&
-        sample.code_after == BoardVisionCode::NO_RESULT;
+        (sample.code_after == BoardVisionCode::NO_RESULT || sample.early_u_send_ok);
 
     if (!state->active)
     {
@@ -659,6 +503,18 @@ static void UpdateUToResultTimingAfterFrame(UToResultTimingState* state,
         enter_frame = sample;
     }
 
+    if (sample.early_u_send_ok)
+    {
+        if (!state->first_u_sent)
+        {
+            state->first_u_sent = true;
+            state->first_u_tx_seq = sample.early_u_tx_seq;
+            state->first_u_send_offset_ms =
+                elapsed_ms_since(state->trigger_read_begin, sample.early_u_send_end);
+        }
+        ++state->u_packet_count;
+    }
+
     if (sample.send_ok && sample.code_after == BoardVisionCode::NO_RESULT)
     {
         if (!state->first_u_sent)
@@ -669,6 +525,10 @@ static void UpdateUToResultTimingAfterFrame(UToResultTimingState* state,
                 elapsed_ms_since(state->trigger_read_begin, sample.send_end);
         }
         ++state->u_packet_count;
+    }
+
+    if (sample.code_after == BoardVisionCode::NO_RESULT)
+    {
         return;
     }
 
@@ -1005,12 +865,17 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         double chain_ms = 0.0;
         double overlay_ms = 0.0;
         double send_state_ms = 0.0;
+        double early_u_send_ms = 0.0;
         double publish_ms = 0.0;
         uint64_t current_frame_seq = 0;
         bool send_state_called = false;
         bool send_state_ok = false;
+        bool early_u_send_called = false;
+        bool early_u_send_ok = false;
+        uint8_t early_u_tx_seq = 0;
         bool publish_called = false;
         steady_time_point_t send_end_time;
+        steady_time_point_t early_u_send_end_time;
 
         // 1. 测试模式下，按 c 手动启动一次检测与识别链
         HandleManualRecognitionStart(&recognition, &manual_test_started);
@@ -1075,6 +940,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         const bool cloth_stop_active = DetectBlindBoxGreenClothStart(img, &cloth_detection);
 
         RuntimeFrameStage frame_stage = RuntimeFrameStage::TRY_ENTER;
+        bool entered_recognition_this_frame = false;
         const steady_time_point_t chain_begin = steady_clock_t::now();
         if (cloth_stop_active)
         {
@@ -1122,17 +988,41 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         else
         {
             frame_stage = RuntimeFrameStage::TRY_ENTER;
-            if (!recognition.TryEnterRecognition(
-                     img,
-                     t_ms,
-                     view,
-                     render_debug))
+            const bool entered_recognition = recognition.TryEnterRecognition(
+                img,
+                t_ms,
+                view,
+                render_debug);
+            if (!entered_recognition)
             {
                 // 5. 普通态触发未命中时，识别链会在 view 上保留搜索框、状态和 ROI 预览。
             }
             else
             {
                 // 5. 普通态触发命中时，识别链已切入 RECOGNITION。
+                entered_recognition_this_frame = true;
+                if (recognition.HasPendingTriggerRoiForImmediateInference())
+                {
+                    if (kRecognitionTriggerFrameEarlyUSend &&
+                        last_sent_code != BoardVisionCode::NO_RESULT)
+                    {
+                        if (last_sent_code != BoardVisionCode::INVALID)
+                        {
+                            ++tx_seq;
+                        }
+                        last_sent_code = BoardVisionCode::NO_RESULT;
+                        early_u_tx_seq = tx_seq;
+                        const steady_time_point_t early_send_begin = steady_clock_t::now();
+                        early_u_send_ok = comm.send_state(BoardVisionCode::NO_RESULT, early_u_tx_seq);
+                        early_u_send_end_time = steady_clock_t::now();
+                        early_u_send_ms = elapsed_ms_between(early_send_begin, early_u_send_end_time);
+                        early_u_send_called = true;
+                        last_send_ms = t_ms;
+                    }
+
+                    frame_stage = RuntimeFrameStage::TRIGGER_FRAME_INFER;
+                    recognition.ProcessPendingTriggerRoi(img, t_ms, view, render_debug);
+                }
             }
         }
         const steady_time_point_t chain_end = steady_clock_t::now();
@@ -1153,12 +1043,16 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         }
         prev_in_recognition = in_recognition_now;
 
-        const steady_time_point_t overlay_begin = steady_clock_t::now();
-        RenderVisionStateOverlay(view,
-                                 code_after_chain,
-                                 cloth_stop_active ? 0.0 : recognition.GetCurrentBlobArea());
-        const steady_time_point_t overlay_end = steady_clock_t::now();
-        overlay_ms = elapsed_ms_between(overlay_begin, overlay_end);
+        steady_time_point_t overlay_end = chain_end;
+        if (render_debug)
+        {
+            const steady_time_point_t overlay_begin = steady_clock_t::now();
+            RenderVisionStateOverlay(view,
+                                     code_after_chain,
+                                     cloth_stop_active ? 0.0 : recognition.GetCurrentBlobArea());
+            overlay_end = steady_clock_t::now();
+            overlay_ms = elapsed_ms_between(overlay_begin, overlay_end);
+        }
 
         // 6. 状态流模式下，状态变化立即发包；未变化时按心跳周期补发。
         const BoardVisionCode code = code_after_chain;
@@ -1199,12 +1093,15 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
             }
         }
 
-        // 7. 发布图传画面
-        const steady_time_point_t publish_begin = steady_clock_t::now();
-        stream.PublishFrame(recognition_runtime::build_publish_view(view));
-        const steady_time_point_t publish_end = steady_clock_t::now();
-        publish_ms = elapsed_ms_between(publish_begin, publish_end);
-        publish_called = true;
+        // 7. 发布图传画面；比赛关闭图传时不构造发布视图。
+        if (stream_enabled)
+        {
+            const steady_time_point_t publish_begin = steady_clock_t::now();
+            stream.PublishFrame(recognition_runtime::build_publish_view(view));
+            const steady_time_point_t publish_end = steady_clock_t::now();
+            publish_ms = elapsed_ms_between(publish_begin, publish_end);
+            publish_called = true;
+        }
 
         RuntimeFrameTimingSample timing_sample;
         timing_sample.valid = true;
@@ -1215,8 +1112,10 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         timing_sample.code_after = code_after_chain;
         timing_sample.in_recognition_before = in_recognition_before;
         timing_sample.in_recognition_after = in_recognition_now;
-        timing_sample.entered_recognition = !in_recognition_before && in_recognition_now;
-        timing_sample.exited_recognition = in_recognition_before && !in_recognition_now;
+        timing_sample.entered_recognition =
+            entered_recognition_this_frame || (!in_recognition_before && in_recognition_now);
+        timing_sample.exited_recognition =
+            (in_recognition_before || entered_recognition_this_frame) && !in_recognition_now;
         timing_sample.read_begin = frame_read_begin;
         timing_sample.chain_end = chain_end;
         timing_sample.send_end = send_end_time;
@@ -1225,6 +1124,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         timing_sample.chain_ms = chain_ms;
         timing_sample.overlay_ms = overlay_ms;
         timing_sample.send_state_ms = send_state_ms;
+        timing_sample.early_u_send_ms = early_u_send_ms;
         timing_sample.publish_ms = publish_ms;
         timing_sample.read_to_prepare_done_ms = elapsed_ms_between(frame_read_begin, prepare_end);
         timing_sample.read_to_chain_done_ms = elapsed_ms_between(frame_read_begin, chain_end);
@@ -1235,6 +1135,10 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         timing_sample.send_attempted = send_state_called;
         timing_sample.send_ok = send_state_ok;
         timing_sample.tx_seq = tx_seq;
+        timing_sample.early_u_send_attempted = early_u_send_called;
+        timing_sample.early_u_send_ok = early_u_send_ok;
+        timing_sample.early_u_tx_seq = early_u_tx_seq;
+        timing_sample.early_u_send_end = early_u_send_end_time;
         timing_sample.perf = recognition.GetLastPerfSample();
         UpdateUToResultTimingAfterFrame(&u_to_result_timing, timing_sample);
 
@@ -1296,7 +1200,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         perf_window.classify_total.Add(perf_sample.classify_total_ms, perf_sample.classify_total_called);
         perf_window.try_total.Add(perf_sample.try_total_ms, perf_sample.try_total_called);
         perf_window.process_recog_total.Add(perf_sample.process_recog_total_ms, perf_sample.process_recog_total_called);
-        perf_window.overlay.Add(overlay_ms);
+        perf_window.overlay.Add(overlay_ms, render_debug);
         perf_window.send_state.Add(send_state_ms, send_state_called);
         perf_window.publish.Add(publish_ms, publish_called);
         perf_window.loop.Add(loop_ms);
