@@ -318,10 +318,17 @@
 #define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.05f
 #endif
 
-// 是否启用急弯内绕专用路径。
-// 不改变识别板决定的左/右绕方向，只在判定为内绕时改用下面的内绕推线、平滑横移和速度上限。
+// 是否启用急弯内绕判定。
+// 不改变识别板决定的左/右绕方向；启用后只负责判定内绕并使用 BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO。
 #ifndef BW_REMOTE_FOLLOW_INNER_ENABLE
 #define BW_REMOTE_FOLLOW_INNER_ENABLE 1
+#endif
+
+// 是否启用内绕附加控制链。
+// 0：暂时关闭内绕平滑横移、内绕速度上限、内绕防反转，只保留内/外绕推线距离差异。
+// 1：内绕时启用平滑横移，并向速度/PID 链输出 inner_bypass_active。
+#ifndef BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE
+#define BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE 0
 #endif
 
 // 内绕判定阈值（度）：左弯 + 锁左边线、右弯 + 锁右边线，且弯向角绝对值超过本阈值时视为内绕。
@@ -335,7 +342,7 @@
 #define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.20f
 #endif
 
-// 内绕 path 从单侧中线平滑横移到锁边外推线时占用的近端点数。
+// 内绕附加控制链开启时，path 从单侧中线平滑横移到锁边外推线时占用的近端点数。
 // 调大：更平顺、不容易原地旋转，但避让建立更慢；调小：响应更快，但急弯内绕更容易过冲。
 #ifndef BW_REMOTE_FOLLOW_INNER_BLEND_POINTS
 #define BW_REMOTE_FOLLOW_INNER_BLEND_POINTS 2

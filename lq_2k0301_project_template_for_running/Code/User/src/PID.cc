@@ -35,7 +35,8 @@ static inline bool remote_bypass_active()
 
 static inline bool remote_follow_no_reverse_limit_active()
 {
-    if ((BW_REMOTE_FOLLOW_INNER_NO_REVERSE_ENABLE != 0) &&
+    if ((BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE != 0) &&
+        (BW_REMOTE_FOLLOW_INNER_NO_REVERSE_ENABLE != 0) &&
         image_remote_recognition_is_inner_bypass_active())
     {
         return true;

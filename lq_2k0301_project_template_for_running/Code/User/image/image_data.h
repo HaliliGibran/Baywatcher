@@ -265,9 +265,9 @@ bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms);
 // - out_mode: 输出 MIDLEFT / MIDRIGHT
 bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode);
 
-// 功能: 写入/查询当前帧远端锁边绕行是否被判定为急弯内绕
+// 功能: 写入/查询当前帧远端锁边内绕附加控制链是否生效
 // 类型: 图像链到控制链的状态接口
-// 说明：只影响内绕低速和内绕防反转，不改变识别板决定的绕行方向。
+// 说明：只影响内绕低速和内绕防反转，不改变识别板决定的绕行方向和推线距离。
 void image_remote_recognition_set_inner_bypass_active(bool active);
 bool image_remote_recognition_is_inner_bypass_active();
 

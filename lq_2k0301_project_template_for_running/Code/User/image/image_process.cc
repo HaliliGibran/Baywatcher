@@ -691,7 +691,7 @@ static bool build_remote_follow_inner_smooth_line(const pts_well_processed& src,
 // 功能: 远端 w/s 锁边时，基于锁定侧边线生成绕行 path
 // 类型: 局部功能函数
 // 关键参数: forced_mode-锁定到左/右边线
-// 说明：外绕直接跟随外推线；急弯内绕从单侧中线平滑横移到外推线。
+// 说明：外绕直接跟随外推线；内绕默认只改变外推距离，附加控制链开启时才平滑横移。
 static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 {
     follow_mode = forced_mode;
@@ -746,13 +746,20 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
             return false;
         }
 
-        if (!build_remote_follow_inner_smooth_line(*src,
-                                                   forced_line,
-                                                   forced_count,
-                                                   path_line,
-                                                   &path_count))
+        if (BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE != 0)
         {
-            return false;
+            if (!build_remote_follow_inner_smooth_line(*src,
+                                                       forced_line,
+                                                       forced_count,
+                                                       path_line,
+                                                       &path_count))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            copy_point_line(forced_line, forced_count, path_line, &path_count);
         }
     }
     else
@@ -768,9 +775,11 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         return false;
     }
 
+    const bool inner_chain_active =
+        inner_bypass && (BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE != 0);
     if (inner_bypass && !g_remote_inner_bypass_log_active)
     {
-        printf("内绕\n");
+        printf((BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE != 0) ? "内绕\n" : "内绕推线\n");
         g_remote_inner_bypass_log_active = true;
     }
     else if (!inner_bypass)
@@ -778,7 +787,7 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         g_remote_inner_bypass_log_active = false;
     }
 
-    image_remote_recognition_set_inner_bypass_active(inner_bypass);
+    image_remote_recognition_set_inner_bypass_active(inner_chain_active);
     CalculatePureAngleFromPath(midline.path, midline.path_count, &pure_angle);
     return true;
 }

@@ -356,6 +356,7 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
         &best_cap,
         &reasons);
     const bool inner_speed_cap_active =
+        (BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE != 0) &&
         g_remote_recognition.inner_bypass_active &&
         ((BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ENABLE == 0) ||
          (std::fabs(pure_angle) > BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ANGLE_DEG));
