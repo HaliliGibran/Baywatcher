@@ -342,7 +342,8 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
     uint32_t reasons = 0;
 
     add_remote_speed_cap_candidate(
-        g_remote_recognition.current_code == BoardVisionCode::NO_RESULT,
+        (BW_REMOTE_U_SPEED_CAP_ENABLE != 0) &&
+            g_remote_recognition.current_code == BoardVisionCode::NO_RESULT,
         BW_REMOTE_U_SLOWDOWN_RATIO,
         kRemoteSpeedCapReasonU,
         &has_cap,
