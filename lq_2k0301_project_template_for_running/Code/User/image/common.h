@@ -50,7 +50,7 @@
 // 调大：更平顺、不容易原地旋转，但绕开目标版建立更慢。
 // 调小：绕行动作更快，但急弯内绕更容易过冲。
 #ifndef BW_REMOTE_FOLLOW_INNER_BLEND_POINTS
-#define BW_REMOTE_FOLLOW_INNER_BLEND_POINTS 32
+#define BW_REMOTE_FOLLOW_INNER_BLEND_POINTS 10
 #endif
 
 // 内绕时按当前 pure_angle 自适应最终速度上限：
@@ -58,14 +58,14 @@
 // - abs(pure_angle) <= LOW：使用 MAX，车头接近目标方向后恢复速度。
 // - 中间线性插值。
 #ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN
-#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN 0.22f
+#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN 1.0f
 #endif
 
 #ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX
 #ifdef BW_REMOTE_FOLLOW_INNER_SPEED_CAP
 #define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX BW_REMOTE_FOLLOW_INNER_SPEED_CAP
 #else
-#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX 0.80f
+#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX 1.0f
 #endif
 #endif
 
