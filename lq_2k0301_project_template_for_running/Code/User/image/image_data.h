@@ -243,10 +243,10 @@ bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw);
 
 // 功能: 查询当前远端状态对基础速度的比例覆盖
 // 类型: 全局状态查询函数
-// 关键参数: 无
+// 说明：当前远端减速统一走 speed_cap；本接口保留给旧调用，正常返回 1.0。
 float image_remote_recognition_get_speed_ratio_override();
 
-// 功能: 查询当前远端 u 状态是否强制限制最终基础速度上限
+// 功能: 查询当前远端状态是否强制限制最终前进基准速度上限
 // 类型: 全局状态查询函数
 // 关键参数:
 // - out_cap: 输出速度上限，单位同 PID.base_target_speed

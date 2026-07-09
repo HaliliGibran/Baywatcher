@@ -1,4 +1,5 @@
 #include "image_data.h"
+#include <cstdio>
 
 namespace {
 
@@ -37,6 +38,15 @@ remote_recognition_runtime_t g_remote_recognition = {
     0,
     false,
 };
+
+constexpr uint32_t kRemoteSpeedCapReasonU = 1u << 0;
+constexpr uint32_t kRemoteSpeedCapReasonCloth = 1u << 1;
+constexpr uint32_t kRemoteSpeedCapReasonInner = 1u << 2;
+constexpr float kRemoteSpeedCapLogMinDelta = 0.02f;
+
+bool g_remote_speed_cap_log_active = false;
+float g_remote_speed_cap_log_value = 0.0f;
+uint32_t g_remote_speed_cap_log_reasons = 0;
 
 void remote_vehicle_route_apply(float current_pure_angle, uint64_t t_ms)
 {
@@ -97,6 +107,79 @@ float remote_inner_bypass_adaptive_speed_cap()
 
     const float t = (angle_abs - low_angle) / (high_angle - low_angle);
     return max_cap * (1.0f - t) + min_cap * t;
+}
+
+float sanitize_remote_speed_cap(float cap)
+{
+    return (cap < 0.0f) ? 0.0f : cap;
+}
+
+void add_remote_speed_cap_candidate(bool active,
+                                    float cap,
+                                    uint32_t reason,
+                                    bool* has_cap,
+                                    float* best_cap,
+                                    uint32_t* reasons)
+{
+    if (!active || has_cap == nullptr || best_cap == nullptr || reasons == nullptr)
+    {
+        return;
+    }
+
+    cap = sanitize_remote_speed_cap(cap);
+    if (!(*has_cap) || cap < *best_cap)
+    {
+        *has_cap = true;
+        *best_cap = cap;
+        *reasons = reason;
+        return;
+    }
+
+    const float diff = cap - *best_cap;
+    if (diff > -1e-4f && diff < 1e-4f)
+    {
+        *reasons |= reason;
+    }
+}
+
+void print_remote_speed_cap_log(bool active, float cap, uint32_t reasons)
+{
+    if (!active)
+    {
+        if (g_remote_speed_cap_log_active)
+        {
+            std::printf("[远端减速] 解除\n");
+            g_remote_speed_cap_log_active = false;
+            g_remote_speed_cap_log_value = 0.0f;
+            g_remote_speed_cap_log_reasons = 0;
+        }
+        return;
+    }
+
+    float cap_diff = cap - g_remote_speed_cap_log_value;
+    if (cap_diff < 0.0f)
+    {
+        cap_diff = -cap_diff;
+    }
+
+    const bool changed =
+        !g_remote_speed_cap_log_active ||
+        g_remote_speed_cap_log_reasons != reasons ||
+        cap_diff >= kRemoteSpeedCapLogMinDelta;
+    if (!changed)
+    {
+        return;
+    }
+
+    std::printf("[远端减速] 上限=%.2f, 原因=%s%s%s, pure_angle=%.1f\n",
+                cap,
+                (reasons & kRemoteSpeedCapReasonU) ? "u " : "",
+                (reasons & kRemoteSpeedCapReasonCloth) ? "色布 " : "",
+                (reasons & kRemoteSpeedCapReasonInner) ? "内绕 " : "",
+                pure_angle);
+    g_remote_speed_cap_log_active = true;
+    g_remote_speed_cap_log_value = cap;
+    g_remote_speed_cap_log_reasons = reasons;
 }
 
 } // namespace
@@ -289,21 +372,7 @@ bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw)
 
 float image_remote_recognition_get_speed_ratio_override()
 {
-    if (g_remote_recognition.current_code == BoardVisionCode::VEHICLE)
-    {
-        return 1.0f;
-    }
-
-    if (g_remote_recognition.current_code == BoardVisionCode::NO_RESULT)
-    {
-        return BW_REMOTE_U_SLOWDOWN_RATIO;
-    }
-
-    if (g_remote_recognition.current_code == BoardVisionCode::CLOTH_STOP)
-    {
-        return BW_REMOTE_CLOTH_STOP_SPEED_CAP;
-    }
-
+    // 远端识别减速统一走 speed_cap，避免“先乘比例、再限幅”的嵌套减速。
     return 1.0f;
 }
 
@@ -314,33 +383,40 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
         return false;
     }
 
-    if (g_remote_recognition.current_code == BoardVisionCode::NO_RESULT)
+    bool has_cap = false;
+    float best_cap = 0.0f;
+    uint32_t reasons = 0;
+
+    add_remote_speed_cap_candidate(
+        g_remote_recognition.current_code == BoardVisionCode::NO_RESULT,
+        BW_REMOTE_U_SLOWDOWN_RATIO,
+        kRemoteSpeedCapReasonU,
+        &has_cap,
+        &best_cap,
+        &reasons);
+    add_remote_speed_cap_candidate(
+        g_remote_recognition.current_code == BoardVisionCode::CLOTH_STOP,
+        BW_REMOTE_CLOTH_STOP_SPEED_CAP,
+        kRemoteSpeedCapReasonCloth,
+        &has_cap,
+        &best_cap,
+        &reasons);
+    add_remote_speed_cap_candidate(
+        g_remote_recognition.inner_bypass_active,
+        remote_inner_bypass_adaptive_speed_cap(),
+        kRemoteSpeedCapReasonInner,
+        &has_cap,
+        &best_cap,
+        &reasons);
+
+    print_remote_speed_cap_log(has_cap, best_cap, reasons);
+    if (!has_cap)
     {
-        *out_cap = BW_REMOTE_U_SLOWDOWN_RATIO;
-        if (*out_cap < 0.0f)
-        {
-            *out_cap = 0.0f;
-        }
-        return true;
+        return false;
     }
 
-    if (g_remote_recognition.current_code == BoardVisionCode::CLOTH_STOP)
-    {
-        *out_cap = BW_REMOTE_CLOTH_STOP_SPEED_CAP;
-        if (*out_cap < 0.0f)
-        {
-            *out_cap = 0.0f;
-        }
-        return true;
-    }
-
-    if (g_remote_recognition.inner_bypass_active)
-    {
-        *out_cap = remote_inner_bypass_adaptive_speed_cap();
-        return true;
-    }
-
-    return false;
+    *out_cap = best_cap;
+    return true;
 }
 
 bool image_remote_recognition_is_vehicle_active(uint64_t t_ms)

@@ -28,6 +28,7 @@ typedef struct
 
 // 作用域：文件内静态，全局共享一份丢线补偿状态
 static pure_angle_lost_state_t g_pure_angle_lost = {0};
+static bool g_remote_inner_bypass_log_active = false;
 
 // 功能: 限幅单步变化量（用于丢线趋势外推的步长夹紧）
 // 类型: 局部功能函数
@@ -767,6 +768,16 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         return false;
     }
 
+    if (inner_bypass && !g_remote_inner_bypass_log_active)
+    {
+        printf("内绕\n");
+        g_remote_inner_bypass_log_active = true;
+    }
+    else if (!inner_bypass)
+    {
+        g_remote_inner_bypass_log_active = false;
+    }
+
     image_remote_recognition_set_inner_bypass_active(inner_bypass);
     CalculatePureAngleFromPath(midline.path, midline.path_count, &pure_angle);
     return true;
@@ -1101,6 +1112,7 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 
     if (!remote_follow_override_applied)
     {
+        g_remote_inner_bypass_log_active = false;
         build_midline_from_current_state();
         build_path_and_measure_pure_angle();
     }

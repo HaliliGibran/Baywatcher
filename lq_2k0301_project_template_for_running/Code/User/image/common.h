@@ -58,7 +58,7 @@
 // - abs(pure_angle) <= LOW：使用 MAX，车头接近目标方向后恢复速度。
 // - 中间线性插值。
 #ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN
-#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN 1.0f
+#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN 0.5f
 #endif
 
 #ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX
