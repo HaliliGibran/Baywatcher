@@ -1340,7 +1340,8 @@ static float get_single_side_mid_offset_pixels(bool is_left)
 
 void BuildRemoteFollowOuterLine(bool is_left,
                                 float (&edge_resample)[PT_MAXLEN][2], int32_t* edge_count,
-                                float (&out_line)[PT_MAXLEN][2], int32_t* out_count)
+                                float (&out_line)[PT_MAXLEN][2], int32_t* out_count,
+                                float offset_ratio)
 {
     if (out_count == nullptr)
     {
@@ -1358,7 +1359,7 @@ void BuildRemoteFollowOuterLine(bool is_left,
         return (v < 1) ? 1 : v;
     }();
     static const float resample_dist_pix = RESAMPLEDIST * PIXPERMETER;
-    const float outer_offset_pix = PIXPERMETER * ROADWIDTH * BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO;
+    const float outer_offset_pix = PIXPERMETER * ROADWIDTH * offset_ratio;
 
     if (!(resample_dist_pix > 0.0f) || !(outer_offset_pix > 0.0f))
     {

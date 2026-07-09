@@ -15,7 +15,7 @@
 #define BW_PID_RECOGNITION_MODE 0
 #endif
 
-// 双板 w/s 锁边绕行时，强制 path 相对锁定边线“向外”偏移的赛道宽比例。
+// 双板 w/s 锁边外绕时，强制 path 相对锁定边线“向外”偏移的赛道宽比例。
 // 使用位置：image_handle.cc / BuildRemoteFollowOuterLine()。
 // 当前语义：
 // - 左锁边：以左边线为基准，向赛道左外侧偏移 本比例 * ROADWIDTH。
@@ -26,6 +26,12 @@
 // - 变小：更接近原边线，动作更保守。
 #ifndef BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO
 #define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.05f
+#endif
+
+// 双板 w/s 锁边内绕时，锁定边线向外推的赛道宽比例。
+// 内绕比外绕需要更早拉开避让空间，因此默认大于外绕。
+#ifndef BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO
+#define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.20f
 #endif
 
 // 双板 w/s 锁边绕行时，是否启用“急弯内绕”专用路径。
@@ -47,10 +53,28 @@
 #define BW_REMOTE_FOLLOW_INNER_BLEND_POINTS 32
 #endif
 
-// 内绕时最终速度上限。
-// 作用：只在识别绕行被判为内绕时生效，不影响外绕。
-#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP
-#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP 0.22f
+// 内绕时按当前 pure_angle 自适应最终速度上限：
+// - abs(pure_angle) >= HIGH：使用 MIN，刚切入大角度时重减速。
+// - abs(pure_angle) <= LOW：使用 MAX，车头接近目标方向后恢复速度。
+// - 中间线性插值。
+#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN
+#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN 0.22f
+#endif
+
+#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX
+#ifdef BW_REMOTE_FOLLOW_INNER_SPEED_CAP
+#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX BW_REMOTE_FOLLOW_INNER_SPEED_CAP
+#else
+#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX 0.80f
+#endif
+#endif
+
+#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_ANGLE_LOW_DEG
+#define BW_REMOTE_FOLLOW_INNER_SPEED_ANGLE_LOW_DEG 8.0f
+#endif
+
+#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_ANGLE_HIGH_DEG
+#define BW_REMOTE_FOLLOW_INNER_SPEED_ANGLE_HIGH_DEG 35.0f
 #endif
 
 // 内绕时启用差速防反转限幅。

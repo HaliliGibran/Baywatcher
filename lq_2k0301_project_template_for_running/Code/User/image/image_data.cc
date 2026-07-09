@@ -52,6 +52,53 @@ bool is_remote_brick_code(BoardVisionCode code)
            code == BoardVisionCode::BRICK_RIGHT;
 }
 
+float remote_inner_bypass_adaptive_speed_cap()
+{
+    float min_cap = BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN;
+    float max_cap = BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX;
+    if (min_cap < 0.0f)
+    {
+        min_cap = 0.0f;
+    }
+    if (max_cap < min_cap)
+    {
+        max_cap = min_cap;
+    }
+
+    float low_angle = BW_REMOTE_FOLLOW_INNER_SPEED_ANGLE_LOW_DEG;
+    float high_angle = BW_REMOTE_FOLLOW_INNER_SPEED_ANGLE_HIGH_DEG;
+    if (low_angle < 0.0f)
+    {
+        low_angle = 0.0f;
+    }
+    if (high_angle < low_angle)
+    {
+        high_angle = low_angle;
+    }
+
+    float angle_abs = pure_angle;
+    if (angle_abs < 0.0f)
+    {
+        angle_abs = -angle_abs;
+    }
+
+    if (high_angle <= low_angle)
+    {
+        return (angle_abs >= high_angle) ? min_cap : max_cap;
+    }
+    if (angle_abs <= low_angle)
+    {
+        return max_cap;
+    }
+    if (angle_abs >= high_angle)
+    {
+        return min_cap;
+    }
+
+    const float t = (angle_abs - low_angle) / (high_angle - low_angle);
+    return max_cap * (1.0f - t) + min_cap * t;
+}
+
 } // namespace
 
 bool zebra_stop = false;
@@ -289,11 +336,7 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
 
     if (g_remote_recognition.inner_bypass_active)
     {
-        *out_cap = BW_REMOTE_FOLLOW_INNER_SPEED_CAP;
-        if (*out_cap < 0.0f)
-        {
-            *out_cap = 0.0f;
-        }
+        *out_cap = remote_inner_bypass_adaptive_speed_cap();
         return true;
     }
 

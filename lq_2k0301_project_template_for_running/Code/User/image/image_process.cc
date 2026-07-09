@@ -722,7 +722,8 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
     int32_t forced_count = 0;
     BuildRemoteFollowOuterLine(is_left,
                                src->pts_resample, &src->pts_resample_count,
-                               forced_line, &forced_count);
+                               forced_line, &forced_count,
+                               BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO);
     if (forced_count <= 0)
     {
         return false;
@@ -734,6 +735,16 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         is_remote_follow_inner_bypass(is_left, forced_line, forced_count);
     if (inner_bypass)
     {
+        forced_count = 0;
+        BuildRemoteFollowOuterLine(is_left,
+                                   src->pts_resample, &src->pts_resample_count,
+                                   forced_line, &forced_count,
+                                   BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO);
+        if (forced_count <= 0)
+        {
+            return false;
+        }
+
         if (!build_remote_follow_inner_smooth_line(*src,
                                                    forced_line,
                                                    forced_count,
