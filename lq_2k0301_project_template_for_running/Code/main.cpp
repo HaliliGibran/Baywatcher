@@ -295,7 +295,7 @@ int main(int argc, char** argv)
     TimerThread sensor_thread(task_sensor_read, NULL, 20);
     TimerThread vofa_thread(task_vofa_comm, NULL, 20);            //VOFA+通信(UDP/TCP/UART),Log日志
     TimerThread board_comm_thread(task_board_comm_rx, NULL, 5);    // 双板串口收包
-    TimerThread debug_thread(task_display_status, NULL, 1000);    //ADC
+    TimerThread debug_thread(task_display_status, NULL, 2000);    //ADC
     // TimerThread handler_thread(task_target_handler, NULL, 20);    //targethandler
     // handler_thread.start();
     pid_thread.start();

@@ -338,7 +338,7 @@
 // 内绕 path 从单侧中线平滑横移到锁边外推线时占用的近端点数。
 // 调大：更平顺、不容易原地旋转，但避让建立更慢；调小：响应更快，但急弯内绕更容易过冲。
 #ifndef BW_REMOTE_FOLLOW_INNER_BLEND_POINTS
-#define BW_REMOTE_FOLLOW_INNER_BLEND_POINTS 10
+#define BW_REMOTE_FOLLOW_INNER_BLEND_POINTS 2
 #endif
 
 // 内绕固定速度上限。
@@ -356,7 +356,7 @@
 // 内绕减速解除角度阈值（度）。
 // 内绕仍成立时，若 abs(pure_angle) 小于等于本阈值，说明车头已基本面向目标方向，不再施加内绕速度上限。
 #ifndef BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ANGLE_DEG
-#define BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ANGLE_DEG 5.0f
+#define BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ANGLE_DEG 3.0f
 #endif
 
 // 内绕专用差速防反转开关。
