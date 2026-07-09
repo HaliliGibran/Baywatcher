@@ -15,74 +15,6 @@
 #define BW_PID_RECOGNITION_MODE 0
 #endif
 
-// 双板 w/s 锁边外绕时，强制 path 相对锁定边线“向外”偏移的赛道宽比例。
-// 使用位置：image_handle.cc / BuildRemoteFollowOuterLine()。
-// 当前语义：
-// - 左锁边：以左边线为基准，向赛道左外侧偏移 本比例 * ROADWIDTH。
-// - 右锁边：以右边线为基准，向赛道右外侧偏移 本比例 * ROADWIDTH。
-// - 这条线会同时同步到 midline.mid（供预瞄/显示）和 midline.path（供控制）。
-// 调参建议：
-// - 变大：绕行更贴外侧，避让更激进。
-// - 变小：更接近原边线，动作更保守。
-#ifndef BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.05f
-#endif
-
-// 双板 w/s 锁边内绕时，锁定边线向外推的赛道宽比例。
-// 内绕比外绕需要更早拉开避让空间，因此默认大于外绕。
-#ifndef BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.20f
-#endif
-
-// 双板 w/s 锁边绕行时，是否启用“急弯内绕”专用路径。
-// 当前不改变识别板决定的左/右绕方向，只在内绕时把 path 从原单侧中线平滑横移到锁边外推线。
-#ifndef BW_REMOTE_FOLLOW_INNER_ENABLE
-#define BW_REMOTE_FOLLOW_INNER_ENABLE 1
-#endif
-
-// 判断内绕/外绕的最小弯向角度阈值（度）。
-// 左弯 + 锁左边线、右弯 + 锁右边线会被视为内绕。
-#ifndef BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG
-#define BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG 10.0f
-#endif
-
-// 内绕平滑横移占用的近端点数。
-// 调大：更平顺、不容易原地旋转，但绕开目标版建立更慢。
-// 调小：绕行动作更快，但急弯内绕更容易过冲。
-#ifndef BW_REMOTE_FOLLOW_INNER_BLEND_POINTS
-#define BW_REMOTE_FOLLOW_INNER_BLEND_POINTS 10
-#endif
-
-// 内绕时按当前 pure_angle 自适应最终速度上限：
-// - abs(pure_angle) >= HIGH：使用 MIN，刚切入大角度时重减速。
-// - abs(pure_angle) <= LOW：使用 MAX，车头接近目标方向后恢复速度。
-// - 中间线性插值。
-#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN
-#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MIN 1.0f
-#endif
-
-#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX
-#ifdef BW_REMOTE_FOLLOW_INNER_SPEED_CAP
-#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX BW_REMOTE_FOLLOW_INNER_SPEED_CAP
-#else
-#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP_MAX 0.8f
-#endif
-#endif
-
-#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_ANGLE_LOW_DEG
-#define BW_REMOTE_FOLLOW_INNER_SPEED_ANGLE_LOW_DEG 8.0f
-#endif
-
-#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_ANGLE_HIGH_DEG
-#define BW_REMOTE_FOLLOW_INNER_SPEED_ANGLE_HIGH_DEG 35.0f
-#endif
-
-// 内绕时启用差速防反转限幅。
-// 旧 BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 仍是全绕行总开关；本开关只管内绕。
-#ifndef BW_REMOTE_FOLLOW_INNER_NO_REVERSE_ENABLE
-#define BW_REMOTE_FOLLOW_INNER_NO_REVERSE_ENABLE 1
-#endif
-
 // pure_angle 预瞄图像行过渡总开关。
 // 使用位置：image_handle.cc / pure_angle_apply_preview_transition()。
 // - 1：限制 preview_img_y 帧间跳变。
@@ -217,26 +149,6 @@
 #define PUREANGLE_PROGRESSIVE_MAX_ABS_DEG 45.0f
 #endif
 
-// 双板 w/s 锁边绕行时，差速防反转总开关：
-// 使用位置：PID.cc / 仅 remote_follow_locked 分支。
-// 0：关闭，绕行态 factor 只受普通 FACTOR_LIMIT 限制。
-// 1：开启，按 BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN 防止内侧轮反转。
-#ifndef BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE
-#define BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 0
-#endif
-
-// 双板 w/s 锁边绕行时，差速防反转保留裕量：
-// 使用位置：PID.cc / 仅 BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 开启时生效。
-// 作用：
-// - 当前差速链里，factor=+1 时右轮目标速度会刚好压到 0，factor=-1 时左轮会刚好压到 0。
-// - 本参数会把绕行态 factor 限到 [- (1-margin), +(1-margin)]，避免内侧轮被打成负速反转。
-// 调小：
-// - 更接近极限，绕行更激进。
-// 调大：
-// - 留量更大，更稳，但内侧减速不会那么狠。
-#ifndef BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN
-#define BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN 0.02f
-#endif
 #pragma endregion
 
 #pragma region pure_angle丢线补偿参数
@@ -394,6 +306,81 @@
 //
 // 下列参数只服务于这条“当前活跃”的双板接管链。
 // 旧 TargetHandler 分阶段绕行参数已移出 common.h，不再作为公共调参入口暴露。
+
+// ===== w/s 锁边绕行：目标线与内绕参数 =====
+
+// 外绕/普通锁边时，强制 path 相对锁定边线向外偏移的赛道宽比例。
+// 使用位置：image_handle.cc / BuildRemoteFollowOuterLine()。
+// 左锁边向赛道左外侧偏移；右锁边向赛道右外侧偏移。
+// 这条线会同时同步到 midline.mid（供预瞄/显示）和 midline.path（供控制）。
+// 调大：绕行更贴外侧，避让更激进；调小：更接近原边线，动作更保守。
+#ifndef BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO
+#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.05f
+#endif
+
+// 是否启用急弯内绕专用路径。
+// 不改变识别板决定的左/右绕方向，只在判定为内绕时改用下面的内绕推线、平滑横移和速度上限。
+#ifndef BW_REMOTE_FOLLOW_INNER_ENABLE
+#define BW_REMOTE_FOLLOW_INNER_ENABLE 1
+#endif
+
+// 内绕判定阈值（度）：左弯 + 锁左边线、右弯 + 锁右边线，且弯向角绝对值超过本阈值时视为内绕。
+#ifndef BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG
+#define BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG 10.0f
+#endif
+
+// 内绕时，锁定边线向外推的赛道宽比例。
+// 内绕比外绕更容易撞目标板，因此默认比 BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 大。
+#ifndef BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO
+#define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.20f
+#endif
+
+// 内绕 path 从单侧中线平滑横移到锁边外推线时占用的近端点数。
+// 调大：更平顺、不容易原地旋转，但避让建立更慢；调小：响应更快，但急弯内绕更容易过冲。
+#ifndef BW_REMOTE_FOLLOW_INNER_BLEND_POINTS
+#define BW_REMOTE_FOLLOW_INNER_BLEND_POINTS 10
+#endif
+
+// 内绕固定速度上限。
+// 只作为远端减速候选之一；若同时存在 u/色布等更低上限，最终取最低值。
+#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_CAP
+#define BW_REMOTE_FOLLOW_INNER_SPEED_CAP 0.5f
+#endif
+
+// 内绕小偏航角解除减速总开关。
+// 1：abs(pure_angle) 足够小时解除内绕速度上限；0：内绕 active 期间始终施加内绕速度上限。
+#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ENABLE
+#define BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ENABLE 1
+#endif
+
+// 内绕减速解除角度阈值（度）。
+// 内绕仍成立时，若 abs(pure_angle) 小于等于本阈值，说明车头已基本面向目标方向，不再施加内绕速度上限。
+#ifndef BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ANGLE_DEG
+#define BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ANGLE_DEG 5.0f
+#endif
+
+// 内绕专用差速防反转开关。
+// 当前默认关闭，避免速度上限把平均速度压低后进一步压小可用差速。
+#ifndef BW_REMOTE_FOLLOW_INNER_NO_REVERSE_ENABLE
+#define BW_REMOTE_FOLLOW_INNER_NO_REVERSE_ENABLE 0
+#endif
+
+// 全绕行差速防反转总开关。
+// 使用位置：PID.cc / 仅 remote_follow_locked 分支。
+// 0：关闭，绕行态 factor 只受普通 FACTOR_LIMIT 限制。
+// 1：开启，按 BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN 防止内侧轮反转。
+#ifndef BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE
+#define BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 0
+#endif
+
+// 全绕行差速防反转保留裕量，仅 BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 开启时生效。
+// 当前差速链里 factor=+1 时右轮目标速度会刚好压到 0，factor=-1 时左轮会刚好压到 0。
+// 本参数会把绕行态 factor 限到 [-(1-margin), +(1-margin)]，避免内侧轮被打成负速反转。
+#ifndef BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN
+#define BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN 0.02f
+#endif
+
+// ===== 远端状态保持与减速参数 =====
 
 // 远端识别状态总过期时间（毫秒）。
 // 作用：
