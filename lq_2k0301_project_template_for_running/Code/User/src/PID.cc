@@ -72,7 +72,9 @@ static inline float apply_remote_speed_cap(float speed)
 }
 
 static inline float clamp_remote_follow_factor_no_reverse(float factor,
-                                                          float forward_base_speed)
+                                                          float forward_base_speed,
+                                                          float steering_base_speed,
+                                                          bool preserve_steering_delta)
 {
     if (!remote_follow_no_reverse_limit_active())
     {
@@ -82,6 +84,36 @@ static inline float clamp_remote_follow_factor_no_reverse(float factor,
     if (forward_base_speed <= 0.0f)
     {
         return 0.0f;
+    }
+
+    if (preserve_steering_delta)
+    {
+        if (steering_base_speed <= 0.0f)
+        {
+            return 0.0f;
+        }
+
+        const float margin = BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN;
+        const float max_delta = forward_base_speed * (1.0f - margin);
+        const float factor_limit_by_average = max_delta / (0.7f * steering_base_speed);
+        float factor_limit = FACTOR_LIMIT;
+        if (factor_limit > factor_limit_by_average)
+        {
+            factor_limit = factor_limit_by_average;
+        }
+        if (factor_limit < 0.0f)
+        {
+            factor_limit = 0.0f;
+        }
+        if (factor > factor_limit)
+        {
+            return factor_limit;
+        }
+        if (factor < -factor_limit)
+        {
+            return -factor_limit;
+        }
+        return factor;
     }
 
     const float no_reverse_limit = 1.0f - BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN;
@@ -1825,8 +1857,17 @@ void BayWatcher_Control_Loop(void* arg) {
         big_langd_add = update_straight_acceleration(pure_angle, preview_curve_angle_deg);
     }
 
-    const float capped_forward_speed =
-        apply_remote_speed_cap(effective_base_speed + big_langd_add);
+    const float uncapped_forward_speed = effective_base_speed + big_langd_add;
+    float remote_speed_cap = 0.0f;
+    const bool remote_speed_cap_active =
+        image_remote_recognition_get_speed_cap_override(&remote_speed_cap);
+    float capped_forward_speed = uncapped_forward_speed;
+    if (remote_speed_cap_active && capped_forward_speed > remote_speed_cap)
+    {
+        capped_forward_speed = remote_speed_cap;
+    }
+    const bool remote_speed_reduced = remote_speed_cap_active &&
+                                      uncapped_forward_speed > capped_forward_speed;
 
     float factor = tanf(safe_speed_adjust * PI_VAL / ACKERMAN_CONST) * 0.55f;
 
@@ -1839,7 +1880,9 @@ void BayWatcher_Control_Loop(void* arg) {
 
     factor = clamp_remote_follow_factor_no_reverse(
         factor,
-        capped_forward_speed);
+        capped_forward_speed,
+        uncapped_forward_speed,
+        remote_speed_reduced);
 
     esc_sys.current_factor = factor; // 给电调传递当前的 factor，用于动态负压
 
@@ -1852,8 +1895,13 @@ void BayWatcher_Control_Loop(void* arg) {
     //     PID.target_speed_R = (effective_base_speed + big_langd_add) * (1.0f - 0.5f * factor);
     // }
 
+    if (remote_speed_reduced) {
+        const float steering_delta = uncapped_forward_speed * 0.7f * factor;
+        PID.target_speed_L = capped_forward_speed + steering_delta;
+        PID.target_speed_R = capped_forward_speed - steering_delta;
+    }
     //0.4
-    if (factor >= 0) {
+    else if (factor >= 0) {
         PID.target_speed_L = capped_forward_speed * (1.0f + 0.4f * factor);
         PID.target_speed_R = capped_forward_speed * (1.0f - 1.0f * factor);
     } else {
