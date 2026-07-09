@@ -933,10 +933,19 @@ static CircleDirection last_circle_pid_direction = CircleDirection::CIRCLE_DIR_N
 // static const Cube_PID_Param_t right_circle_in_pid  = {6.935f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
 // static const Cube_PID_Param_t right_circle_out_pid = {6.925f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
 
-// 21+6
+// // 22+8
+// // 左环岛
+// static const Cube_PID_Param_t left_circle_in_pid  = {7.035f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+// static const Cube_PID_Param_t left_circle_out_pid = {7.005f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+
+// // 右环岛
+// static const Cube_PID_Param_t right_circle_in_pid  = {6.935f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+// static const Cube_PID_Param_t right_circle_out_pid = {6.925f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+
+// 23+8
 // 左环岛
-static const Cube_PID_Param_t left_circle_in_pid  = {7.035f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
-static const Cube_PID_Param_t left_circle_out_pid = {7.005f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t left_circle_in_pid  = {7.035f, 0.5398f, 0.0f, 314.0f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t left_circle_out_pid = {7.035f, 0.5398f, 0.0f, 312.0f, 0.00100f, STEER_LIMIT, 100.0f};
 
 // 右环岛
 static const Cube_PID_Param_t right_circle_in_pid  = {6.935f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
@@ -1088,10 +1097,16 @@ struct Inner_PID_Param_t {
 
 static Inner_PID_Param_t normal_inner_pid_param;
 
-//20.04/21 + 6
+// //20.04/21 + 6  /22+8
+// static const Inner_PID_Param_t recog_inner_pid_param = {
+//     156.32f, 70.50f, 0.00f, 9999.0f,
+//     156.00f, 70.55f, 0.00f, 9999.0f,
+// };
+
+//23+8
 static const Inner_PID_Param_t recog_inner_pid_param = {
-    156.32f, 70.50f, 0.00f, 9999.0f,
-    156.00f, 70.55f, 0.00f, 9999.0f,
+    158.32f, 72.50f, 0.00f, 9999.0f,
+    158.00f, 72.55f, 0.00f, 9999.0f,
 };
 
 static void Save_Normal_Inner_PID_Param()
@@ -1397,20 +1412,6 @@ void BayWatcher_Control_Init(void) {
 
     // // 有负压 19-21.20 燕大
     // // 左轮速度环PID
-    // // PID_Speed_L.Kp = 42.32f; PID_Speed_L.Ki = 12.50f; PID_Speed_L.Kd = 0.00f;
-    // PID_Speed_L.Kp = 132.32f; PID_Speed_L.Ki = 29.50f; PID_Speed_L.Kd = 0.00f;
-    // // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 8500.0f;
-    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
-
-
-    // // 右轮速度环PID
-    // // PID_Speed_R.Kp = 42.00f; PID_Speed_R.Ki = 12.50f; PID_Speed_R.Kd = 0.00f;
-    // PID_Speed_R.Kp = 132.00f; PID_Speed_R.Ki = 29.55f; PID_Speed_R.Kd = 0.00f;
-    // // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 8500.0f;
-    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
-
-    // // 有负压 19-21.20 燕大
-    // // 左轮速度环PID
     // PID_Speed_L.Kp = 138.32f; PID_Speed_L.Ki = 35.50f; PID_Speed_L.Kd = 0.00f;
     // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
@@ -1418,13 +1419,22 @@ void BayWatcher_Control_Init(void) {
     // PID_Speed_R.Kp = 138.00f; PID_Speed_R.Ki = 35.55f; PID_Speed_R.Kd = 0.00f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
-    // 有负压 22 7.9
+    // // 有负压 22 7.9
+    // // 左轮速度环PID
+    // PID_Speed_L.Kp = 140.32f; PID_Speed_L.Ki = 37.50f; PID_Speed_L.Kd = 0.00f;
+    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
+
+    // // 右轮速度环PID
+    // PID_Speed_R.Kp = 140.00f; PID_Speed_R.Ki = 37.55f; PID_Speed_R.Kd = 0.00f;
+    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
+
+    //  23 7.9
     // 左轮速度环PID
-    PID_Speed_L.Kp = 140.32f; PID_Speed_L.Ki = 37.50f; PID_Speed_L.Kd = 0.00f;
+    PID_Speed_L.Kp = 140.32f; PID_Speed_L.Ki = 40.50f; PID_Speed_L.Kd = 0.00f;
     PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
     // 右轮速度环PID
-    PID_Speed_R.Kp = 140.00f; PID_Speed_R.Ki = 37.55f; PID_Speed_R.Kd = 0.00f;
+    PID_Speed_R.Kp = 140.00f; PID_Speed_R.Ki = 40.55f; PID_Speed_R.Kd = 0.00f;
     PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
 
@@ -1519,8 +1529,11 @@ void BayWatcher_Control_Init(void) {
     // // 有负压 21 0.40 70% 7.5
     // PID_Cube.Kp_a = 6.705f ;  PID_Cube.Kp_b = 0.5289f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 314.10f ; PID_Cube.Kd_b = 0.00100f;
 
-    // 有负压 21 0.40 70% 7.5
-    PID_Cube.Kp_a = 6.725f ;  PID_Cube.Kp_b = 0.5379f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 314.10f ; PID_Cube.Kd_b = 0.00100f;
+    // // 有负压 22 0.40 70% 7.8
+    // PID_Cube.Kp_a = 6.725f ;  PID_Cube.Kp_b = 0.5379f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 314.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // 有负压 22 0.40 70% 7.8
+    PID_Cube.Kp_a = 6.723f ;  PID_Cube.Kp_b = 0.5387f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 315.10f ; PID_Cube.Kd_b = 0.00100f;
 
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100;
