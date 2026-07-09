@@ -54,7 +54,7 @@ make -j"${JOBS}"
 
 if [ -f main ]; then
     echo -e "\n===== 编译成功 ====="
-    if ! scp main root@192.168.1.202:/home/root/workspace; then
+    if ! scp main root@192.168.1.203:/home/root/workspace; then
         echo "[警告] main 上传失败，已保留本地构建产物。"
     fi
 fi
