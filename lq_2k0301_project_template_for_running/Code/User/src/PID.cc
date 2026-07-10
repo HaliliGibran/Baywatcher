@@ -1114,9 +1114,13 @@ static void circle_pid_update_by_state()
 #pragma endregion
 
 #pragma region Recog PIDs
-// ============================ 识别模式内环 PID 参数 ============================
+// ============================ 识别模式 PID 参数 ============================
 // Motor2 = 左轮，Motor1 = 右轮。
-// 初始化时会先保存旧内环参数到 normal_inner_pid_param；RECOGNITION 模式只改 recog_inner_pid_param。
+// BW_PID_RECOGNITION_MODE 是总开关：开启后内环速度 PID 和外部 Cube 环一起切到本区参数。
+#ifndef BW_PID_RECOGNITION_MODE
+#define BW_PID_RECOGNITION_MODE 0
+#endif
+
 struct Inner_PID_Param_t {
     float left_Kp;
     float left_Ki;
@@ -1138,8 +1142,14 @@ static Inner_PID_Param_t normal_inner_pid_param;
 
 //23+8
 static const Inner_PID_Param_t recog_inner_pid_param = {
-    159.32f, 94.50f, 0.00f, 9999.0f,
-    159.00f, 94.55f, 0.00f, 9999.0f,
+    159.32f, 124.50f, 0.00f, 9999.0f,
+    159.00f, 124.55f, 0.00f, 9999.0f,
+};
+
+// 识别模式外部 Cube 环 PID。
+// 默认沿用当前 23+8 普通巡线外环初值；需要识别模式单独调外环时只改这里。
+static const Cube_PID_Param_t recog_cube_pid_param = {
+    6.95f, 0.5389f, 0.0f, 316.10f, 0.00100f, STEER_LIMIT, 100.0f
 };
 
 static void Save_Normal_Inner_PID_Param()
@@ -1576,6 +1586,9 @@ void BayWatcher_Control_Init(void) {
 
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100;
+#if BW_PID_RECOGNITION_MODE
+    CubePID_Apply_Param(recog_cube_pid_param);
+#endif
     CubePID_Save_Normal_Param();
     reset_curve_slowdown_state(0.0f);
 

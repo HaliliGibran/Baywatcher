@@ -8,13 +8,6 @@
 
 #pragma region 图像总开关与模式切换
 
-// PID 内环参数模式。
-// - 0：普通 running 内环参数。
-// - 1：RECOGNITION 模式内环参数，参数写在 PID.cc 的 Recog PIDs 区域。
-#ifndef BW_PID_RECOGNITION_MODE
-#define BW_PID_RECOGNITION_MODE 0
-#endif
-
 // pure_angle 预瞄图像行过渡总开关。
 // 使用位置：image_handle.cc / pure_angle_apply_preview_transition()。
 // - 1：限制 preview_img_y 帧间跳变。
@@ -339,7 +332,7 @@
 // 内绕时，锁定边线向外推的赛道宽比例。
 // 内绕比外绕更容易撞目标板，因此默认比 BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 大。
 #ifndef BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.30f
+#define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.10f
 #endif
 
 // 内绕附加控制链开启时，path 从单侧中线平滑横移到锁边外推线时占用的近端点数。
@@ -377,7 +370,7 @@
 // 0：关闭，绕行态 factor 只受普通 FACTOR_LIMIT 限制。
 // 1：开启，按 BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN 防止内侧轮反转。
 #ifndef BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE
-#define BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 0
+#define BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 1
 #endif
 
 // 全绕行差速防反转保留裕量，仅 BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE 开启时生效。
@@ -435,7 +428,7 @@
 
 // [开关] 收到 u 后是否按比例降低基础目标速度。
 #ifndef BW_REMOTE_U_SLOWDOWN_ENABLE
-#define BW_REMOTE_U_SLOWDOWN_ENABLE 1
+#define BW_REMOTE_U_SLOWDOWN_ENABLE 0
 #endif
 
 // 收到 u 后的基础速度倍率，仅在 BW_REMOTE_U_SLOWDOWN_ENABLE=1 时生效。
@@ -443,7 +436,7 @@
 // 调大：u 阶段更快，更接近普通速度。
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 0.95f
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.01f
 #endif
 
 // 收到 c 后的强制停车级速度上限。
