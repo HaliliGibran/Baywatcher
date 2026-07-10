@@ -1116,10 +1116,9 @@ static void circle_pid_update_by_state()
 #pragma region Recog PIDs
 // ============================ 识别模式 PID 参数 ============================
 // Motor2 = 左轮，Motor1 = 右轮。
-// BW_PID_RECOGNITION_MODE 是总开关：开启后内环速度 PID 和外部 Cube 环一起切到本区参数。
-#ifndef BW_PID_RECOGNITION_MODE
-#define BW_PID_RECOGNITION_MODE 0
-#endif
+// true：发车后使用下面的 recognition 内环和外部 Cube 环参数。
+// false：使用上面 BayWatcher_Control_Init() 里的普通 running 参数。
+bool cfg_pid_recognition_mode = false;
 
 struct Inner_PID_Param_t {
     float left_Kp;
@@ -1488,9 +1487,9 @@ void BayWatcher_Control_Init(void) {
 
 
     Save_Normal_Inner_PID_Param();
-#if BW_PID_RECOGNITION_MODE
-    Apply_Inner_PID_Param(recog_inner_pid_param);
-#endif
+    if (cfg_pid_recognition_mode) {
+        Apply_Inner_PID_Param(recog_inner_pid_param);
+    }
 
     // // 左轮前进环PID
     // PID_Speed_F_L.Kp = 0.00f; PID_Speed_F_L.Ki = 0.00f; PID_Speed_F_L.Kd = 0.00f;
@@ -1586,9 +1585,9 @@ void BayWatcher_Control_Init(void) {
 
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100;
-#if BW_PID_RECOGNITION_MODE
-    CubePID_Apply_Param(recog_cube_pid_param);
-#endif
+    if (cfg_pid_recognition_mode) {
+        CubePID_Apply_Param(recog_cube_pid_param);
+    }
     CubePID_Save_Normal_Param();
     reset_curve_slowdown_state(0.0f);
 
