@@ -99,6 +99,11 @@
 #define BW_RECOG_BRICK_LOSS_HOLD_FRAMES 2
 #endif
 
+// [谨慎调] 已看到标识块后，边线或红色短暂丢失时保持 u 的时间。
+#ifndef BW_RECOG_U_LOSS_HOLD_MS
+#define BW_RECOG_U_LOSS_HOLD_MS 100
+#endif
+
 #pragma endregion
 
 #pragma region E. 现场常调：红块搜索带与边界

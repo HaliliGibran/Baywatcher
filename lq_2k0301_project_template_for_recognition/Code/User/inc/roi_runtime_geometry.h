@@ -141,6 +141,9 @@ struct RoiQualityMetrics
 struct RoiTrackRedPrefilterResult
 {
     bool has_track_boundaries = false;
+    std::vector<cv::Point> track_left_boundary;
+    std::vector<cv::Point> track_right_boundary;
+    std::vector<cv::Point> track_region_polygon;
 
     bool has_early_marker_red = false;
     cv::Rect early_marker_rect;
@@ -160,6 +163,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
                                   int early_y_max,
                                   int recognition_y_min,
                                   int recognition_y_max,
+                                  bool collect_debug_geometry,
                                   RoiTrackRedPrefilterResult* out_result);
 
 RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,

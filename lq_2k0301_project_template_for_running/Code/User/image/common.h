@@ -433,20 +433,17 @@
 #define BW_REMOTE_BRICK_AVOID_OFFSET_RATIO 0.25f
 #endif
 
-// [开关] 收到 u 后是否启用强制慢速上限。
-// 关闭后 u 只保留识别状态语义，不再造成运行板减速。
-#ifndef BW_REMOTE_U_SPEED_CAP_ENABLE
-#define BW_REMOTE_U_SPEED_CAP_ENABLE 0
+// [开关] 收到 u 后是否按比例降低基础目标速度。
+#ifndef BW_REMOTE_U_SLOWDOWN_ENABLE
+#define BW_REMOTE_U_SLOWDOWN_ENABLE 1
 #endif
 
-// 收到 u 后的强制慢速上限，仅在 BW_REMOTE_U_SPEED_CAP_ENABLE=1 时生效。
-// 作用：
-// - 当前活跃 Control_Loop 仍会先把 base_target_speed 乘这个值。
-// - 随后不管直道加速、斑马线冲线倍率或差速外侧轮放大，最终速度目标都会被夹到不超过这个值。
+// 收到 u 后的基础速度倍率，仅在 BW_REMOTE_U_SLOWDOWN_ENABLE=1 时生效。
+// 0.3 表示 base_target_speed 降为原来的 30%，不再作为绝对速度上限。
 // 调大：u 阶段更快，更接近普通速度。
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 1
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.3f
 #endif
 
 // 收到 c 后的强制停车级速度上限。
