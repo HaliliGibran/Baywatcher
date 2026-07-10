@@ -53,6 +53,8 @@ constexpr int kWhiteMinRgb = 165;
 constexpr int kWhiteMaxChannelDiff = 40;
 constexpr int kWhiteMinSpanWidth = 60;
 constexpr int kTrackBrickOuterExpandPixels = BW_RECOG_TRACK_BRICK_OUTER_EXPAND_PIXELS;
+constexpr int kTrackBrickInnerMaxPixels = BW_RECOG_TRACK_BRICK_INNER_MAX_PIXELS;
+constexpr int kTrackArtificialBlackBorderWidth = 1;
 constexpr int kTrackMazeMaxSteps = BW_RECOG_TRACK_MAZE_MAX_STEPS;
 constexpr int kTrackLazyMaskHalfWindow = BW_RECOG_TRACK_LAZY_MASK_HALF_WINDOW;
 constexpr unsigned char kTrackWhitePixel = 255;
@@ -157,6 +159,95 @@ struct TaskTrackClassification
     int right_boundary_x = -1;
     int boundary_row_y = -1;
 };
+
+struct TaskTrackRowSearchBands
+{
+    bool has_marker = false;
+    int marker_x0 = -1;
+    int marker_x1 = -1;
+    bool has_left_brick = false;
+    int left_brick_x0 = -1;
+    int left_brick_x1 = -1;
+    bool has_right_brick = false;
+    int right_brick_x0 = -1;
+    int right_brick_x1 = -1;
+};
+
+static int TrackBrickInnerPixelsAtRow(int row_y)
+{
+    if (kTrackBrickInnerMaxPixels <= 0)
+    {
+        return 0;
+    }
+
+    const int top_y = kTaskBrickSearchYMin;
+    const int bottom_y = std::max(top_y, kTaskBrickSearchYMax - 1);
+    if (row_y <= top_y || bottom_y <= top_y)
+    {
+        return 0;
+    }
+    if (row_y >= bottom_y)
+    {
+        return kTrackBrickInnerMaxPixels;
+    }
+
+    const int span = bottom_y - top_y;
+    const int offset = row_y - top_y;
+    return (offset * kTrackBrickInnerMaxPixels + span / 2) / span;
+}
+
+static TaskTrackRowSearchBands BuildTaskTrackRowSearchBands(int left_x,
+                                                            int right_x,
+                                                            int image_width,
+                                                            int row_y)
+{
+    TaskTrackRowSearchBands bands;
+    if (image_width <= 0 || left_x < 0 || right_x < left_x)
+    {
+        return bands;
+    }
+
+    const bool left_on_artificial_edge =
+        left_x <= kTrackArtificialBlackBorderWidth;
+    const bool right_on_artificial_edge =
+        right_x >= image_width - 1 - kTrackArtificialBlackBorderWidth;
+    const int inner_pixels = TrackBrickInnerPixelsAtRow(row_y);
+
+    // The outermost black columns are synthetic crawl boundaries, not physical brick edges.
+    bands.left_brick_x0 = std::max(0, left_x - kTrackBrickOuterExpandPixels);
+    bands.left_brick_x1 = std::min(
+        image_width - 1,
+        left_x + (left_on_artificial_edge ? 0 : inner_pixels));
+    bands.has_left_brick = bands.left_brick_x0 <= bands.left_brick_x1;
+
+    bands.right_brick_x0 = std::max(
+        0,
+        right_x - (right_on_artificial_edge ? 0 : inner_pixels));
+    bands.right_brick_x1 = std::min(image_width - 1, right_x + kTrackBrickOuterExpandPixels);
+    bands.has_right_brick = bands.right_brick_x0 <= bands.right_brick_x1;
+
+    if (bands.has_left_brick &&
+        bands.has_right_brick &&
+        bands.left_brick_x1 >= bands.right_brick_x0)
+    {
+        const int split_x = (left_x + right_x) / 2;
+        bands.left_brick_x1 = std::min(bands.left_brick_x1, split_x);
+        bands.right_brick_x0 = std::max(bands.right_brick_x0, split_x + 1);
+        bands.has_left_brick = bands.left_brick_x0 <= bands.left_brick_x1;
+        bands.has_right_brick = bands.right_brick_x0 <= bands.right_brick_x1;
+    }
+
+    bands.marker_x0 = std::max(
+        left_x + 1,
+        bands.has_left_brick ? bands.left_brick_x1 + 1 : left_x + 1);
+    bands.marker_x1 = std::min(
+        right_x - 1,
+        bands.has_right_brick ? bands.right_brick_x0 - 1 : right_x - 1);
+    bands.marker_x0 = std::max(0, bands.marker_x0);
+    bands.marker_x1 = std::min(image_width - 1, bands.marker_x1);
+    bands.has_marker = bands.marker_x0 <= bands.marker_x1;
+    return bands;
+}
 
 static BuildRoiQuadResult BuildRoiQuadFromBlobQuad(const std::vector<cv::Point2f>& blob_quad,
                                                    int image_width,
@@ -1180,7 +1271,8 @@ static cv::Rect BuildTaskTrackSearchRect(const TaskTrackBoundaryState& state,
 
 static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(
     const TaskTrackBoundaryState& state,
-    const cv::Rect& candidate_box)
+    const cv::Rect& candidate_box,
+    int image_width)
 {
     TaskTrackClassification result;
     if (!state.valid || candidate_box.width <= 0 || candidate_box.height <= 0)
@@ -1208,7 +1300,11 @@ static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(
     result.left_boundary_x = left_x;
     result.right_boundary_x = right_x;
     result.boundary_row_y = boundary_y;
-    if (classify_x >= left_x && classify_x <= right_x)
+    const TaskTrackRowSearchBands bands =
+        BuildTaskTrackRowSearchBands(left_x, right_x, image_width, classify_y);
+    if (bands.has_marker &&
+        classify_x >= bands.marker_x0 &&
+        classify_x <= bands.marker_x1)
     {
         result.type = TaskTrackCandidateType::MARKER;
         return result;
@@ -1217,11 +1313,13 @@ static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(
     const int candidate_left = candidate_box.x;
     const int candidate_right = candidate_box.x + candidate_box.width - 1;
     const bool touches_left_outer_band =
-        candidate_left <= left_x + kTrackBrickOuterExpandPixels &&
-        candidate_right >= left_x - kTrackBrickOuterExpandPixels;
+        bands.has_left_brick &&
+        candidate_left <= bands.left_brick_x1 &&
+        candidate_right >= bands.left_brick_x0;
     const bool touches_right_outer_band =
-        candidate_right >= right_x - kTrackBrickOuterExpandPixels &&
-        candidate_left <= right_x + kTrackBrickOuterExpandPixels;
+        bands.has_right_brick &&
+        candidate_right >= bands.right_brick_x0 &&
+        candidate_left <= bands.right_brick_x1;
     if (touches_left_outer_band || touches_right_outer_band)
     {
         result.type = TaskTrackCandidateType::ROADBLOCK;
@@ -1874,8 +1972,15 @@ static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_b
             continue;
         }
 
-        const int x0 = std::max(clamped.x, left_x + kTrackBrickOuterExpandPixels + 1);
-        const int x1 = std::min(clamped.x + clamped.width - 1, right_x - kTrackBrickOuterExpandPixels - 1);
+        const TaskTrackRowSearchBands bands =
+            BuildTaskTrackRowSearchBands(left_x, right_x, frame_bgr.cols, y);
+        if (!bands.has_marker)
+        {
+            continue;
+        }
+
+        const int x0 = std::max(clamped.x, bands.marker_x0);
+        const int x1 = std::min(clamped.x + clamped.width - 1, bands.marker_x1);
         if (x1 < x0)
         {
             continue;
@@ -1952,39 +2057,41 @@ static bool FindTrackBrickRedInOuterBand(const cv::Mat& frame_bgr,
         }
 
         bool row_has_red = false;
-        int last_counted_x = -1;
         const cv::Vec3b* row = frame_bgr.ptr<cv::Vec3b>(y);
-        const int left_band_x0 = std::max(0, left_x - kTrackBrickOuterExpandPixels);
-        const int left_band_x1 = std::min(frame_bgr.cols - 1, left_x + kTrackBrickOuterExpandPixels);
-        for (int x = left_band_x0; x <= left_band_x1; ++x)
+        const TaskTrackRowSearchBands bands =
+            BuildTaskTrackRowSearchBands(left_x, right_x, frame_bgr.cols, y);
+        if (bands.has_left_brick)
         {
-            if (!IsTaskStrictRedPixel(row[x], red_thresholds))
+            for (int x = bands.left_brick_x0; x <= bands.left_brick_x1; ++x)
             {
-                continue;
+                if (!IsTaskStrictRedPixel(row[x], red_thresholds))
+                {
+                    continue;
+                }
+                min_x = std::min(min_x, x);
+                max_x = std::max(max_x, x);
+                min_y = std::min(min_y, y);
+                max_y = std::max(max_y, y);
+                ++area;
+                row_has_red = true;
             }
-            min_x = std::min(min_x, x);
-            max_x = std::max(max_x, x);
-            min_y = std::min(min_y, y);
-            max_y = std::max(max_y, y);
-            ++area;
-            row_has_red = true;
-            last_counted_x = x;
         }
 
-        const int right_band_x0 = std::max(0, right_x - kTrackBrickOuterExpandPixels);
-        const int right_band_x1 = std::min(frame_bgr.cols - 1, right_x + kTrackBrickOuterExpandPixels);
-        for (int x = right_band_x0; x <= right_band_x1; ++x)
+        if (bands.has_right_brick)
         {
-            if (x <= last_counted_x || !IsTaskStrictRedPixel(row[x], red_thresholds))
+            for (int x = bands.right_brick_x0; x <= bands.right_brick_x1; ++x)
             {
-                continue;
+                if (!IsTaskStrictRedPixel(row[x], red_thresholds))
+                {
+                    continue;
+                }
+                min_x = std::min(min_x, x);
+                max_x = std::max(max_x, x);
+                min_y = std::min(min_y, y);
+                max_y = std::max(max_y, y);
+                ++area;
+                row_has_red = true;
             }
-            min_x = std::min(min_x, x);
-            max_x = std::max(max_x, x);
-            min_y = std::min(min_y, y);
-            max_y = std::max(max_y, y);
-            ++area;
-            row_has_red = true;
         }
 
         if (row_has_red && y >= best_row_y)
@@ -2221,11 +2328,11 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
         }
 
         const cv::Vec3b* row = frame_bgr.ptr<cv::Vec3b>(y);
-        const int marker_x0 = std::max(0, left_x + kTrackBrickOuterExpandPixels + 1);
-        const int marker_x1 = std::min(cols - 1, right_x - kTrackBrickOuterExpandPixels - 1);
-        if (marker_x0 <= marker_x1)
+        const TaskTrackRowSearchBands bands =
+            BuildTaskTrackRowSearchBands(left_x, right_x, cols, y);
+        if (bands.has_marker)
         {
-            for (int x = marker_x0; x <= marker_x1; ++x)
+            for (int x = bands.marker_x0; x <= bands.marker_x1; ++x)
             {
                 if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
                 {
@@ -2247,28 +2354,28 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
             continue;
         }
 
-        int last_counted_x = -1;
-        const int left_band_x0 = std::max(0, left_x - kTrackBrickOuterExpandPixels);
-        const int left_band_x1 = std::min(cols - 1, left_x + kTrackBrickOuterExpandPixels);
-        for (int x = left_band_x0; x <= left_band_x1; ++x)
+        if (bands.has_left_brick)
         {
-            if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
+            for (int x = bands.left_brick_x0; x <= bands.left_brick_x1; ++x)
             {
-                continue;
+                if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
+                {
+                    continue;
+                }
+                recognition_brick_bounds.Add(x, y);
             }
-            recognition_brick_bounds.Add(x, y);
-            last_counted_x = x;
         }
 
-        const int right_band_x0 = std::max(0, right_x - kTrackBrickOuterExpandPixels);
-        const int right_band_x1 = std::min(cols - 1, right_x + kTrackBrickOuterExpandPixels);
-        for (int x = right_band_x0; x <= right_band_x1; ++x)
+        if (bands.has_right_brick)
         {
-            if (x <= last_counted_x || !IsTaskPrefilterRedPixel(row[x], red_thresholds))
+            for (int x = bands.right_brick_x0; x <= bands.right_brick_x1; ++x)
             {
-                continue;
+                if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
+                {
+                    continue;
+                }
+                recognition_brick_bounds.Add(x, y);
             }
-            recognition_brick_bounds.Add(x, y);
         }
     }
 
@@ -2566,7 +2673,8 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     const auto track_classify_begin = steady_clock_t::now();
     if (has_track_boundaries && track_classification.type == TaskTrackCandidateType::UNKNOWN)
     {
-        track_classification = ClassifyTaskCandidateByTrackBoundary(track_state, candidate_box);
+        track_classification =
+            ClassifyTaskCandidateByTrackBoundary(track_state, candidate_box, image_width);
     }
     result.timing_track_classify_ms = elapsed_ms(track_classify_begin, steady_clock_t::now());
 
