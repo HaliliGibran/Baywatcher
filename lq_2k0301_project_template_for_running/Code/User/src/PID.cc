@@ -6,6 +6,7 @@
 float big_langd_add = 0.0f;
 
 static float Calc_Inc_PID(Bay_IncPID_t *pid, float target, float measured);
+static inline float clampf_pid(float v, float lo, float hi);
 
 
 #pragma region Ackerman
