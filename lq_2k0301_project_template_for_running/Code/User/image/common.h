@@ -443,7 +443,7 @@
 // 调大：u 阶段更快，更接近普通速度。
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 0.75f
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.95f
 #endif
 
 // 收到 c 后的强制停车级速度上限。

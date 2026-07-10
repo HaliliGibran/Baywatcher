@@ -1138,8 +1138,8 @@ static Inner_PID_Param_t normal_inner_pid_param;
 
 //23+8
 static const Inner_PID_Param_t recog_inner_pid_param = {
-    159.32f, 84.50f, 0.00f, 9999.0f,
-    159.00f, 84.55f, 0.00f, 9999.0f,
+    159.32f, 94.50f, 0.00f, 9999.0f,
+    159.00f, 94.55f, 0.00f, 9999.0f,
 };
 
 static void Save_Normal_Inner_PID_Param()
