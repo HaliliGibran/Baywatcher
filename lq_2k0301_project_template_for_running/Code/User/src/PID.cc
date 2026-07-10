@@ -33,18 +33,6 @@ static inline bool remote_bypass_active()
            forced_mode == FollowLine::MIDRIGHT;
 }
 
-static inline bool remote_follow_no_reverse_limit_active()
-{
-    if ((BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE != 0) &&
-        (BW_REMOTE_FOLLOW_INNER_NO_REVERSE_ENABLE != 0) &&
-        image_remote_recognition_is_inner_bypass_active())
-    {
-        return true;
-    }
-
-    return (BW_REMOTE_FOLLOW_NO_REVERSE_ENABLE != 0) && remote_bypass_active();
-}
-
 static inline bool remote_recognition_straight_accel_block_active()
 {
     if (remote_bypass_active())
@@ -72,62 +60,26 @@ static inline float apply_remote_speed_cap(float speed)
     return speed;
 }
 
-static inline float clamp_remote_follow_factor_no_reverse(float factor,
-                                                          float forward_base_speed,
-                                                          float steering_base_speed,
-                                                          bool preserve_steering_delta)
+static inline void apply_remote_follow_average_speed_ratio(float* target_left,
+                                                           float* target_right)
 {
-    if (!remote_follow_no_reverse_limit_active())
+    if (target_left == nullptr || target_right == nullptr)
     {
-        return factor;
+        return;
     }
 
-    if (forward_base_speed <= 0.0f)
+    float ratio = 1.0f;
+    if (!image_remote_recognition_get_follow_average_speed_ratio(&ratio))
     {
-        return 0.0f;
+        return;
     }
+    ratio = clampf_pid(ratio, 0.0f, 1.0f);
 
-    if (preserve_steering_delta)
-    {
-        if (steering_base_speed <= 0.0f)
-        {
-            return 0.0f;
-        }
-
-        const float margin = BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN;
-        const float max_delta = forward_base_speed * (1.0f - margin);
-        const float factor_limit_by_average = max_delta / (0.7f * steering_base_speed);
-        float factor_limit = FACTOR_LIMIT;
-        if (factor_limit > factor_limit_by_average)
-        {
-            factor_limit = factor_limit_by_average;
-        }
-        if (factor_limit < 0.0f)
-        {
-            factor_limit = 0.0f;
-        }
-        if (factor > factor_limit)
-        {
-            return factor_limit;
-        }
-        if (factor < -factor_limit)
-        {
-            return -factor_limit;
-        }
-        return factor;
-    }
-
-    const float no_reverse_limit = 1.0f - BW_REMOTE_FOLLOW_NO_REVERSE_FACTOR_MARGIN;
-    const float factor_limit = (FACTOR_LIMIT < no_reverse_limit) ? FACTOR_LIMIT : no_reverse_limit;
-    if (factor > factor_limit)
-    {
-        return factor_limit;
-    }
-    if (factor < -factor_limit)
-    {
-        return -factor_limit;
-    }
-    return factor;
+    const float average = 0.5f * (*target_left + *target_right);
+    const float half_delta = 0.5f * (*target_left - *target_right);
+    const float reduced_average = average * ratio;
+    *target_left = reduced_average + half_delta;
+    *target_right = reduced_average - half_delta;
 }
 
 #pragma endregion
@@ -1898,12 +1850,6 @@ void BayWatcher_Control_Loop(void* arg) {
     if( factor>= FACTOR_LIMIT) factor = FACTOR_LIMIT;
     if( factor<= -FACTOR_LIMIT) factor = -FACTOR_LIMIT;
 
-    factor = clamp_remote_follow_factor_no_reverse(
-        factor,
-        capped_forward_speed,
-        uncapped_forward_speed,
-        remote_speed_reduced);
-
     esc_sys.current_factor = factor; // 给电调传递当前的 factor，用于动态负压
 
     // 0.5
@@ -1928,6 +1874,8 @@ void BayWatcher_Control_Loop(void* arg) {
         PID.target_speed_L = capped_forward_speed * (1.0f + 1.0f * factor);
         PID.target_speed_R = capped_forward_speed * (1.0f - 0.4f * factor);
     }
+
+    apply_remote_follow_average_speed_ratio(&PID.target_speed_L, &PID.target_speed_R);
 
     // //0.35
     // if (PID.speed_adjust >= 0) {

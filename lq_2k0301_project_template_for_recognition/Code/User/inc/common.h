@@ -133,9 +133,14 @@
 #define BW_RECOG_TRACK_BOUNDARY_Y_MIN BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN
 #endif
 
-// [先调] 边界内外侧仍视为红砖带的扩张像素。
+// [先调] 红砖带相对边界向赛道外侧扩张的像素。
 #ifndef BW_RECOG_TRACK_BRICK_OUTER_EXPAND_PIXELS
 #define BW_RECOG_TRACK_BRICK_OUTER_EXPAND_PIXELS 8
+#endif
+
+// [先调] 红砖带向赛道内侧的最大像素；y=60 为 0，向下线性增加至该值。
+#ifndef BW_RECOG_TRACK_BRICK_INNER_MAX_PIXELS
+#define BW_RECOG_TRACK_BRICK_INNER_MAX_PIXELS 5
 #endif
 
 // [先调] 红砖正式判定搜索带上边界；红砖不走 u 减速，命中后直接输出 b/bl/br。

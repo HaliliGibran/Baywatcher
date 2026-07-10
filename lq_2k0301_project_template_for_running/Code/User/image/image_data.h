@@ -222,7 +222,7 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
                                           float current_pure_angle,
                                           uint64_t t_ms);
 
-// 功能: 按时间推进远端状态过期/激进转向到期逻辑
+// 功能: 按时间推进远端状态过期与保持逻辑
 // 类型: 全局状态更新函数
 // 关键参数:
 // - t_ms: 当前时间戳（毫秒）
@@ -265,11 +265,14 @@ bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms);
 // - out_mode: 输出 MIDLEFT / MIDRIGHT
 bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode);
 
-// 功能: 写入/查询当前帧远端锁边内绕附加控制链是否生效
+// 功能: 写入当前帧远端锁边 path 是否生效以及内/外绕类型
 // 类型: 图像链到控制链的状态接口
-// 说明：只影响内绕低速和内绕防反转，不改变识别板决定的绕行方向和推线距离。
-void image_remote_recognition_set_inner_bypass_active(bool active);
-bool image_remote_recognition_is_inner_bypass_active();
+void image_remote_recognition_set_follow_path_state(bool active, bool inner_follow);
+
+// 功能: 查询当前绕行对左右轮目标平均速度使用的倍率
+// 类型: 全局状态查询函数
+// 说明：内外绕分别使用独立倍率；小偏航角时返回 1.0。返回 false 表示当前未使用锁边绕行 path。
+bool image_remote_recognition_get_follow_average_speed_ratio(float* out_ratio);
 
 // 功能: 查询当前是否处于砖块触发的短时环岛压制窗口
 // 类型: 全局状态查询函数

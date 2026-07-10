@@ -28,7 +28,7 @@ typedef struct
 
 // 作用域：文件内静态，全局共享一份丢线补偿状态
 static pure_angle_lost_state_t g_pure_angle_lost = {0};
-static bool g_remote_inner_bypass_log_active = false;
+static bool g_remote_inner_follow_log_active = false;
 
 // 功能: 限幅单步变化量（用于丢线趋势外推的步长夹紧）
 // 类型: 局部功能函数
@@ -579,15 +579,10 @@ static float estimate_remote_follow_signed_curve_deg(const float (&line)[PT_MAXL
     return 0.0f;
 }
 
-static bool is_remote_follow_inner_bypass(bool is_left,
-                                          const float (&forced_line)[PT_MAXLEN][2],
-                                          int32_t forced_count)
+static bool is_remote_follow_inner(bool is_left,
+                                   const float (&forced_line)[PT_MAXLEN][2],
+                                   int32_t forced_count)
 {
-    if (BW_REMOTE_FOLLOW_INNER_ENABLE == 0)
-    {
-        return false;
-    }
-
     const float signed_curve_deg =
         estimate_remote_follow_signed_curve_deg(forced_line, forced_count);
     if (is_left)
@@ -597,101 +592,10 @@ static bool is_remote_follow_inner_bypass(bool is_left,
     return signed_curve_deg <= -BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG;
 }
 
-static int32_t nearest_line_index_by_y(const float (&line)[PT_MAXLEN][2],
-                                       int32_t line_count,
-                                       float y)
-{
-    int32_t n = line_count;
-    if (n > PT_MAXLEN)
-    {
-        n = PT_MAXLEN;
-    }
-    if (n <= 0)
-    {
-        return 0;
-    }
-
-    int32_t best = 0;
-    float best_abs = 1e30f;
-    for (int32_t i = 0; i < n; ++i)
-    {
-        float dy = line[i][0] - y;
-        if (dy < 0.0f)
-        {
-            dy = -dy;
-        }
-        if (dy < best_abs)
-        {
-            best_abs = dy;
-            best = i;
-        }
-    }
-    return best;
-}
-
-static bool build_remote_follow_inner_smooth_line(const pts_well_processed& src,
-                                                  const float (&forced_line)[PT_MAXLEN][2],
-                                                  int32_t forced_count,
-                                                  float (&out_line)[PT_MAXLEN][2],
-                                                  int32_t* out_count)
-{
-    if (out_count == nullptr)
-    {
-        return false;
-    }
-    *out_count = 0;
-
-    int32_t n = forced_count;
-    if (n > PT_MAXLEN)
-    {
-        n = PT_MAXLEN;
-    }
-    if (n <= 0)
-    {
-        return false;
-    }
-
-    int32_t base_count = src.mid_count;
-    if (base_count > PT_MAXLEN)
-    {
-        base_count = PT_MAXLEN;
-    }
-    if (base_count <= 0)
-    {
-        copy_point_line(forced_line, n, out_line, out_count);
-        return *out_count > 0;
-    }
-
-    int blend_points = BW_REMOTE_FOLLOW_INNER_BLEND_POINTS;
-    if (blend_points < 1)
-    {
-        blend_points = 1;
-    }
-
-    for (int32_t i = 0; i < n; ++i)
-    {
-        float t = 1.0f;
-        if (blend_points > 1)
-        {
-            t = (float)i / (float)(blend_points - 1);
-            t = fclip(t, 0.0f, 1.0f);
-            t = t * t * (3.0f - 2.0f * t);
-        }
-
-        const int32_t base_idx =
-            nearest_line_index_by_y(src.mid, base_count, forced_line[i][0]);
-        out_line[i][0] = src.mid[base_idx][0] * (1.0f - t) + forced_line[i][0] * t;
-        out_line[i][1] = src.mid[base_idx][1] * (1.0f - t) + forced_line[i][1] * t;
-    }
-
-    *out_count = n;
-    return true;
-}
-
 // 功能: 远端 w/s 锁边时，基于锁定侧边线生成绕行 path
 // 类型: 局部功能函数
 // 关键参数: forced_mode-锁定到左/右边线
-// 说明：外绕直接跟随外推线；内绕默认只改变外推距离，附加控制链开启时才平滑横移。
+// 说明：内外绕都直接跟随对应外推线，不再包含内绕平滑横移等附加链。
 static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 {
     follow_mode = forced_mode;
@@ -730,11 +634,9 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         return false;
     }
 
-    float path_line[PT_MAXLEN][2] = {};
-    int32_t path_count = 0;
-    const bool inner_bypass =
-        is_remote_follow_inner_bypass(is_left, forced_line, forced_count);
-    if (inner_bypass)
+    const bool inner_follow =
+        is_remote_follow_inner(is_left, forced_line, forced_count);
+    if (inner_follow)
     {
         forced_count = 0;
         BuildRemoteFollowOuterLine(is_left,
@@ -745,50 +647,28 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         {
             return false;
         }
-
-        if (BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE != 0)
-        {
-            if (!build_remote_follow_inner_smooth_line(*src,
-                                                       forced_line,
-                                                       forced_count,
-                                                       path_line,
-                                                       &path_count))
-            {
-                return false;
-            }
-        }
-        else
-        {
-            copy_point_line(forced_line, forced_count, path_line, &path_count);
-        }
-    }
-    else
-    {
-        copy_point_line(forced_line, forced_count, path_line, &path_count);
     }
 
-    copy_point_line(path_line, path_count, midline.mid, &midline.mid_count);
-    copy_point_line(path_line, path_count, midline.path, &midline.path_count);
+    copy_point_line(forced_line, forced_count, midline.mid, &midline.mid_count);
+    copy_point_line(forced_line, forced_count, midline.path, &midline.path_count);
 
     if (midline.mid_count <= 0 || midline.path_count <= 0)
     {
         return false;
     }
 
-    const bool inner_chain_active =
-        inner_bypass && (BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE != 0);
-    if (inner_bypass && !g_remote_inner_bypass_log_active)
+    if (inner_follow && !g_remote_inner_follow_log_active)
     {
-        printf((BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE != 0) ? "内绕\n" : "内绕推线\n");
-        g_remote_inner_bypass_log_active = true;
+        printf("内绕\n");
+        g_remote_inner_follow_log_active = true;
     }
-    else if (!inner_bypass)
+    else if (!inner_follow)
     {
-        g_remote_inner_bypass_log_active = false;
+        g_remote_inner_follow_log_active = false;
     }
 
-    image_remote_recognition_set_inner_bypass_active(inner_chain_active);
     CalculatePureAngleFromPath(midline.path, midline.path_count, &pure_angle);
+    image_remote_recognition_set_follow_path_state(true, inner_follow);
     return true;
 }
 
@@ -1009,9 +889,9 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 {
     const uint64_t t_ms = image_now_ms();
     image_remote_recognition_tick(t_ms);
-    image_remote_recognition_set_inner_bypass_active(false);
     if (handle_zebra_stop_lifecycle(t_ms))
     {
+        image_remote_recognition_set_follow_path_state(false, false);
         return;
     }
 
@@ -1032,11 +912,13 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
         if (image_remote_recognition_try_get_hold_yaw(t_ms, &hold_yaw))
         {
             reset_image_processing_outputs();
+            image_remote_recognition_set_follow_path_state(false, false);
             pure_angle = hold_yaw;
             return;
         }
 
         reset_image_processing_outputs();
+        image_remote_recognition_set_follow_path_state(false, false);
         return;
     }
 
@@ -1121,7 +1003,8 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 
     if (!remote_follow_override_applied)
     {
-        g_remote_inner_bypass_log_active = false;
+        g_remote_inner_follow_log_active = false;
+        image_remote_recognition_set_follow_path_state(false, false);
         build_midline_from_current_state();
         build_path_and_measure_pure_angle();
     }

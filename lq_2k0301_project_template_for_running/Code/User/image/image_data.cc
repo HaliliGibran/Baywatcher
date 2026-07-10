@@ -26,7 +26,8 @@ struct remote_recognition_runtime_t
     float vehicle_hold_yaw;
     remote_follow_state_t follow_state;
     uint64_t brick_block_until_ms;
-    bool inner_bypass_active;
+    bool follow_path_active;
+    bool inner_follow_active;
 };
 
 remote_recognition_runtime_t g_remote_recognition = {
@@ -39,15 +40,19 @@ remote_recognition_runtime_t g_remote_recognition = {
     remote_follow_state_t::NONE,
     0,
     false,
+    false,
 };
 
 constexpr uint32_t kRemoteSpeedCapReasonCloth = 1u << 0;
-constexpr uint32_t kRemoteSpeedCapReasonInner = 1u << 1;
 constexpr float kRemoteSpeedCapLogMinDelta = 0.02f;
 
 bool g_remote_speed_cap_log_active = false;
 float g_remote_speed_cap_log_value = 0.0f;
 uint32_t g_remote_speed_cap_log_reasons = 0;
+bool g_remote_follow_speed_log_active = false;
+bool g_remote_follow_speed_log_inner = false;
+bool g_remote_follow_speed_log_released = false;
+float g_remote_follow_speed_log_ratio = 1.0f;
 
 void remote_vehicle_route_apply(float current_pure_angle, uint64_t t_ms)
 {
@@ -125,10 +130,9 @@ void print_remote_speed_cap_log(bool active, float cap, uint32_t reasons)
         return;
     }
 
-    std::printf("[远端减速] 上限=%.2f, 原因=%s%s, pure_angle=%.1f\n",
+    std::printf("[远端减速] 上限=%.2f, 原因=%s, pure_angle=%.1f\n",
                 cap,
-                (reasons & kRemoteSpeedCapReasonCloth) ? "色布 " : "",
-                (reasons & kRemoteSpeedCapReasonInner) ? "内绕 " : "",
+                (reasons & kRemoteSpeedCapReasonCloth) ? "色布" : "",
                 pure_angle);
     g_remote_speed_cap_log_active = true;
     g_remote_speed_cap_log_value = cap;
@@ -196,7 +200,7 @@ void image_remote_recognition_reset()
     g_remote_recognition.vehicle_hold_yaw = 0.0f;
     g_remote_recognition.follow_state = remote_follow_state_t::NONE;
     g_remote_recognition.brick_block_until_ms = 0;
-    g_remote_recognition.inner_bypass_active = false;
+    image_remote_recognition_set_follow_path_state(false, false);
     follow_mode = FollowLine::MIXED;
 }
 
@@ -228,6 +232,12 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
 
     const BoardVisionCode previous_code = g_remote_recognition.current_code;
     g_remote_recognition.current_code = code;
+    const bool edge_follow_code =
+        code == BoardVisionCode::WEAPON || code == BoardVisionCode::SUPPLY;
+    if (!edge_follow_code || code != previous_code)
+    {
+        image_remote_recognition_set_follow_path_state(false, false);
+    }
 
     if (code == BoardVisionCode::UNKNOWN)
     {
@@ -368,19 +378,6 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
         &has_cap,
         &best_cap,
         &reasons);
-    const bool inner_speed_cap_active =
-        (BW_REMOTE_FOLLOW_INNER_CHAIN_ENABLE != 0) &&
-        g_remote_recognition.inner_bypass_active &&
-        ((BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ENABLE == 0) ||
-         (std::fabs(pure_angle) > BW_REMOTE_FOLLOW_INNER_SPEED_RELEASE_ANGLE_DEG));
-    add_remote_speed_cap_candidate(
-        inner_speed_cap_active,
-        BW_REMOTE_FOLLOW_INNER_SPEED_CAP,
-        kRemoteSpeedCapReasonInner,
-        &has_cap,
-        &best_cap,
-        &reasons);
-
     print_remote_speed_cap_log(has_cap, best_cap, reasons);
     if (!has_cap)
     {
@@ -431,14 +428,56 @@ bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode)
     return false;
 }
 
-void image_remote_recognition_set_inner_bypass_active(bool active)
+void image_remote_recognition_set_follow_path_state(bool active, bool inner_follow)
 {
-    g_remote_recognition.inner_bypass_active = active;
+    if (!active && g_remote_follow_speed_log_active)
+    {
+        std::printf("[绕行平均速度] 解除\n");
+        g_remote_follow_speed_log_active = false;
+        g_remote_follow_speed_log_inner = false;
+        g_remote_follow_speed_log_released = false;
+        g_remote_follow_speed_log_ratio = 1.0f;
+    }
+    g_remote_recognition.follow_path_active = active;
+    g_remote_recognition.inner_follow_active = active && inner_follow;
 }
 
-bool image_remote_recognition_is_inner_bypass_active()
+bool image_remote_recognition_get_follow_average_speed_ratio(float* out_ratio)
 {
-    return g_remote_recognition.inner_bypass_active;
+    if (out_ratio == nullptr || !g_remote_recognition.follow_path_active)
+    {
+        return false;
+    }
+
+    float ratio = g_remote_recognition.inner_follow_active
+        ? BW_REMOTE_FOLLOW_INNER_AVERAGE_SPEED_RATIO
+        : BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO;
+    ratio = std::max(0.0f, std::min(ratio, 1.0f));
+    const bool small_angle_released =
+        std::fabs(pure_angle) <= BW_REMOTE_FOLLOW_SPEED_RELEASE_ANGLE_DEG;
+    if (small_angle_released)
+    {
+        ratio = 1.0f;
+    }
+
+    if (!g_remote_follow_speed_log_active ||
+        g_remote_follow_speed_log_inner != g_remote_recognition.inner_follow_active ||
+        g_remote_follow_speed_log_released != small_angle_released ||
+        std::fabs(g_remote_follow_speed_log_ratio - ratio) >= 0.01f)
+    {
+        std::printf("[绕行平均速度] %s倍率=%.2f%s, pure_angle=%.1f\n",
+                    g_remote_recognition.inner_follow_active ? "内绕" : "外绕",
+                    ratio,
+                    small_angle_released ? "（小角解除）" : "",
+                    pure_angle);
+    }
+    g_remote_follow_speed_log_active = true;
+    g_remote_follow_speed_log_inner = g_remote_recognition.inner_follow_active;
+    g_remote_follow_speed_log_released = small_angle_released;
+    g_remote_follow_speed_log_ratio = ratio;
+
+    *out_ratio = ratio;
+    return true;
 }
 
 bool image_remote_recognition_should_block_circle(uint64_t t_ms)
