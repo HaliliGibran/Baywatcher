@@ -390,17 +390,10 @@ static bool IsTaskStrictRedPixel(const cv::Vec3b& bgr, const TaskStrictRedThresh
            dom >= thresholds.dom;
 }
 
-static bool IsTaskPrefilterRedPixel(const cv::Vec3b& bgr)
+static bool IsTaskPrefilterRedPixel(const cv::Vec3b& bgr,
+                                    const TaskStrictRedThresholds& thresholds)
 {
-    const cv::Vec3b adjusted_bgr = recognition_white_reference::ApplyGainsToPixel(bgr);
-    const int b = static_cast<int>(adjusted_bgr[0]);
-    const int g = static_cast<int>(adjusted_bgr[1]);
-    const int r = static_cast<int>(adjusted_bgr[2]);
-    const int red_score = 2 * r - g - b;
-    const int dom = r - std::max(g, b);
-    return red_score >= BW_RECOG_TASK_RED_SCORE_MIN_FLOOR &&
-           r >= BW_RECOG_TASK_RED_MIN_R_FLOOR &&
-           dom >= BW_RECOG_TASK_RED_DOM_MIN_FLOOR;
+    return IsTaskStrictRedPixel(bgr, thresholds);
 }
 
 struct TaskPrefilterRedBounds
@@ -514,158 +507,6 @@ static bool ComputeWhiteEnvelopeXRangeOnReferenceRow(const cv::Mat& frame_bgr,
         *out_span_count = merged_count;
     }
     return true;
-}
-
-static bool ComputeStrictRedEnvelopeXRangeOnReferenceRow(const cv::Mat& frame_bgr,
-                                                         const TaskStrictRedThresholds& red_thresholds,
-                                                         int* out_x_min,
-                                                         int* out_x_max,
-                                                         int* out_span_count)
-{
-    if (out_x_min == nullptr || out_x_max == nullptr || frame_bgr.empty())
-    {
-        return false;
-    }
-    if (out_span_count != nullptr)
-    {
-        *out_span_count = 0;
-    }
-
-    const int image_height = frame_bgr.rows;
-    const int image_width = frame_bgr.cols;
-    if (image_height <= 0 || image_width <= 0)
-    {
-        return false;
-    }
-
-    const int row_y = std::max(0, std::min(kWhiteReferenceRowY, image_height - 1));
-    const cv::Mat row_bgr = frame_bgr.row(row_y);
-
-    int merged_start = -1;
-    int merged_end = -1;
-    int merged_count = 0;
-    int start = -1;
-    for (int x = 0; x < image_width; ++x)
-    {
-        const bool is_red = IsTaskStrictRedPixel(row_bgr.at<cv::Vec3b>(0, x), red_thresholds);
-        if (is_red && start < 0)
-        {
-            start = x;
-        }
-        else if (!is_red && start >= 0)
-        {
-            MergeRowSpanIntoEnvelope(
-                start, x - 1, kTaskMinBandWidth, &merged_start, &merged_end, &merged_count);
-            start = -1;
-        }
-    }
-    if (start >= 0)
-    {
-        MergeRowSpanIntoEnvelope(
-            start, image_width - 1, kTaskMinBandWidth, &merged_start, &merged_end, &merged_count);
-    }
-
-    if (merged_start < 0 || merged_end < merged_start || merged_count <= 0)
-    {
-        return false;
-    }
-
-    *out_x_min = merged_start;
-    *out_x_max = merged_end;
-    if (out_span_count != nullptr)
-    {
-        *out_span_count = merged_count;
-    }
-    return true;
-}
-
-static bool ComputeReferenceEnvelopeXRangeOnRow(const cv::Mat& frame_bgr,
-                                                const TaskTrackWhiteThresholds& white_thresholds,
-                                                const TaskStrictRedThresholds& red_thresholds,
-                                                int* out_x_min,
-                                                int* out_x_max,
-                                                int* out_span_count,
-                                                std::string* out_source)
-{
-    if (out_x_min == nullptr || out_x_max == nullptr || frame_bgr.empty())
-    {
-        return false;
-    }
-    if (out_span_count != nullptr)
-    {
-        *out_span_count = 0;
-    }
-    if (out_source != nullptr)
-    {
-        *out_source = "fallback";
-    }
-
-    int white_x_min = 0;
-    int white_x_max = 0;
-    int white_span_count = 0;
-    const bool has_white = ComputeWhiteEnvelopeXRangeOnReferenceRow(
-        frame_bgr, white_thresholds, &white_x_min, &white_x_max, &white_span_count);
-
-    int red_x_min = 0;
-    int red_x_max = 0;
-    int red_span_count = 0;
-    const bool has_red = ComputeStrictRedEnvelopeXRangeOnReferenceRow(
-        frame_bgr, red_thresholds, &red_x_min, &red_x_max, &red_span_count);
-
-    if (!has_white && !has_red)
-    {
-        return false;
-    }
-
-    int x_min = std::numeric_limits<int>::max();
-    int x_max = std::numeric_limits<int>::min();
-    if (has_white)
-    {
-        x_min = std::min(x_min, white_x_min);
-        x_max = std::max(x_max, white_x_max);
-    }
-    if (has_red)
-    {
-        x_min = std::min(x_min, red_x_min);
-        x_max = std::max(x_max, red_x_max);
-    }
-
-    *out_x_min = x_min;
-    *out_x_max = x_max;
-    if (out_span_count != nullptr)
-    {
-        *out_span_count = white_span_count + red_span_count;
-    }
-    if (out_source != nullptr)
-    {
-        if (has_white && has_red)
-        {
-            *out_source = "white_red_envelope";
-        }
-        else if (has_white)
-        {
-            *out_source = "white_only";
-        }
-        else
-        {
-            *out_source = "red_only";
-        }
-    }
-    return true;
-}
-
-static bool IsTaskTrackWhitePixel(const cv::Vec3b& bgr,
-                                  const cv::Vec3b& hsv,
-                                  const TaskTrackWhiteThresholds& thresholds)
-{
-    const int max_rgb = std::max(std::max(static_cast<int>(bgr[0]), static_cast<int>(bgr[1])),
-                                 static_cast<int>(bgr[2]));
-    const int min_rgb = std::min(std::min(static_cast<int>(bgr[0]), static_cast<int>(bgr[1])),
-                                 static_cast<int>(bgr[2]));
-    return hsv[1] <= static_cast<unsigned char>(thresholds.max_saturation) &&
-           hsv[2] >= static_cast<unsigned char>(thresholds.min_value) &&
-           min_rgb >= thresholds.min_rgb &&
-           (max_rgb - min_rgb) <= thresholds.max_channel_diff;
 }
 
 static bool IsTaskTrackWhitePixelFastSv(const cv::Vec3b& bgr,
@@ -1238,15 +1079,40 @@ static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
 }
 
 static cv::Rect BuildTaskTrackSearchRect(const TaskTrackBoundaryState& state,
-                                          int image_width,
-                                          int image_height,
-                                          int y_min,
-                                          int y_max)
+                                         int image_width,
+                                         int image_height,
+                                         int y_min,
+                                         int y_max)
 {
-    const int x0 = std::max(0, state.envelope_x_min - kTrackBrickOuterExpandPixels);
-    const int x1 = std::min(image_width - 1, state.envelope_x_max + kTrackBrickOuterExpandPixels);
+    if (!state.valid || image_width <= 0 || image_height <= 0)
+    {
+        return cv::Rect();
+    }
+
     const int rect_y0 = std::max(0, std::min(y_min, image_height - 1));
     const int rect_y1 = std::max(rect_y0 + 1, std::min(y_max, image_height));
+    int track_x_min = image_width - 1;
+    int track_x_max = 0;
+    bool has_bounds_in_range = false;
+    for (int y = rect_y0; y < rect_y1; ++y)
+    {
+        int left_x = -1;
+        int right_x = -1;
+        int boundary_y = -1;
+        if (!FindTrackBoundaryBoundsAtRow(state, y, &left_x, &right_x, &boundary_y))
+        {
+            continue;
+        }
+        track_x_min = std::min(track_x_min, left_x);
+        track_x_max = std::max(track_x_max, right_x);
+        has_bounds_in_range = true;
+    }
+    if (!has_bounds_in_range)
+    {
+        return cv::Rect();
+    }
+    const int x0 = std::max(0, track_x_min - kTrackBrickOuterExpandPixels);
+    const int x1 = std::min(image_width - 1, track_x_max + kTrackBrickOuterExpandPixels);
     cv::Rect rect(
         x0,
         rect_y0,
@@ -1255,7 +1121,7 @@ static cv::Rect BuildTaskTrackSearchRect(const TaskTrackBoundaryState& state,
     cv::Rect clamped;
     if (!ClampRectToImage(rect, image_width, image_height, &clamped))
     {
-        return rect;
+        return cv::Rect();
     }
     return clamped;
 }
@@ -1919,68 +1785,6 @@ static void DrawQuadIfValid(cv::Mat& image, const std::vector<cv::Point2f>& quad
 
 namespace {
 
-static cv::Mat BuildTaskStrictRedMaskRectWithThresholds(const cv::Mat& frame_bgr,
-                                                       const cv::Rect& rect,
-                                                       const TaskStrictRedThresholds& red_thresholds)
-{
-    cv::Mat full_mask = cv::Mat::zeros(frame_bgr.size(), CV_8UC1);
-    cv::Rect clamped;
-    if (frame_bgr.empty() || !ClampRectToImage(rect, frame_bgr.cols, frame_bgr.rows, &clamped))
-    {
-        return full_mask;
-    }
-
-    for (int y = clamped.y; y < clamped.y + clamped.height; ++y)
-    {
-        const cv::Vec3b* row_ptr = frame_bgr.ptr<cv::Vec3b>(y);
-        unsigned char* mask_ptr = full_mask.ptr<unsigned char>(y);
-        for (int x = clamped.x; x < clamped.x + clamped.width; ++x)
-        {
-            if (IsTaskStrictRedPixel(row_ptr[x], red_thresholds))
-            {
-                mask_ptr[x] = 255;
-            }
-        }
-    }
-    return full_mask;
-}
-
-static cv::Mat BuildTaskStrictRedMaskLocalWithThresholds(const cv::Mat& frame_bgr,
-                                                        const cv::Rect& rect,
-                                                        const TaskStrictRedThresholds& red_thresholds,
-                                                        cv::Rect* out_image_rect)
-{
-    if (out_image_rect != nullptr)
-    {
-        *out_image_rect = cv::Rect();
-    }
-
-    cv::Rect clamped;
-    if (frame_bgr.empty() || !ClampRectToImage(rect, frame_bgr.cols, frame_bgr.rows, &clamped))
-    {
-        return cv::Mat();
-    }
-    if (out_image_rect != nullptr)
-    {
-        *out_image_rect = clamped;
-    }
-
-    cv::Mat local_mask = cv::Mat::zeros(clamped.height, clamped.width, CV_8UC1);
-    for (int y = clamped.y; y < clamped.y + clamped.height; ++y)
-    {
-        const cv::Vec3b* row_ptr = frame_bgr.ptr<cv::Vec3b>(y);
-        unsigned char* mask_ptr = local_mask.ptr<unsigned char>(y - clamped.y);
-        for (int x = clamped.x; x < clamped.x + clamped.width; ++x)
-        {
-            if (IsTaskStrictRedPixel(row_ptr[x], red_thresholds))
-            {
-                mask_ptr[x - clamped.x] = 255;
-            }
-        }
-    }
-    return local_mask;
-}
-
 static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_bgr,
                                                           const TaskTrackBoundaryState& state,
                                                           const cv::Rect& rect,
@@ -2038,115 +1842,6 @@ static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_b
         }
     }
     return local_mask;
-}
-
-static bool ComputeTaskRedXRange(const cv::Mat& mask, int y_min, int y_max, int* out_x_min, int* out_x_max)
-{
-    if (out_x_min == nullptr || out_x_max == nullptr || mask.empty())
-    {
-        return false;
-    }
-    const int row0 = std::max(0, y_min);
-    const int row1 = std::min(mask.rows, y_max);
-    if (row1 <= row0)
-    {
-        return false;
-    }
-    int min_x = std::numeric_limits<int>::max();
-    int max_x = std::numeric_limits<int>::min();
-    for (int y = row0; y < row1; ++y)
-    {
-        const unsigned char* row_ptr = mask.ptr<unsigned char>(y);
-        for (int x = 0; x < mask.cols; ++x)
-        {
-            if (row_ptr[x] > 0)
-            {
-                min_x = std::min(min_x, x);
-                max_x = std::max(max_x, x);
-            }
-        }
-    }
-    if (min_x == std::numeric_limits<int>::max() || max_x < min_x)
-    {
-        return false;
-    }
-    *out_x_min = min_x;
-    *out_x_max = max_x;
-    return true;
-}
-
-static cv::Rect BuildTaskSearchRect(const cv::Mat& frame_bgr,
-                                    const TaskTrackWhiteThresholds& white_thresholds,
-                                    const TaskStrictRedThresholds& red_thresholds,
-                                    int* out_reference_x_min,
-                                    int* out_reference_x_max,
-                                    bool* out_has_reference_x_range,
-                                    int* out_reference_span_count,
-                                    std::string* out_reference_range_source)
-{
-    const int image_width = frame_bgr.cols;
-    const int image_height = frame_bgr.rows;
-    cv::Rect base_y_rect(0, kTaskSearchYMin, image_width, std::max(1, kTaskSearchYMax - kTaskSearchYMin));
-    ClampRectToImage(base_y_rect, image_width, image_height, &base_y_rect);
-
-    int reference_x_min = 0;
-    int reference_x_max = 0;
-    int reference_span_count = 0;
-    std::string reference_range_source = "fallback";
-    const bool has_reference_x_range = ComputeReferenceEnvelopeXRangeOnRow(
-        frame_bgr,
-        white_thresholds,
-        red_thresholds,
-        &reference_x_min,
-        &reference_x_max,
-        &reference_span_count,
-        &reference_range_source);
-    if (out_has_reference_x_range != nullptr)
-    {
-        *out_has_reference_x_range = has_reference_x_range;
-    }
-    if (out_reference_range_source != nullptr)
-    {
-        *out_reference_range_source = reference_range_source;
-    }
-    if (has_reference_x_range && out_reference_x_min != nullptr && out_reference_x_max != nullptr)
-    {
-        *out_reference_x_min = reference_x_min;
-        *out_reference_x_max = reference_x_max;
-    }
-    if (has_reference_x_range && out_reference_span_count != nullptr)
-    {
-        *out_reference_span_count = reference_span_count;
-    }
-
-    int red_x_min = 0;
-    int red_x_max = 0;
-    const cv::Mat base_mask =
-        BuildTaskStrictRedMaskRectWithThresholds(frame_bgr, base_y_rect, red_thresholds);
-    const bool has_red_x_range =
-        ComputeTaskRedXRange(base_mask, kTaskSearchYMin, kTaskSearchYMax, &red_x_min, &red_x_max);
-
-    int x0 = 0;
-    int x1 = image_width - 1;
-    if (has_reference_x_range || has_red_x_range)
-    {
-        x0 = image_width - 1;
-        x1 = 0;
-        if (has_reference_x_range)
-        {
-            x0 = std::min(x0, reference_x_min);
-            x1 = std::max(x1, reference_x_max);
-        }
-        if (has_red_x_range)
-        {
-            x0 = std::min(x0, red_x_min);
-            x1 = std::max(x1, red_x_max);
-        }
-    }
-
-    cv::Rect task_rect(x0, kTaskSearchYMin, std::max(1, x1 - x0 + 1), std::max(1, kTaskSearchYMax - kTaskSearchYMin));
-    ClampRectToImage(task_rect, image_width, image_height, &task_rect);
-    return task_rect;
 }
 
 static void TaskTouchedSides(const cv::Mat& mask,
@@ -2403,6 +2098,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
                                   int early_y_max,
                                   int recognition_y_min,
                                   int recognition_y_max,
+                                  bool collect_debug_geometry,
                                   RoiTrackRedPrefilterResult* out_result)
 {
     if (out_result == nullptr)
@@ -2422,6 +2118,8 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
     }
     const TaskTrackWhiteThresholds white_thresholds =
         BuildTaskTrackWhiteThresholds(white_ref_stats);
+    const TaskStrictRedThresholds red_thresholds =
+        BuildTaskStrictRedThresholds(white_ref_stats);
 
     TaskTrackBoundaryState track_state;
     if (!BuildTaskTrackBoundaryState(frame_bgr, white_thresholds, &track_state))
@@ -2429,6 +2127,14 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
         return false;
     }
     out_result->has_track_boundaries = true;
+    if (collect_debug_geometry)
+    {
+        out_result->track_left_boundary =
+            BuildTrackBoundaryDisplayPoints(track_state.seed_left_x, track_state.seed_y, track_state.left_points);
+        out_result->track_right_boundary =
+            BuildTrackBoundaryDisplayPoints(track_state.seed_right_x, track_state.seed_y, track_state.right_points);
+        out_result->track_region_polygon = BuildTrackRegionPolygon(track_state);
+    }
 
     const int rows = frame_bgr.rows;
     const int cols = frame_bgr.cols;
@@ -2471,7 +2177,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
         {
             for (int x = marker_x0; x <= marker_x1; ++x)
             {
-                if (!IsTaskPrefilterRedPixel(row[x]))
+                if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
                 {
                     continue;
                 }
@@ -2496,7 +2202,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
         const int left_band_x1 = std::min(cols - 1, left_x + kTrackBrickOuterExpandPixels);
         for (int x = left_band_x0; x <= left_band_x1; ++x)
         {
-            if (!IsTaskPrefilterRedPixel(row[x]))
+            if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
             {
                 continue;
             }
@@ -2508,7 +2214,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
         const int right_band_x1 = std::min(cols - 1, right_x + kTrackBrickOuterExpandPixels);
         for (int x = right_band_x0; x <= right_band_x1; ++x)
         {
-            if (x <= last_counted_x || !IsTaskPrefilterRedPixel(row[x]))
+            if (x <= last_counted_x || !IsTaskPrefilterRedPixel(row[x], red_thresholds))
             {
                 continue;
             }
@@ -2613,9 +2319,6 @@ static bool TryDetectTrackBrickFallback(const cv::Mat& frame_bgr,
         return false;
     }
 
-    const cv::Rect brick_search_rect = BuildTaskTrackSearchRect(
-        track_state, image_width, image_height, kTaskBrickSearchYMin, kTaskBrickSearchYMax);
-
     if (!DetectTrackBrickOnly(
             frame_bgr,
             red_thresholds,
@@ -2627,8 +2330,13 @@ static bool TryDetectTrackBrickFallback(const cv::Mat& frame_bgr,
         return false;
     }
 
-    result->search_rect = brick_search_rect;
-    result->has_search_rect = true;
+    const cv::Rect brick_search_rect = BuildTaskTrackSearchRect(
+        track_state, image_width, image_height, kTaskBrickSearchYMin, kTaskBrickSearchYMax);
+    if (brick_search_rect.width > 0 && brick_search_rect.height > 0)
+    {
+        result->search_rect = brick_search_rect;
+        result->has_search_rect = true;
+    }
     return true;
 }
 
@@ -2681,60 +2389,36 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
             result.has_track_region_polygon = (result.track_region_polygon.size() >= 4);
         }
     }
-
-    int reference_x_min = 0;
-    int reference_x_max = 0;
-    int reference_span_count = 0;
-    bool has_reference_x_range = false;
-    std::string reference_range_source = "fallback";
-    const auto search_rect_begin = steady_clock_t::now();
-    if (has_track_boundaries)
-    {
-        result.search_rect = BuildTaskTrackSearchRect(
-            track_state, image_width, image_height, kTaskSearchYMin, kTaskSearchYMax);
-        reference_range_source = "track_interior";
-    }
     else
     {
-        result.search_rect = BuildTaskSearchRect(
-            frame_bgr,
-            white_thresholds,
-            red_thresholds,
-            &reference_x_min,
-            &reference_x_max,
-            &has_reference_x_range,
-            &reference_span_count,
-            &reference_range_source);
+        result.status = "track_boundary_miss";
+        return result;
     }
+
+    const auto search_rect_begin = steady_clock_t::now();
+    result.search_rect = BuildTaskTrackSearchRect(
+        track_state, image_width, image_height, kTaskSearchYMin, kTaskSearchYMax);
     result.timing_search_rect_ms = elapsed_ms(search_rect_begin, steady_clock_t::now());
-    result.reference_range_source = reference_range_source;
-    if (has_reference_x_range)
+    if (result.search_rect.width <= 0 || result.search_rect.height <= 0)
     {
-        result.has_reference_x_range = true;
-        result.reference_x_min = reference_x_min;
-        result.reference_x_max = reference_x_max;
-        result.merged_reference_span_count = reference_span_count;
+        result.status = "track_boundary_miss";
+        return result;
     }
+    result.reference_range_source = "track_interior";
     result.has_search_rect = true;
 
     const auto red_mask_begin = steady_clock_t::now();
     cv::Mat marker_red_mask;
     cv::Rect marker_mask_image_rect;
     const auto rebuild_marker_red_mask = [&]() {
-        marker_red_mask = has_track_boundaries
-            ? BuildTaskMarkerRedMaskLocalInTrackInterior(
-                  frame_bgr,
-                  track_state,
-                  result.search_rect,
-                  kTaskSearchYMin,
-                  kTaskSearchYMax,
-                  red_thresholds,
-                  &marker_mask_image_rect)
-            : BuildTaskStrictRedMaskLocalWithThresholds(
-                  frame_bgr,
-                  result.search_rect,
-                  red_thresholds,
-                  &marker_mask_image_rect);
+        marker_red_mask = BuildTaskMarkerRedMaskLocalInTrackInterior(
+            frame_bgr,
+            track_state,
+            result.search_rect,
+            kTaskSearchYMin,
+            kTaskSearchYMax,
+            red_thresholds,
+            &marker_mask_image_rect);
     };
     rebuild_marker_red_mask();
     result.timing_red_mask_ms = elapsed_ms(red_mask_begin, steady_clock_t::now());

@@ -1,4 +1,5 @@
 #include "image_data.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -40,9 +41,8 @@ remote_recognition_runtime_t g_remote_recognition = {
     false,
 };
 
-constexpr uint32_t kRemoteSpeedCapReasonU = 1u << 0;
-constexpr uint32_t kRemoteSpeedCapReasonCloth = 1u << 1;
-constexpr uint32_t kRemoteSpeedCapReasonInner = 1u << 2;
+constexpr uint32_t kRemoteSpeedCapReasonCloth = 1u << 0;
+constexpr uint32_t kRemoteSpeedCapReasonInner = 1u << 1;
 constexpr float kRemoteSpeedCapLogMinDelta = 0.02f;
 
 bool g_remote_speed_cap_log_active = false;
@@ -125,9 +125,8 @@ void print_remote_speed_cap_log(bool active, float cap, uint32_t reasons)
         return;
     }
 
-    std::printf("[远端减速] 上限=%.2f, 原因=%s%s%s, pure_angle=%.1f\n",
+    std::printf("[远端减速] 上限=%.2f, 原因=%s%s, pure_angle=%.1f\n",
                 cap,
-                (reasons & kRemoteSpeedCapReasonU) ? "u " : "",
                 (reasons & kRemoteSpeedCapReasonCloth) ? "色布 " : "",
                 (reasons & kRemoteSpeedCapReasonInner) ? "内绕 " : "",
                 pure_angle);
@@ -326,8 +325,29 @@ bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw)
 
 float image_remote_recognition_get_speed_ratio_override()
 {
-    // 远端识别减速统一走 speed_cap，避免“先乘比例、再限幅”的嵌套减速。
-    return 1.0f;
+    const bool u_slowdown_active =
+        (BW_REMOTE_U_SLOWDOWN_ENABLE != 0) &&
+        g_remote_recognition.current_code == BoardVisionCode::NO_RESULT;
+    const float ratio = u_slowdown_active
+        ? std::max(0.0f, std::min(BW_REMOTE_U_SLOWDOWN_RATIO, 1.0f))
+        : 1.0f;
+
+    static bool last_active = false;
+    static float last_ratio = 1.0f;
+    if (u_slowdown_active != last_active || std::fabs(ratio - last_ratio) >= 0.01f)
+    {
+        if (u_slowdown_active)
+        {
+            std::printf("[远端减速] u基础速度倍率=%.2f\n", ratio);
+        }
+        else if (last_active)
+        {
+            std::printf("[远端减速] u基础速度倍率解除\n");
+        }
+        last_active = u_slowdown_active;
+        last_ratio = ratio;
+    }
+    return ratio;
 }
 
 bool image_remote_recognition_get_speed_cap_override(float* out_cap)
@@ -341,14 +361,6 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
     float best_cap = 0.0f;
     uint32_t reasons = 0;
 
-    add_remote_speed_cap_candidate(
-        (BW_REMOTE_U_SPEED_CAP_ENABLE != 0) &&
-            g_remote_recognition.current_code == BoardVisionCode::NO_RESULT,
-        BW_REMOTE_U_SLOWDOWN_RATIO,
-        kRemoteSpeedCapReasonU,
-        &has_cap,
-        &best_cap,
-        &reasons);
     add_remote_speed_cap_candidate(
         g_remote_recognition.current_code == BoardVisionCode::CLOTH_STOP,
         BW_REMOTE_CLOTH_STOP_SPEED_CAP,
