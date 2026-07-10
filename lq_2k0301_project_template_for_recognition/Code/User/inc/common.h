@@ -108,9 +108,14 @@
 
 #pragma region E. 现场常调：红块搜索带与边界
 
-// [一般别动] 正式红块搜索带上边界。
+// [一般别动] marker/红砖正式触发带上边界。
 #ifndef BW_RECOG_TRIGGER_SEARCH_Y_MIN
 #define BW_RECOG_TRIGGER_SEARCH_Y_MIN 60
+#endif
+
+// [先调] 达到触发 y 后，正式 marker ROI 向上补取的像素；不改变 y=60 的触发时机。
+#ifndef BW_RECOG_MARKER_ROI_TOP_EXPAND_PIXELS
+#define BW_RECOG_MARKER_ROI_TOP_EXPAND_PIXELS 16
 #endif
 
 // [谨慎调] 仅用于提前发 u / 减速的前置红色检测带上边界。

@@ -25,12 +25,18 @@ constexpr double kMinRoiEdgeLength = 4.0;
 constexpr double kMinBackprojectedQuadArea = 6.0;
 
 
-constexpr int kTaskSearchYMin = BW_RECOG_TRIGGER_SEARCH_Y_MIN;
-constexpr int kTaskSearchYMax = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr int kTaskBrickSearchYMin = BW_RECOG_BRICK_SEARCH_Y_MIN;
 constexpr int kTaskBrickSearchYMax = BW_RECOG_BRICK_SEARCH_Y_MAX;
 constexpr int kTaskTrackBoundaryYMin = BW_RECOG_TRACK_BOUNDARY_Y_MIN;
 constexpr int kTaskTrackTraceTopY = kTaskTrackBoundaryYMin;
+constexpr int kTaskMarkerTriggerYMin = BW_RECOG_TRIGGER_SEARCH_Y_MIN;
+constexpr int kTaskMarkerExpandedYMin =
+    kTaskMarkerTriggerYMin - BW_RECOG_MARKER_ROI_TOP_EXPAND_PIXELS;
+constexpr int kTaskMarkerSearchYMin =
+    (kTaskMarkerExpandedYMin > kTaskTrackBoundaryYMin)
+        ? kTaskMarkerExpandedYMin
+        : kTaskTrackBoundaryYMin;
+constexpr int kTaskMarkerSearchYMax = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr int kTaskRedScoreThreshold = 140;
 constexpr int kTaskRedMinR = 90;
 constexpr int kTaskRedDomThreshold = 80;
@@ -129,10 +135,11 @@ struct TaskTrackBoundaryState
     int seed_right_x = -1;
     int envelope_x_min = 0;
     int envelope_x_max = 0;
-    std::vector<int> left_x_by_row;
-    std::vector<int> right_x_by_row;
     std::vector<cv::Point> left_points;
     std::vector<cv::Point> right_points;
+    std::vector<cv::Point> region_polygon;
+    std::vector<int> region_left_x_by_row;
+    std::vector<int> region_right_x_by_row;
 };
 
 enum class TaskTrackCandidateType
@@ -739,6 +746,11 @@ static std::vector<cv::Point> BuildTrackBoundaryDisplayPoints(int seed_x,
 
 static std::vector<cv::Point> BuildTrackRegionPolygon(const TaskTrackBoundaryState& state)
 {
+    if (!state.region_polygon.empty())
+    {
+        return state.region_polygon;
+    }
+
     std::vector<cv::Point> polygon;
     if (!state.valid || state.seed_left_x < 0 || state.seed_right_x < 0)
     {
@@ -747,8 +759,6 @@ static std::vector<cv::Point> BuildTrackRegionPolygon(const TaskTrackBoundarySta
 
     const cv::Point bottom_left(state.seed_left_x, state.seed_y);
     const cv::Point bottom_right(state.seed_right_x, state.seed_y);
-    const cv::Point top_left =
-        state.left_points.empty() ? bottom_left : state.left_points.back();
     const cv::Point top_right =
         state.right_points.empty() ? bottom_right : state.right_points.back();
 
@@ -773,6 +783,70 @@ static std::vector<cv::Point> BuildTrackRegionPolygon(const TaskTrackBoundarySta
         polygon.push_back(bottom_right);
     }
     return polygon;
+}
+
+static bool RasterizeTrackRegionPolygon(const std::vector<cv::Point>& polygon,
+                                        int image_width,
+                                        int image_height,
+                                        std::vector<int>* out_left_x_by_row,
+                                        std::vector<int>* out_right_x_by_row)
+{
+    if (out_left_x_by_row == nullptr || out_right_x_by_row == nullptr ||
+        polygon.size() < 4 || image_width <= 0 || image_height <= 0)
+    {
+        return false;
+    }
+
+    out_left_x_by_row->assign(image_height, -1);
+    out_right_x_by_row->assign(image_height, -1);
+
+    cv::Rect polygon_rect;
+    if (!ClampRectToImage(
+            cv::boundingRect(polygon), image_width, image_height, &polygon_rect))
+    {
+        return false;
+    }
+
+    std::vector<cv::Point> local_polygon;
+    local_polygon.reserve(polygon.size());
+    for (size_t i = 0; i < polygon.size(); ++i)
+    {
+        local_polygon.push_back(polygon[i] - polygon_rect.tl());
+    }
+
+    cv::Mat local_mask = cv::Mat::zeros(polygon_rect.height, polygon_rect.width, CV_8UC1);
+    std::vector<std::vector<cv::Point>> polygons(1, local_polygon);
+    cv::fillPoly(local_mask, polygons, cv::Scalar(255));
+
+    bool has_region_row = false;
+    for (int local_y = 0; local_y < local_mask.rows; ++local_y)
+    {
+        const unsigned char* row = local_mask.ptr<unsigned char>(local_y);
+        int left_x = -1;
+        int right_x = -1;
+        for (int local_x = 0; local_x < local_mask.cols; ++local_x)
+        {
+            if (row[local_x] == 0)
+            {
+                continue;
+            }
+            if (left_x < 0)
+            {
+                left_x = local_x + polygon_rect.x;
+            }
+            right_x = local_x + polygon_rect.x;
+        }
+        if (left_x < 0 || right_x < left_x)
+        {
+            continue;
+        }
+
+        const int image_y = local_y + polygon_rect.y;
+        (*out_left_x_by_row)[image_y] = left_x;
+        (*out_right_x_by_row)[image_y] = right_x;
+        has_region_row = true;
+    }
+    return has_region_row;
 }
 
 static void TraceTaskWhiteBoundaryLeftMaze(TaskWhiteLazyMaskCache* white_cache,
@@ -903,57 +977,32 @@ static void TraceTaskWhiteBoundaryRightMaze(TaskWhiteLazyMaskCache* white_cache,
     }
 }
 
-static void RasterizeTaskTrackBoundaryPoints(const std::vector<cv::Point>& points,
-                                             bool is_left,
-                                             std::vector<int>* x_by_row)
-{
-    if (x_by_row == nullptr)
-    {
-        return;
-    }
-    for (size_t i = 0; i < points.size(); ++i)
-    {
-        const cv::Point& pt = points[i];
-        if (pt.y < 0 || pt.y >= static_cast<int>(x_by_row->size()))
-        {
-            continue;
-        }
-        int& row_x = (*x_by_row)[pt.y];
-        if (row_x < 0)
-        {
-            row_x = pt.x;
-            continue;
-        }
-        row_x = is_left ? std::min(row_x, pt.x) : std::max(row_x, pt.x);
-    }
-}
-
-static bool FindTrackBoundaryBoundsAtRow(const TaskTrackBoundaryState& state,
-                                         int row_y,
-                                         int* out_left_x,
-                                         int* out_right_x,
-                                         int* out_row_y)
+static bool FindTrackRegionBoundsAtRow(const TaskTrackBoundaryState& state,
+                                       int row_y,
+                                       int* out_left_x,
+                                       int* out_right_x,
+                                       int* out_row_y)
 {
     if (out_left_x == nullptr || out_right_x == nullptr || out_row_y == nullptr ||
-        state.left_x_by_row.empty() || state.right_x_by_row.empty())
+        state.region_left_x_by_row.empty() || state.region_right_x_by_row.empty())
     {
         return false;
     }
 
-    const int rows = std::min(static_cast<int>(state.left_x_by_row.size()),
-                              static_cast<int>(state.right_x_by_row.size()));
+    const int rows = std::min(static_cast<int>(state.region_left_x_by_row.size()),
+                              static_cast<int>(state.region_right_x_by_row.size()));
     if (rows <= 0)
     {
         return false;
     }
 
     const int y = std::max(0, std::min(row_y, rows - 1));
-    if (state.left_x_by_row[y] >= 0 &&
-        state.right_x_by_row[y] >= 0 &&
-        state.left_x_by_row[y] < state.right_x_by_row[y])
+    if (state.region_left_x_by_row[y] >= 0 &&
+        state.region_right_x_by_row[y] >= 0 &&
+        state.region_left_x_by_row[y] <= state.region_right_x_by_row[y])
     {
-        *out_left_x = state.left_x_by_row[y];
-        *out_right_x = state.right_x_by_row[y];
+        *out_left_x = state.region_left_x_by_row[y];
+        *out_right_x = state.region_right_x_by_row[y];
         *out_row_y = y;
         return true;
     }
@@ -1011,28 +1060,15 @@ static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
     out_state->seed_center_x = seed_center_x;
     out_state->seed_left_x = left_seed_x;
     out_state->seed_right_x = right_seed_x;
-    out_state->left_x_by_row.assign(rows, -1);
-    out_state->right_x_by_row.assign(rows, -1);
     if (left_seed_x >= 0)
     {
-        out_state->left_x_by_row[bottom_y] = left_seed_x;
         TraceTaskWhiteBoundaryLeftMaze(&white_cache, bottom_y, left_seed_x, &out_state->left_points);
     }
     if (right_seed_x >= 0)
     {
-        out_state->right_x_by_row[bottom_y] = right_seed_x;
         TraceTaskWhiteBoundaryRightMaze(&white_cache, bottom_y, right_seed_x, &out_state->right_points);
     }
     RemoveOverlappingTrackBoundaryPoints(&out_state->left_points, &out_state->right_points);
-
-    if (!out_state->left_points.empty())
-    {
-        RasterizeTaskTrackBoundaryPoints(out_state->left_points, true, &out_state->left_x_by_row);
-    }
-    if (!out_state->right_points.empty())
-    {
-        RasterizeTaskTrackBoundaryPoints(out_state->right_points, false, &out_state->right_x_by_row);
-    }
 
     int envelope_x_min = cols - 1;
     int envelope_x_max = 0;
@@ -1075,7 +1111,23 @@ static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
         left_seed_x < right_seed_x &&
         !out_state->left_points.empty() &&
         !out_state->right_points.empty();
-    return out_state->valid;
+    if (!out_state->valid)
+    {
+        return false;
+    }
+
+    out_state->region_polygon = BuildTrackRegionPolygon(*out_state);
+    if (!RasterizeTrackRegionPolygon(
+            out_state->region_polygon,
+            cols,
+            rows,
+            &out_state->region_left_x_by_row,
+            &out_state->region_right_x_by_row))
+    {
+        out_state->valid = false;
+        return false;
+    }
+    return true;
 }
 
 static cv::Rect BuildTaskTrackSearchRect(const TaskTrackBoundaryState& state,
@@ -1099,7 +1151,7 @@ static cv::Rect BuildTaskTrackSearchRect(const TaskTrackBoundaryState& state,
         int left_x = -1;
         int right_x = -1;
         int boundary_y = -1;
-        if (!FindTrackBoundaryBoundsAtRow(state, y, &left_x, &right_x, &boundary_y))
+        if (!FindTrackRegionBoundsAtRow(state, y, &left_x, &right_x, &boundary_y))
         {
             continue;
         }
@@ -1140,8 +1192,7 @@ static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(
     const int classify_y = candidate_box.y + candidate_box.height - 1;
     result.classify_point = cv::Point(classify_x, classify_y);
 
-    const std::vector<cv::Point> polygon = BuildTrackRegionPolygon(state);
-    if (polygon.size() < 4)
+    if (state.region_polygon.size() < 4)
     {
         return result;
     }
@@ -1149,7 +1200,7 @@ static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(
     int left_x = -1;
     int right_x = -1;
     int boundary_y = -1;
-    if (!FindTrackBoundaryBoundsAtRow(state, classify_y, &left_x, &right_x, &boundary_y))
+    if (!FindTrackRegionBoundsAtRow(state, classify_y, &left_x, &right_x, &boundary_y))
     {
         return result;
     }
@@ -1157,8 +1208,7 @@ static TaskTrackClassification ClassifyTaskCandidateByTrackBoundary(
     result.left_boundary_x = left_x;
     result.right_boundary_x = right_x;
     result.boundary_row_y = boundary_y;
-    const double inside = cv::pointPolygonTest(polygon, cv::Point2f((float)classify_x, (float)classify_y), false);
-    if (inside >= 0.0)
+    if (classify_x >= left_x && classify_x <= right_x)
     {
         result.type = TaskTrackCandidateType::MARKER;
         return result;
@@ -1819,7 +1869,7 @@ static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_b
         int left_x = -1;
         int right_x = -1;
         int boundary_y = -1;
-        if (!FindTrackBoundaryBoundsAtRow(state, y, &left_x, &right_x, &boundary_y))
+        if (!FindTrackRegionBoundsAtRow(state, y, &left_x, &right_x, &boundary_y))
         {
             continue;
         }
@@ -1896,7 +1946,7 @@ static bool FindTrackBrickRedInOuterBand(const cv::Mat& frame_bgr,
         int left_x = -1;
         int right_x = -1;
         int boundary_y = -1;
-        if (!FindTrackBoundaryBoundsAtRow(state, y, &left_x, &right_x, &boundary_y))
+        if (!FindTrackRegionBoundsAtRow(state, y, &left_x, &right_x, &boundary_y))
         {
             continue;
         }
@@ -2133,7 +2183,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
             BuildTrackBoundaryDisplayPoints(track_state.seed_left_x, track_state.seed_y, track_state.left_points);
         out_result->track_right_boundary =
             BuildTrackBoundaryDisplayPoints(track_state.seed_right_x, track_state.seed_y, track_state.right_points);
-        out_result->track_region_polygon = BuildTrackRegionPolygon(track_state);
+        out_result->track_region_polygon = track_state.region_polygon;
     }
 
     const int rows = frame_bgr.rows;
@@ -2158,7 +2208,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
         int left_x = -1;
         int right_x = -1;
         int boundary_y = -1;
-        if (!FindTrackBoundaryBoundsAtRow(track_state, y, &left_x, &right_x, &boundary_y))
+        if (!FindTrackRegionBoundsAtRow(track_state, y, &left_x, &right_x, &boundary_y))
         {
             continue;
         }
@@ -2385,7 +2435,7 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     {
         if (render_debug)
         {
-            result.track_region_polygon = BuildTrackRegionPolygon(track_state);
+            result.track_region_polygon = track_state.region_polygon;
             result.has_track_region_polygon = (result.track_region_polygon.size() >= 4);
         }
     }
@@ -2397,7 +2447,7 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
 
     const auto search_rect_begin = steady_clock_t::now();
     result.search_rect = BuildTaskTrackSearchRect(
-        track_state, image_width, image_height, kTaskSearchYMin, kTaskSearchYMax);
+        track_state, image_width, image_height, kTaskMarkerSearchYMin, kTaskMarkerSearchYMax);
     result.timing_search_rect_ms = elapsed_ms(search_rect_begin, steady_clock_t::now());
     if (result.search_rect.width <= 0 || result.search_rect.height <= 0)
     {
@@ -2415,8 +2465,8 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
             frame_bgr,
             track_state,
             result.search_rect,
-            kTaskSearchYMin,
-            kTaskSearchYMax,
+            kTaskMarkerSearchYMin,
+            kTaskMarkerSearchYMax,
             red_thresholds,
             &marker_mask_image_rect);
     };
@@ -2493,6 +2543,23 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
     candidate_box.x += marker_mask_offset.x;
     candidate_box.y += marker_mask_offset.y;
     result.timing_red_band_ms += elapsed_ms(red_band_begin, steady_clock_t::now());
+
+    const int candidate_bottom_y = candidate_box.y + candidate_box.height - 1;
+    if (candidate_bottom_y < kTaskMarkerTriggerYMin)
+    {
+        if (TryDetectTrackBrickFallback(
+                frame_bgr,
+                red_thresholds,
+                track_state,
+                image_width,
+                image_height,
+                &result))
+        {
+            return result;
+        }
+        result.status = "marker_above_trigger_y";
+        return result;
+    }
 
     FillCandidateFields(&result, candidate_box, candidate_area);
 
