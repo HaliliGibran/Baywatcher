@@ -45,6 +45,8 @@ constexpr bool kRecognitionManualMlpCompareOnnx =
     (BW_RECOG_MANUAL_MLP_COMPARE_ONNX != 0);
 constexpr bool kRecognitionLightweightRedPrefilterEnable =
     (BW_RECOG_LIGHTWEIGHT_RED_PREFILTER_ENABLE != 0);
+constexpr bool kRecognitionEarlySlowdownEnable =
+    (BW_RECOG_EARLY_SLOWDOWN_ENABLE != 0);
 constexpr bool kRecognitionTriggerFrameInferEnable =
     (BW_RECOG_TRIGGER_FRAME_INFER_ENABLE != 0);
 constexpr int kRecognitionModelVariant = BW_RECOG_MODEL_VARIANT;
@@ -1495,11 +1497,13 @@ static void detect_lightweight_red_prefilter(const cv::Mat& frame_bgr,
             kRecognitionMaxSearchYExclusive,
             &track_prefilter))
     {
+        const bool has_early_slowdown_red =
+            kRecognitionEarlySlowdownEnable && track_prefilter.has_early_marker_red;
         if (out_slowdown_red != nullptr)
         {
-            *out_slowdown_red = track_prefilter.has_early_marker_red;
+            *out_slowdown_red = has_early_slowdown_red;
         }
-        if (slowdown_rect != nullptr && track_prefilter.has_early_marker_red)
+        if (slowdown_rect != nullptr && has_early_slowdown_red)
         {
             *slowdown_rect = track_prefilter.early_marker_rect;
         }
@@ -1960,7 +1964,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     const bool holdable_sign_red_visible = roi_should_hold_success_latch(trigger_roi);
     cv::Rect slowdown_red_rect;
     bool has_slowdown_red_candidate = false;
-    if (symbol_candidate_visible && trigger_roi.has_search_rect)
+    if (kRecognitionEarlySlowdownEnable && symbol_candidate_visible && trigger_roi.has_search_rect)
     {
         has_slowdown_red_candidate =
             detect_red_candidate_for_early_slowdown(frame_bgr, trigger_roi.search_rect, &slowdown_red_rect);

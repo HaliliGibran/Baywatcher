@@ -433,7 +433,13 @@
 #define BW_REMOTE_BRICK_AVOID_OFFSET_RATIO 0.25f
 #endif
 
-// 收到 u 后的强制慢速上限。
+// [开关] 收到 u 后是否启用强制慢速上限。
+// 关闭后 u 只保留识别状态语义，不再造成运行板减速。
+#ifndef BW_REMOTE_U_SPEED_CAP_ENABLE
+#define BW_REMOTE_U_SPEED_CAP_ENABLE 0
+#endif
+
+// 收到 u 后的强制慢速上限，仅在 BW_REMOTE_U_SPEED_CAP_ENABLE=1 时生效。
 // 作用：
 // - 当前活跃 Control_Loop 仍会先把 base_target_speed 乘这个值。
 // - 随后不管直道加速、斑马线冲线倍率或差速外侧轮放大，最终速度目标都会被夹到不超过这个值。
