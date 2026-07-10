@@ -981,8 +981,8 @@ static const Cube_PID_Param_t left_circle_in_pid  = {7.035f, 0.5398f, 0.0f, 314.
 static const Cube_PID_Param_t left_circle_out_pid = {7.035f, 0.5368f, 0.0f, 312.0f, 0.00100f, STEER_LIMIT, 100.0f};
 
 // 右环岛
-static const Cube_PID_Param_t right_circle_in_pid  = {6.935f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
-static const Cube_PID_Param_t right_circle_out_pid = {6.925f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t right_circle_in_pid  = {7.035f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t right_circle_out_pid = {7.025f, 0.5398f, 0.0f, 310.0f, 0.00100f, STEER_LIMIT, 100.0f};
 
 static const Cube_PID_Param_t& CubePID_Get_Base_Param();
 
@@ -1138,8 +1138,8 @@ static Inner_PID_Param_t normal_inner_pid_param;
 
 //23+8
 static const Inner_PID_Param_t recog_inner_pid_param = {
-    158.32f, 82.50f, 0.00f, 9999.0f,
-    158.00f, 82.55f, 0.00f, 9999.0f,
+    159.32f, 84.50f, 0.00f, 9999.0f,
+    159.00f, 84.55f, 0.00f, 9999.0f,
 };
 
 static void Save_Normal_Inner_PID_Param()

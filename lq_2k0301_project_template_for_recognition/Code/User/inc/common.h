@@ -115,7 +115,7 @@
 
 // [开关] 40~60 前置红色只提前发 u 减速；关闭后不影响 60~160 正式识别。
 #ifndef BW_RECOG_EARLY_SLOWDOWN_ENABLE
-#define BW_RECOG_EARLY_SLOWDOWN_ENABLE 0
+#define BW_RECOG_EARLY_SLOWDOWN_ENABLE 1
 #endif
 
 // [先调] 白赛道左右边线迷宫法寻线最小 y。

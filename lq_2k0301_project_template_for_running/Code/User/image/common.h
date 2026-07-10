@@ -315,7 +315,7 @@
 // 这条线会同时同步到 midline.mid（供预瞄/显示）和 midline.path（供控制）。
 // 调大：绕行更贴外侧，避让更激进；调小：更接近原边线，动作更保守。
 #ifndef BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.05f
+#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.08f
 #endif
 
 // 是否启用急弯内绕判定。
@@ -339,7 +339,7 @@
 // 内绕时，锁定边线向外推的赛道宽比例。
 // 内绕比外绕更容易撞目标板，因此默认比 BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 大。
 #ifndef BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.20f
+#define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.30f
 #endif
 
 // 内绕附加控制链开启时，path 从单侧中线平滑横移到锁边外推线时占用的近端点数。
@@ -446,7 +446,7 @@
 // 调大：u 阶段更快，更接近普通速度。
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 1
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.75f
 #endif
 
 // 收到 c 后的强制停车级速度上限。
