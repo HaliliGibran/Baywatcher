@@ -6,7 +6,12 @@
 float big_langd_add = 0.0f;
 
 static float Calc_Inc_PID(Bay_IncPID_t *pid, float target, float measured);
-static inline float clampf_pid(float v, float lo, float hi);
+static inline float clampf_pid(float v, float lo, float hi)
+{
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
 
 
 #pragma region Ackerman
@@ -321,13 +326,6 @@ struct CurveSlowdownState {
 };
 
 static CurveSlowdownState g_curve_slowdown;
-
-static inline float clampf_pid(float v, float lo, float hi)
-{
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
-}
 
 // 十字阶段不做基于曲率的减速：
 // 十字内的曲率会受到远端线、状态切换和中线拼接影响，直接拿来减速容易误触发。
