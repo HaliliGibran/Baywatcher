@@ -38,12 +38,9 @@ constexpr int kTaskMarkerSearchYMin =
         ? kTaskMarkerExpandedYMin
         : kTaskTrackBoundaryYMin;
 constexpr int kTaskMarkerSearchYMax = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
-constexpr bool kTaskMarkerFarLateralGateEnable =
-    BW_RECOG_MARKER_FAR_LATERAL_GATE_ENABLE != 0;
-constexpr int kTaskMarkerFarLateralGateYMax =
-    BW_RECOG_MARKER_FAR_LATERAL_GATE_Y_MAX;
-constexpr float kTaskMarkerFarTrackUMin = BW_RECOG_MARKER_FAR_TRACK_U_MIN;
-constexpr float kTaskMarkerFarTrackUMax = BW_RECOG_MARKER_FAR_TRACK_U_MAX;
+constexpr bool kTaskRedImageXGateEnable = BW_RECOG_RED_IMAGE_X_GATE_ENABLE != 0;
+constexpr float kTaskRedImageXMinRatio = BW_RECOG_RED_IMAGE_X_MIN_RATIO;
+constexpr float kTaskRedImageXMaxRatio = BW_RECOG_RED_IMAGE_X_MAX_RATIO;
 constexpr int kTaskRedScoreThreshold = 140;
 constexpr int kTaskRedMinR = 90;
 constexpr int kTaskRedDomThreshold = 80;
@@ -52,7 +49,6 @@ constexpr int kTaskEdgeExpandMaxSteps = 12;
 constexpr int kTaskMinBandArea = 8;
 constexpr int kTaskMinBandWidth = 3;
 constexpr int kTaskMinBandHeight = 2;
-constexpr double kTaskMinBandAspectRatio = 1.4;
 constexpr int kWhiteReferenceRowY = BW_RECOG_WHITE_REFERENCE_ROW_Y;
 constexpr int kWhiteMaxSaturation = 60;
 constexpr int kWhiteMinValue = 150;
@@ -61,16 +57,24 @@ constexpr int kWhiteMaxChannelDiff = 40;
 constexpr int kWhiteMinSpanWidth = 60;
 constexpr int kTrackBrickOuterExpandPixels = BW_RECOG_TRACK_BRICK_OUTER_EXPAND_PIXELS;
 constexpr int kTrackBrickInnerMaxPixels = BW_RECOG_TRACK_BRICK_INNER_MAX_PIXELS;
+constexpr int kTrackBrickMinHorizontalRunPixels =
+    BW_RECOG_TRACK_BRICK_MIN_HORIZONTAL_RUN_PIXELS;
 constexpr int kTrackArtificialBlackBorderWidth = 1;
 constexpr int kTrackMazeMaxSteps = BW_RECOG_TRACK_MAZE_MAX_STEPS;
 constexpr int kTrackLazyMaskHalfWindow = BW_RECOG_TRACK_LAZY_MASK_HALF_WINDOW;
+constexpr int kTrackForwardTangentHalfWindow = 6;
+constexpr float kTrackForwardMinSegmentLength = 4.0f;
+constexpr float kTrackForwardMinBoundaryAgreement = 0.35f;
+constexpr float kTrackForwardMinNormalAlignment = 0.35f;
 constexpr unsigned char kTrackWhitePixel = 255;
 constexpr unsigned char kTrackNonWhitePixel = 0;
 
-static_assert(kTaskMarkerFarTrackUMin >= 0.0f &&
-                  kTaskMarkerFarTrackUMin < kTaskMarkerFarTrackUMax &&
-                  kTaskMarkerFarTrackUMax <= 1.0f,
-              "far marker track-u gate must stay inside [0, 1]");
+static_assert(kTaskRedImageXMinRatio >= 0.0f &&
+                  kTaskRedImageXMinRatio < kTaskRedImageXMaxRatio &&
+                  kTaskRedImageXMaxRatio <= 1.0f,
+              "red image-x gate must stay inside [0, 1]");
+static_assert(kTrackBrickMinHorizontalRunPixels >= 1,
+              "brick horizontal run threshold must be positive");
 
 constexpr int kTrackDirectionFront[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
 constexpr int kTrackDirectionFrontLeft[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
@@ -104,6 +108,7 @@ struct DirectEdgeInfo
     int left_index = 0;
     int right_index = 1;
     float edge_length = 0.0f;
+    bool used_track_forward_direction = false;
 };
 
 struct FinalEdgeInfo
@@ -119,11 +124,13 @@ struct FinalEdgeInfo
     int right_index = 1;
     float raw_edge_length = 0.0f;
     float final_edge_length = 0.0f;
+    bool used_track_forward_direction = false;
 };
 
 struct BuildRoiQuadResult
 {
     bool valid = false;
+    bool used_track_forward_direction = false;
     std::string status = "blob_only";
     std::string ipm_reason;
     std::vector<cv::Point2f> roi_quad;
@@ -131,6 +138,14 @@ struct BuildRoiQuadResult
     std::vector<cv::Point2f> roi_quad_final;
     bool has_raw_height_ratio = false;
     float raw_height_ratio = 0.0f;
+};
+
+struct TrackForwardDirection
+{
+    bool valid = false;
+    cv::Point2f origin_raw;
+    cv::Point2f raw_unit;
+    cv::Point2f final_unit;
 };
 
 struct TaskTrackBoundaryState
@@ -146,6 +161,8 @@ struct TaskTrackBoundaryState
     int envelope_x_max = 0;
     std::vector<cv::Point> left_points;
     std::vector<cv::Point> right_points;
+    std::vector<cv::Point> effective_left_boundary;
+    std::vector<cv::Point> effective_right_boundary;
     std::vector<cv::Point> region_polygon;
     std::vector<int> region_left_x_by_row;
     std::vector<int> region_right_x_by_row;
@@ -257,9 +274,10 @@ static TaskTrackRowSearchBands BuildTaskTrackRowSearchBands(int left_x,
 }
 
 static BuildRoiQuadResult BuildRoiQuadFromBlobQuad(const std::vector<cv::Point2f>& blob_quad,
-                                                   int image_width,
-                                                   int image_height,
-                                                   RoiMethod roi_method);
+                                                    int image_width,
+                                                    int image_height,
+                                                    RoiMethod roi_method,
+                                                    const TrackForwardDirection* track_forward);
 static bool ClampRectToImage(const cv::Rect& rect,
                              int image_width,
                              int image_height,
@@ -799,11 +817,16 @@ struct TaskWhiteLazyMaskCache
     }
 };
 
+static bool IsTrackBoundaryXAllowed(int x, int cols)
+{
+    return x > kTrackArtificialBlackBorderWidth &&
+           x < cols - 1 - kTrackArtificialBlackBorderWidth;
+}
+
 static bool IsSimpleLeftBoundaryPixel(const unsigned char* row, int cols, int x)
 {
     return row != nullptr &&
-           x > 0 &&
-           x < cols &&
+           IsTrackBoundaryXAllowed(x, cols) &&
            row[x] == kTrackWhitePixel &&
            row[x - 1] == kTrackNonWhitePixel;
 }
@@ -811,8 +834,7 @@ static bool IsSimpleLeftBoundaryPixel(const unsigned char* row, int cols, int x)
 static bool IsSimpleRightBoundaryPixel(const unsigned char* row, int cols, int x)
 {
     return row != nullptr &&
-           x >= 0 &&
-           x < cols - 1 &&
+           IsTrackBoundaryXAllowed(x, cols) &&
            row[x] == kTrackWhitePixel &&
            row[x + 1] == kTrackNonWhitePixel;
 }
@@ -827,8 +849,10 @@ static bool FindLeftTrackBoundarySeedFromCenter(const unsigned char* row,
         return false;
     }
 
-    const int x_start = std::max(1, std::min(center_x, cols - 2));
-    for (int x = x_start; x >= 1; --x)
+    const int x_min = kTrackArtificialBlackBorderWidth + 1;
+    const int x_max = cols - 2 - kTrackArtificialBlackBorderWidth;
+    const int x_start = std::max(x_min, std::min(center_x, x_max));
+    for (int x = x_start; x >= x_min; --x)
     {
         if (IsSimpleLeftBoundaryPixel(row, cols, x))
         {
@@ -849,8 +873,10 @@ static bool FindRightTrackBoundarySeedFromCenter(const unsigned char* row,
         return false;
     }
 
-    const int x_start = std::max(1, std::min(center_x, cols - 2));
-    for (int x = x_start; x < cols - 1; ++x)
+    const int x_min = kTrackArtificialBlackBorderWidth + 1;
+    const int x_max = cols - 2 - kTrackArtificialBlackBorderWidth;
+    const int x_start = std::max(x_min, std::min(center_x, x_max));
+    for (int x = x_start; x <= x_max; ++x)
     {
         if (IsSimpleRightBoundaryPixel(row, cols, x))
         {
@@ -987,11 +1013,18 @@ static bool TrimBoundaryTailAtConnectorIntersection(
     return false;
 }
 
-static std::vector<cv::Point> BuildTrackRegionPolygon(const TaskTrackBoundaryState& state)
+static std::vector<cv::Point> BuildTrackRegionPolygon(
+    const TaskTrackBoundaryState& state,
+    std::vector<cv::Point>* out_left_boundary,
+    std::vector<cv::Point>* out_right_boundary)
 {
-    if (!state.region_polygon.empty())
+    if (out_left_boundary != nullptr)
     {
-        return state.region_polygon;
+        out_left_boundary->clear();
+    }
+    if (out_right_boundary != nullptr)
+    {
+        out_right_boundary->clear();
     }
 
     std::vector<cv::Point> polygon;
@@ -1023,6 +1056,19 @@ static std::vector<cv::Point> BuildTrackRegionPolygon(const TaskTrackBoundarySta
         {
             break;
         }
+    }
+
+    if (left_boundary.empty() || right_boundary.empty())
+    {
+        return polygon;
+    }
+    if (out_left_boundary != nullptr)
+    {
+        *out_left_boundary = left_boundary;
+    }
+    if (out_right_boundary != nullptr)
+    {
+        *out_right_boundary = right_boundary;
     }
 
     const cv::Point bottom_right = right_boundary.front();
@@ -1168,7 +1214,8 @@ static void TraceTaskWhiteBoundaryLeftMaze(TaskWhiteLazyMaskCache* white_cache,
 
         ++step;
         turn = 0;
-        if (h < kTaskTrackTraceTopY)
+        if (h < kTaskTrackTraceTopY ||
+            !IsTrackBoundaryXAllowed(w, white_cache->cols))
         {
             break;
         }
@@ -1236,7 +1283,8 @@ static void TraceTaskWhiteBoundaryRightMaze(TaskWhiteLazyMaskCache* white_cache,
 
         ++step;
         turn = 0;
-        if (h < kTaskTrackTraceTopY)
+        if (h < kTaskTrackTraceTopY ||
+            !IsTrackBoundaryXAllowed(w, white_cache->cols))
         {
             break;
         }
@@ -1282,76 +1330,73 @@ static bool FindTrackRegionBoundsAtRow(const TaskTrackBoundaryState& state,
     return false;
 }
 
-static bool MarkerPassesFarTrackLateralGate(const TaskTrackBoundaryState& state,
-                                            const cv::Rect& candidate_box,
-                                            float* out_track_u,
-                                            int* out_left_x,
-                                            int* out_right_x,
-                                            int* out_row_y)
+static bool BuildImageXGateRange(int image_width,
+                                 int* out_gate_left_x,
+                                 int* out_gate_right_x)
 {
-    if (out_track_u != nullptr)
+    if (out_gate_left_x == nullptr || out_gate_right_x == nullptr || image_width <= 0)
     {
-        *out_track_u = 0.5f;
+        return false;
     }
-    if (out_left_x != nullptr)
+    if (!kTaskRedImageXGateEnable)
     {
-        *out_left_x = -1;
-    }
-    if (out_right_x != nullptr)
-    {
-        *out_right_x = -1;
-    }
-    if (out_row_y != nullptr)
-    {
-        *out_row_y = -1;
-    }
-
-    if (!kTaskMarkerFarLateralGateEnable)
-    {
+        *out_gate_left_x = 0;
+        *out_gate_right_x = image_width - 1;
         return true;
     }
 
-    const int candidate_bottom_y = candidate_box.y + candidate_box.height - 1;
-    if (candidate_bottom_y > kTaskMarkerFarLateralGateYMax)
+    const float image_x_max = static_cast<float>(image_width - 1);
+    *out_gate_left_x = static_cast<int>(std::ceil(
+        kTaskRedImageXMinRatio * image_x_max));
+    *out_gate_right_x = static_cast<int>(std::floor(
+        kTaskRedImageXMaxRatio * image_x_max));
+    return *out_gate_left_x <= *out_gate_right_x;
+}
+
+static bool CandidatePassesImageXGate(int image_width,
+                                     const cv::Point& candidate_center,
+                                     float* out_image_x_ratio,
+                                     int* out_gate_left_x,
+                                     int* out_gate_right_x)
+{
+    if (out_image_x_ratio != nullptr)
     {
-        return true;
+        *out_image_x_ratio = 0.5f;
+    }
+    if (out_gate_left_x != nullptr)
+    {
+        *out_gate_left_x = -1;
+    }
+    if (out_gate_right_x != nullptr)
+    {
+        *out_gate_right_x = -1;
     }
 
-    const int candidate_center_y = candidate_box.y + candidate_box.height / 2;
-    int left_x = -1;
-    int right_x = -1;
-    int row_y = -1;
-    if (!FindTrackRegionBoundsAtRow(
-            state, candidate_center_y, &left_x, &right_x, &row_y) ||
-        right_x <= left_x)
+    int gate_left_x = -1;
+    int gate_right_x = -1;
+    if (!BuildImageXGateRange(image_width, &gate_left_x, &gate_right_x))
     {
         return false;
     }
 
-    const float candidate_center_x =
-        static_cast<float>(candidate_box.x) + 0.5f * static_cast<float>(candidate_box.width);
-    const float track_u =
-        (candidate_center_x - static_cast<float>(left_x)) /
-        static_cast<float>(right_x - left_x);
-
-    if (out_track_u != nullptr)
+    const float image_x_ratio =
+        image_width > 1
+            ? static_cast<float>(candidate_center.x) / static_cast<float>(image_width - 1)
+            : 0.0f;
+    if (out_image_x_ratio != nullptr)
     {
-        *out_track_u = track_u;
+        *out_image_x_ratio = image_x_ratio;
     }
-    if (out_left_x != nullptr)
+    if (out_gate_left_x != nullptr)
     {
-        *out_left_x = left_x;
+        *out_gate_left_x = gate_left_x;
     }
-    if (out_right_x != nullptr)
+    if (out_gate_right_x != nullptr)
     {
-        *out_right_x = right_x;
+        *out_gate_right_x = gate_right_x;
     }
-    if (out_row_y != nullptr)
-    {
-        *out_row_y = row_y;
-    }
-    return track_u >= kTaskMarkerFarTrackUMin &&
-           track_u <= kTaskMarkerFarTrackUMax;
+    return candidate_center.x >= gate_left_x &&
+           candidate_center.x <= gate_right_x;
 }
 
 static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
@@ -1393,7 +1438,7 @@ static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
     FindLeftTrackBoundarySeedFromCenter(seed_row, cols, seed_center_x, &left_seed_x);
     FindRightTrackBoundarySeedFromCenter(seed_row, cols, seed_center_x, &right_seed_x);
 
-    if (left_seed_x < 0 && right_seed_x < 0)
+    if (left_seed_x < 0 || right_seed_x < 0 || left_seed_x >= right_seed_x)
     {
         return false;
     }
@@ -1404,15 +1449,17 @@ static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
     out_state->seed_center_x = seed_center_x;
     out_state->seed_left_x = left_seed_x;
     out_state->seed_right_x = right_seed_x;
-    if (left_seed_x >= 0)
+    TraceTaskWhiteBoundaryLeftMaze(&white_cache, bottom_y, left_seed_x, &out_state->left_points);
+    TraceTaskWhiteBoundaryRightMaze(&white_cache, bottom_y, right_seed_x, &out_state->right_points);
+    if (out_state->left_points.empty() || out_state->right_points.empty())
     {
-        TraceTaskWhiteBoundaryLeftMaze(&white_cache, bottom_y, left_seed_x, &out_state->left_points);
-    }
-    if (right_seed_x >= 0)
-    {
-        TraceTaskWhiteBoundaryRightMaze(&white_cache, bottom_y, right_seed_x, &out_state->right_points);
+        return false;
     }
     RemoveOverlappingTrackBoundaryPoints(&out_state->left_points, &out_state->right_points);
+    if (out_state->left_points.empty() || out_state->right_points.empty())
+    {
+        return false;
+    }
 
     int envelope_x_min = cols - 1;
     int envelope_x_max = 0;
@@ -1460,7 +1507,10 @@ static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
         return false;
     }
 
-    out_state->region_polygon = BuildTrackRegionPolygon(*out_state);
+    out_state->region_polygon = BuildTrackRegionPolygon(
+        *out_state,
+        &out_state->effective_left_boundary,
+        &out_state->effective_right_boundary);
     if (!RasterizeTrackRegionPolygon(
             out_state->region_polygon,
             cols,
@@ -1640,6 +1690,255 @@ static bool RawQuadToFinalQuad(const std::vector<cv::Point2f>& quad,
     return true;
 }
 
+static float Dot2d(const cv::Point2f& a, const cv::Point2f& b)
+{
+    return a.x * b.x + a.y * b.y;
+}
+
+static bool NormalizeVector2d(const cv::Point2f& vector, cv::Point2f* out_unit)
+{
+    if (out_unit == nullptr)
+    {
+        return false;
+    }
+    const float length = std::sqrt(Dot2d(vector, vector));
+    if (!std::isfinite(length) || length <= 1e-6f)
+    {
+        return false;
+    }
+    *out_unit = vector * (1.0f / length);
+    return true;
+}
+
+static float SegmentNormalAlignment(const cv::Point2f& p1,
+                                    const cv::Point2f& p2,
+                                    const cv::Point2f& forward_unit)
+{
+    cv::Point2f edge_unit;
+    if (!NormalizeVector2d(p2 - p1, &edge_unit))
+    {
+        return 0.0f;
+    }
+    const cv::Point2f edge_normal(-edge_unit.y, edge_unit.x);
+    return std::fabs(Dot2d(edge_normal, forward_unit));
+}
+
+static bool EstimateBoundaryForwardDirection(
+    const std::vector<cv::Point>& boundary,
+    const cv::Point2f& candidate_center,
+    int image_width,
+    int image_height,
+    cv::Point2f* out_raw_unit,
+    cv::Point2f* out_final_unit)
+{
+    if (boundary.size() < 2 || out_raw_unit == nullptr || out_final_unit == nullptr)
+    {
+        return false;
+    }
+
+    size_t nearest_index = 0;
+    float nearest_distance_sq = std::numeric_limits<float>::max();
+    for (size_t i = 0; i < boundary.size(); ++i)
+    {
+        const float dx = static_cast<float>(boundary[i].x) - candidate_center.x;
+        const float dy = static_cast<float>(boundary[i].y) - candidate_center.y;
+        const float distance_sq = dx * dx + dy * dy;
+        if (distance_sq < nearest_distance_sq)
+        {
+            nearest_distance_sq = distance_sq;
+            nearest_index = i;
+        }
+    }
+
+    const size_t half_window = static_cast<size_t>(kTrackForwardTangentHalfWindow);
+    const size_t begin_index =
+        (nearest_index > half_window) ? nearest_index - half_window : 0;
+    const size_t end_index =
+        std::min(boundary.size() - 1, nearest_index + half_window);
+    if (end_index <= begin_index)
+    {
+        return false;
+    }
+
+    const cv::Point2f raw_begin(
+        static_cast<float>(boundary[begin_index].x),
+        static_cast<float>(boundary[begin_index].y));
+    const cv::Point2f raw_end(
+        static_cast<float>(boundary[end_index].x),
+        static_cast<float>(boundary[end_index].y));
+    const cv::Point2f raw_vector = raw_end - raw_begin;
+    if (SegmentLength(raw_begin, raw_end) < kTrackForwardMinSegmentLength ||
+        !NormalizeVector2d(raw_vector, out_raw_unit))
+    {
+        return false;
+    }
+
+    cv::Point2f final_begin;
+    cv::Point2f final_end;
+    if (!RawPointToFinalPoint(
+            raw_begin.x, raw_begin.y, image_width, image_height, &final_begin) ||
+        !RawPointToFinalPoint(
+            raw_end.x, raw_end.y, image_width, image_height, &final_end) ||
+        !NormalizeVector2d(final_end - final_begin, out_final_unit))
+    {
+        return false;
+    }
+    return true;
+}
+
+static bool EstimateRasterizedTrackForwardDirection(
+    const TaskTrackBoundaryState& state,
+    const cv::Point2f& candidate_center,
+    int image_width,
+    int image_height,
+    cv::Point2f* out_raw_unit,
+    cv::Point2f* out_final_unit)
+{
+    if (out_raw_unit == nullptr ||
+        out_final_unit == nullptr ||
+        state.region_left_x_by_row.empty() ||
+        state.region_right_x_by_row.empty())
+    {
+        return false;
+    }
+
+    const int row_count = static_cast<int>(std::min(
+        state.region_left_x_by_row.size(),
+        state.region_right_x_by_row.size()));
+    if (row_count <= 1)
+    {
+        return false;
+    }
+
+    const int center_y = std::max(
+        0,
+        std::min(static_cast<int>(std::lround(candidate_center.y)), row_count - 1));
+    const int y0 = std::max(0, center_y - kTrackForwardTangentHalfWindow);
+    const int y1 = std::min(row_count - 1, center_y + kTrackForwardTangentHalfWindow);
+    int far_y = -1;
+    int near_y = -1;
+    cv::Point2f far_mid;
+    cv::Point2f near_mid;
+    for (int y = y0; y <= y1; ++y)
+    {
+        const int left_x = state.region_left_x_by_row[static_cast<size_t>(y)];
+        const int right_x = state.region_right_x_by_row[static_cast<size_t>(y)];
+        if (left_x < 0 || right_x <= left_x)
+        {
+            continue;
+        }
+
+        const cv::Point2f midpoint(
+            0.5f * static_cast<float>(left_x + right_x),
+            static_cast<float>(y));
+        if (far_y < 0)
+        {
+            far_y = y;
+            far_mid = midpoint;
+        }
+        near_y = y;
+        near_mid = midpoint;
+    }
+
+    if (far_y < 0 ||
+        near_y <= far_y ||
+        SegmentLength(near_mid, far_mid) < kTrackForwardMinSegmentLength ||
+        !NormalizeVector2d(far_mid - near_mid, out_raw_unit))
+    {
+        return false;
+    }
+
+    cv::Point2f far_final;
+    cv::Point2f near_final;
+    if (!RawPointToFinalPoint(
+            far_mid.x, far_mid.y, image_width, image_height, &far_final) ||
+        !RawPointToFinalPoint(
+            near_mid.x, near_mid.y, image_width, image_height, &near_final) ||
+        !NormalizeVector2d(far_final - near_final, out_final_unit))
+    {
+        return false;
+    }
+    return true;
+}
+
+static bool EstimateTrackForwardDirection(
+    const TaskTrackBoundaryState& state,
+    const cv::Point2f& candidate_center,
+    int image_width,
+    int image_height,
+    TrackForwardDirection* out_direction)
+{
+    if (out_direction == nullptr)
+    {
+        return false;
+    }
+    *out_direction = TrackForwardDirection();
+
+    cv::Point2f left_raw;
+    cv::Point2f left_final;
+    cv::Point2f right_raw;
+    cv::Point2f right_final;
+    const bool has_left = EstimateBoundaryForwardDirection(
+        state.effective_left_boundary,
+        candidate_center,
+        image_width,
+        image_height,
+        &left_raw,
+        &left_final);
+    const bool has_right = EstimateBoundaryForwardDirection(
+        state.effective_right_boundary,
+        candidate_center,
+        image_width,
+        image_height,
+        &right_raw,
+        &right_final);
+    if (!has_left && !has_right)
+    {
+        cv::Point2f raw_unit;
+        cv::Point2f final_unit;
+        if (!EstimateRasterizedTrackForwardDirection(
+                state,
+                candidate_center,
+                image_width,
+                image_height,
+                &raw_unit,
+                &final_unit))
+        {
+            return false;
+        }
+        out_direction->valid = true;
+        out_direction->origin_raw = candidate_center;
+        out_direction->raw_unit = raw_unit;
+        out_direction->final_unit = final_unit;
+        return true;
+    }
+
+    cv::Point2f raw_unit;
+    cv::Point2f final_unit;
+    float boundary_agreement = 1.0f;
+    if (has_left && has_right)
+    {
+        boundary_agreement = Dot2d(left_final, right_final);
+        if (boundary_agreement < kTrackForwardMinBoundaryAgreement ||
+            !NormalizeVector2d(left_raw + right_raw, &raw_unit) ||
+            !NormalizeVector2d(left_final + right_final, &final_unit))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        raw_unit = has_left ? left_raw : right_raw;
+        final_unit = has_left ? left_final : right_final;
+    }
+
+    out_direction->valid = true;
+    out_direction->origin_raw = candidate_center;
+    out_direction->raw_unit = raw_unit;
+    out_direction->final_unit = final_unit;
+    return true;
+}
+
 static bool FinalToRaw(float xf,
                        float yf,
                        int image_width,
@@ -1771,7 +2070,9 @@ static std::vector<cv::Point2f> RotatedBoxPointsFromContour(const std::vector<cv
     return OrderQuadPointsCanonical(std::vector<cv::Point2f>(points, points + 4));
 }
 
-static bool SelectUpperLongEdge(const std::vector<cv::Point2f>& quad, DirectEdgeInfo* out_info)
+static bool SelectReferenceLongEdge(const std::vector<cv::Point2f>& quad,
+                                    const cv::Point2f* preferred_forward,
+                                    DirectEdgeInfo* out_info)
 {
     if (out_info == nullptr || quad.size() != 4)
     {
@@ -1805,15 +2106,56 @@ static bool SelectUpperLongEdge(const std::vector<cv::Point2f>& quad, DirectEdge
 
     const float pair0_avg = 0.5f * (edges[0].length + edges[2].length);
     const float pair1_avg = 0.5f * (edges[1].length + edges[3].length);
-    Edge chosen = (pair0_avg >= pair1_avg)
-        ? ((edges[0].midpoint.y <= edges[2].midpoint.y) ? edges[0] : edges[2])
-        : ((edges[1].midpoint.y <= edges[3].midpoint.y) ? edges[1] : edges[3]);
+    int pair_first = (pair0_avg >= pair1_avg) ? 0 : 1;
+    cv::Point2f forward_unit;
+    bool use_track_forward = false;
+    if (preferred_forward != nullptr &&
+        NormalizeVector2d(*preferred_forward, &forward_unit))
+    {
+        const float pair0_alignment = 0.5f * (
+            SegmentNormalAlignment(edges[0].p1, edges[0].p2, forward_unit) +
+            SegmentNormalAlignment(edges[2].p1, edges[2].p2, forward_unit));
+        const float pair1_alignment = 0.5f * (
+            SegmentNormalAlignment(edges[1].p1, edges[1].p2, forward_unit) +
+            SegmentNormalAlignment(edges[3].p1, edges[3].p2, forward_unit));
+        const float best_alignment = std::max(pair0_alignment, pair1_alignment);
+        if (best_alignment >= kTrackForwardMinNormalAlignment)
+        {
+            if (std::fabs(pair0_alignment - pair1_alignment) > 1e-4f)
+            {
+                pair_first = (pair0_alignment >= pair1_alignment) ? 0 : 1;
+            }
+            use_track_forward = true;
+        }
+    }
+    const int pair_second = pair_first + 2;
+
+    Edge chosen;
+    if (use_track_forward)
+    {
+        const float first_progress =
+            Dot2d(edges[pair_first].midpoint - center, forward_unit);
+        const float second_progress =
+            Dot2d(edges[pair_second].midpoint - center, forward_unit);
+        chosen = (first_progress >= second_progress)
+            ? edges[pair_first]
+            : edges[pair_second];
+    }
+    else
+    {
+        chosen = (edges[pair_first].midpoint.y <= edges[pair_second].midpoint.y)
+            ? edges[pair_first]
+            : edges[pair_second];
+    }
 
     cv::Point2f left_point = chosen.p1;
     cv::Point2f right_point = chosen.p2;
     int left_index = chosen.index;
     int right_index = (chosen.index + 1) % 4;
-    if (left_point.x > right_point.x)
+    const cv::Point2f right_axis = use_track_forward
+        ? cv::Point2f(-forward_unit.y, forward_unit.x)
+        : cv::Point2f(1.0f, 0.0f);
+    if (Dot2d(left_point, right_axis) > Dot2d(right_point, right_axis))
     {
         std::swap(left_point, right_point);
         std::swap(left_index, right_index);
@@ -1827,12 +2169,15 @@ static bool SelectUpperLongEdge(const std::vector<cv::Point2f>& quad, DirectEdge
     out_info->left_index = left_index;
     out_info->right_index = right_index;
     out_info->edge_length = chosen.length;
+    out_info->used_track_forward_direction = use_track_forward;
     return true;
 }
 
-static bool SelectUpperRawLongEdgeInFinal(const std::vector<cv::Point2f>& raw_quad,
-                                          const std::vector<cv::Point2f>& final_quad,
-                                          FinalEdgeInfo* out_info)
+static bool SelectReferenceRawLongEdgeInFinal(
+    const std::vector<cv::Point2f>& raw_quad,
+    const std::vector<cv::Point2f>& final_quad,
+    const cv::Point2f* preferred_forward_final,
+    FinalEdgeInfo* out_info)
 {
     if (out_info == nullptr || raw_quad.size() != 4 || final_quad.size() != 4)
     {
@@ -1879,9 +2224,52 @@ static bool SelectUpperRawLongEdgeInFinal(const std::vector<cv::Point2f>& raw_qu
 
     const float pair0_avg = 0.5f * (edges[0].final_length + edges[2].final_length);
     const float pair1_avg = 0.5f * (edges[1].final_length + edges[3].final_length);
-    Edge chosen = (pair0_avg >= pair1_avg)
-        ? ((edges[0].midpoint_final.y <= edges[2].midpoint_final.y) ? edges[0] : edges[2])
-        : ((edges[1].midpoint_final.y <= edges[3].midpoint_final.y) ? edges[1] : edges[3]);
+    int pair_first = (pair0_avg >= pair1_avg) ? 0 : 1;
+    cv::Point2f forward_unit;
+    bool use_track_forward = false;
+    if (preferred_forward_final != nullptr &&
+        NormalizeVector2d(*preferred_forward_final, &forward_unit))
+    {
+        const float pair0_alignment = 0.5f * (
+            SegmentNormalAlignment(
+                edges[0].final_p1, edges[0].final_p2, forward_unit) +
+            SegmentNormalAlignment(
+                edges[2].final_p1, edges[2].final_p2, forward_unit));
+        const float pair1_alignment = 0.5f * (
+            SegmentNormalAlignment(
+                edges[1].final_p1, edges[1].final_p2, forward_unit) +
+            SegmentNormalAlignment(
+                edges[3].final_p1, edges[3].final_p2, forward_unit));
+        const float best_alignment = std::max(pair0_alignment, pair1_alignment);
+        if (best_alignment >= kTrackForwardMinNormalAlignment)
+        {
+            if (std::fabs(pair0_alignment - pair1_alignment) > 1e-4f)
+            {
+                pair_first = (pair0_alignment >= pair1_alignment) ? 0 : 1;
+            }
+            use_track_forward = true;
+        }
+    }
+    const int pair_second = pair_first + 2;
+
+    Edge chosen;
+    if (use_track_forward)
+    {
+        const float first_progress =
+            Dot2d(edges[pair_first].midpoint_final - center_final, forward_unit);
+        const float second_progress =
+            Dot2d(edges[pair_second].midpoint_final - center_final, forward_unit);
+        chosen = (first_progress >= second_progress)
+            ? edges[pair_first]
+            : edges[pair_second];
+    }
+    else
+    {
+        chosen =
+            (edges[pair_first].midpoint_final.y <= edges[pair_second].midpoint_final.y)
+                ? edges[pair_first]
+                : edges[pair_second];
+    }
 
     cv::Point2f left_raw = chosen.raw_p1;
     cv::Point2f right_raw = chosen.raw_p2;
@@ -1889,7 +2277,10 @@ static bool SelectUpperRawLongEdgeInFinal(const std::vector<cv::Point2f>& raw_qu
     cv::Point2f right_final = chosen.final_p2;
     int left_index = chosen.index;
     int right_index = (chosen.index + 1) % 4;
-    if (left_final.x > right_final.x)
+    const cv::Point2f right_axis = use_track_forward
+        ? cv::Point2f(-forward_unit.y, forward_unit.x)
+        : cv::Point2f(1.0f, 0.0f);
+    if (Dot2d(left_final, right_axis) > Dot2d(right_final, right_axis))
     {
         std::swap(left_raw, right_raw);
         std::swap(left_final, right_final);
@@ -1907,12 +2298,15 @@ static bool SelectUpperRawLongEdgeInFinal(const std::vector<cv::Point2f>& raw_qu
     out_info->right_index = right_index;
     out_info->raw_edge_length = chosen.raw_length;
     out_info->final_edge_length = chosen.final_length;
+    out_info->used_track_forward_direction = use_track_forward;
     return true;
 }
 
-static bool UpwardSquareNormal(const cv::Point2f& edge_vector,
+static bool SelectSquareNormal(const cv::Point2f& edge_vector,
+                               const cv::Point2f* preferred_forward,
                                const cv::Point2f* center_to_edge,
-                               cv::Point2f* out_normal)
+                               cv::Point2f* out_normal,
+                               bool* out_used_track_forward)
 {
     if (out_normal == nullptr)
     {
@@ -1927,29 +2321,53 @@ static bool UpwardSquareNormal(const cv::Point2f& edge_vector,
 
     const cv::Point2f edge_unit = edge_vector * (1.0f / edge_length);
     cv::Point2f normal(-edge_unit.y, edge_unit.x);
-    if (center_to_edge != nullptr &&
-        (normal.x * center_to_edge->x + normal.y * center_to_edge->y) < 0.0f)
+    bool used_track_forward = false;
+    cv::Point2f forward_unit;
+    if (preferred_forward != nullptr &&
+        NormalizeVector2d(*preferred_forward, &forward_unit) &&
+        std::fabs(Dot2d(normal, forward_unit)) >= kTrackForwardMinNormalAlignment)
     {
-        normal = -normal;
+        if (Dot2d(normal, forward_unit) < 0.0f)
+        {
+            normal = -normal;
+        }
+        used_track_forward = true;
     }
-    if (normal.y > 0.0f)
+    else
     {
-        normal = -normal;
+        if (center_to_edge != nullptr &&
+            Dot2d(normal, *center_to_edge) < 0.0f)
+        {
+            normal = -normal;
+        }
+        if (normal.y > 0.0f)
+        {
+            normal = -normal;
+        }
     }
 
     *out_normal = normal;
+    if (out_used_track_forward != nullptr)
+    {
+        *out_used_track_forward = used_track_forward;
+    }
     return true;
 }
 
 static BuildRoiQuadResult BuildDirectSquareRoiQuadFromBlobQuad(const std::vector<cv::Point2f>& blob_quad,
-                                                               int image_width,
-                                                               int image_height)
+                                                                int image_width,
+                                                                int image_height,
+                                                                const TrackForwardDirection* track_forward)
 {
     BuildRoiQuadResult result;
     result.status = "blob_only";
 
     DirectEdgeInfo edge_info;
-    if (!SelectUpperLongEdge(blob_quad, &edge_info))
+    const cv::Point2f* preferred_forward =
+        (track_forward != nullptr && track_forward->valid)
+            ? &track_forward->raw_unit
+            : nullptr;
+    if (!SelectReferenceLongEdge(blob_quad, preferred_forward, &edge_info))
     {
         return result;
     }
@@ -1961,10 +2379,18 @@ static BuildRoiQuadResult BuildDirectSquareRoiQuadFromBlobQuad(const std::vector
 
     const cv::Point2f center_to_edge = edge_info.midpoint - edge_info.center;
     cv::Point2f normal;
-    if (!UpwardSquareNormal(edge_info.edge_vector, &center_to_edge, &normal))
+    bool normal_used_track_forward = false;
+    if (!SelectSquareNormal(
+            edge_info.edge_vector,
+            edge_info.used_track_forward_direction ? preferred_forward : nullptr,
+            &center_to_edge,
+            &normal,
+            &normal_used_track_forward))
     {
         return result;
     }
+    result.used_track_forward_direction =
+        edge_info.used_track_forward_direction && normal_used_track_forward;
 
     const cv::Point2f bottom_left = edge_info.left_point;
     const cv::Point2f bottom_right = edge_info.right_point;
@@ -1987,8 +2413,9 @@ static BuildRoiQuadResult BuildDirectSquareRoiQuadFromBlobQuad(const std::vector
 }
 
 static BuildRoiQuadResult BuildIpmSquareRoiQuadFromBlobQuad(const std::vector<cv::Point2f>& blob_quad,
-                                                            int image_width,
-                                                            int image_height)
+                                                             int image_width,
+                                                             int image_height,
+                                                             const TrackForwardDirection* track_forward)
 {
     BuildRoiQuadResult result;
     result.status = "ipm_square_invalid";
@@ -2002,7 +2429,15 @@ static BuildRoiQuadResult BuildIpmSquareRoiQuadFromBlobQuad(const std::vector<cv
     result.blob_quad_final = blob_quad_final;
 
     FinalEdgeInfo edge_info;
-    if (!SelectUpperRawLongEdgeInFinal(blob_quad, blob_quad_final, &edge_info))
+    const cv::Point2f* preferred_forward_final =
+        (track_forward != nullptr && track_forward->valid)
+            ? &track_forward->final_unit
+            : nullptr;
+    if (!SelectReferenceRawLongEdgeInFinal(
+            blob_quad,
+            blob_quad_final,
+            preferred_forward_final,
+            &edge_info))
     {
         return result;
     }
@@ -2013,10 +2448,18 @@ static BuildRoiQuadResult BuildIpmSquareRoiQuadFromBlobQuad(const std::vector<cv
     }
 
     cv::Point2f normal;
-    if (!UpwardSquareNormal(edge_info.final_edge_vector, nullptr, &normal))
+    bool normal_used_track_forward = false;
+    if (!SelectSquareNormal(
+            edge_info.final_edge_vector,
+            edge_info.used_track_forward_direction ? preferred_forward_final : nullptr,
+            nullptr,
+            &normal,
+            &normal_used_track_forward))
     {
         return result;
     }
+    result.used_track_forward_direction =
+        edge_info.used_track_forward_direction && normal_used_track_forward;
 
     const cv::Point2f bottom_left_final = edge_info.left_point_final;
     const cv::Point2f bottom_right_final = edge_info.right_point_final;
@@ -2069,15 +2512,18 @@ static BuildRoiQuadResult BuildIpmSquareRoiQuadFromBlobQuad(const std::vector<cv
 }
 
 static BuildRoiQuadResult BuildRoiQuadFromBlobQuad(const std::vector<cv::Point2f>& blob_quad,
-                                                   int image_width,
-                                                   int image_height,
-                                                   RoiMethod roi_method)
+                                                    int image_width,
+                                                    int image_height,
+                                                    RoiMethod roi_method,
+                                                    const TrackForwardDirection* track_forward)
 {
     if (roi_method == RoiMethod::DIRECT_RED_QUAD)
     {
-        return BuildDirectSquareRoiQuadFromBlobQuad(blob_quad, image_width, image_height);
+        return BuildDirectSquareRoiQuadFromBlobQuad(
+            blob_quad, image_width, image_height, track_forward);
     }
-    return BuildIpmSquareRoiQuadFromBlobQuad(blob_quad, image_width, image_height);
+    return BuildIpmSquareRoiQuadFromBlobQuad(
+        blob_quad, image_width, image_height, track_forward);
 }
 
 static cv::Mat WarpRoiFromQuad(const cv::Mat& frame_bgr,
@@ -2153,6 +2599,12 @@ static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_b
     }
 
     cv::Mat local_mask = cv::Mat::zeros(clamped.height, clamped.width, CV_8UC1);
+    int gate_left_x = -1;
+    int gate_right_x = -1;
+    if (!BuildImageXGateRange(frame_bgr.cols, &gate_left_x, &gate_right_x))
+    {
+        return local_mask;
+    }
     const int y0 = std::max(clamped.y, std::max(0, std::min(y_min, frame_bgr.rows)));
     const int y1 = std::min(
         clamped.y + clamped.height,
@@ -2174,8 +2626,10 @@ static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_b
             continue;
         }
 
-        const int x0 = std::max(clamped.x, bands.marker_x0);
-        const int x1 = std::min(clamped.x + clamped.width - 1, bands.marker_x1);
+        const int x0 = std::max(std::max(clamped.x, bands.marker_x0), gate_left_x);
+        const int x1 = std::min(
+            std::min(clamped.x + clamped.width - 1, bands.marker_x1),
+            gate_right_x);
         if (x1 < x0)
         {
             continue;
@@ -2216,6 +2670,108 @@ static void TaskTouchedSides(const cv::Mat& mask,
     if (touch_bottom != nullptr) *touch_bottom = cv::countNonZero(crop.row(crop.rows - 1)) > 0;
 }
 
+struct TaskBrickBandAccumulator
+{
+    explicit TaskBrickBandAccumulator(int image_width, int image_height)
+        : min_x(image_width),
+          min_y(image_height)
+    {
+    }
+
+    void AddRun(int run_x0,
+                int run_x1,
+                int y,
+                int boundary_y,
+                int left_boundary_x,
+                int right_boundary_x)
+    {
+        if (run_x1 < run_x0)
+        {
+            return;
+        }
+        min_x = std::min(min_x, run_x0);
+        max_x = std::max(max_x, run_x1);
+        min_y = std::min(min_y, y);
+        max_y = std::max(max_y, y);
+        area += run_x1 - run_x0 + 1;
+        if (y >= best_scan_y)
+        {
+            best_scan_y = y;
+            best_boundary_y = boundary_y;
+            best_left_x = left_boundary_x;
+            best_right_x = right_boundary_x;
+        }
+    }
+
+    bool Valid() const
+    {
+        return area > 0 && max_x >= min_x && max_y >= min_y;
+    }
+
+    cv::Rect Box() const
+    {
+        return cv::Rect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1);
+    }
+
+    int min_x;
+    int min_y;
+    int max_x = -1;
+    int max_y = -1;
+    int area = 0;
+    int best_scan_y = -1;
+    int best_boundary_y = -1;
+    int best_left_x = -1;
+    int best_right_x = -1;
+};
+
+static void AccumulateTrackBrickRedRuns(
+    const cv::Vec3b* row,
+    int x0,
+    int x1,
+    int y,
+    int boundary_y,
+    int left_boundary_x,
+    int right_boundary_x,
+    const TaskStrictRedThresholds& red_thresholds,
+    TaskBrickBandAccumulator* accumulator)
+{
+    if (row == nullptr || accumulator == nullptr || x1 < x0)
+    {
+        return;
+    }
+
+    int run_x0 = -1;
+    for (int x = x0; x <= x1 + 1; ++x)
+    {
+        const bool is_red =
+            x <= x1 && IsTaskStrictRedPixel(row[x], red_thresholds);
+        if (is_red)
+        {
+            if (run_x0 < 0)
+            {
+                run_x0 = x;
+            }
+            continue;
+        }
+
+        if (run_x0 >= 0)
+        {
+            const int run_x1 = x - 1;
+            if (run_x1 - run_x0 + 1 >= kTrackBrickMinHorizontalRunPixels)
+            {
+                accumulator->AddRun(
+                    run_x0,
+                    run_x1,
+                    y,
+                    boundary_y,
+                    left_boundary_x,
+                    right_boundary_x);
+            }
+            run_x0 = -1;
+        }
+    }
+}
+
 static bool FindTrackBrickRedInOuterBand(const cv::Mat& frame_bgr,
                                          const TaskStrictRedThresholds& red_thresholds,
                                          const TaskTrackBoundaryState& state,
@@ -2230,14 +2786,14 @@ static bool FindTrackBrickRedInOuterBand(const cv::Mat& frame_bgr,
         return false;
     }
 
-    int min_x = frame_bgr.cols;
-    int min_y = frame_bgr.rows;
-    int max_x = -1;
-    int max_y = -1;
-    int area = 0;
-    int best_row_y = -1;
-    int best_left_x = -1;
-    int best_right_x = -1;
+    TaskBrickBandAccumulator left_brick(frame_bgr.cols, frame_bgr.rows);
+    TaskBrickBandAccumulator right_brick(frame_bgr.cols, frame_bgr.rows);
+    int gate_left_x = -1;
+    int gate_right_x = -1;
+    if (!BuildImageXGateRange(frame_bgr.cols, &gate_left_x, &gate_right_x))
+    {
+        return false;
+    }
 
     const int y0 = std::max(0, std::min(y_min, frame_bgr.rows));
     const int y1 = std::max(y0, std::min(y_max, frame_bgr.rows));
@@ -2251,67 +2807,82 @@ static bool FindTrackBrickRedInOuterBand(const cv::Mat& frame_bgr,
             continue;
         }
 
-        bool row_has_red = false;
         const cv::Vec3b* row = frame_bgr.ptr<cv::Vec3b>(y);
         const TaskTrackRowSearchBands bands =
             BuildTaskTrackRowSearchBands(left_x, right_x, frame_bgr.cols, y);
         if (bands.has_left_brick)
         {
-            for (int x = bands.left_brick_x0; x <= bands.left_brick_x1; ++x)
-            {
-                if (!IsTaskStrictRedPixel(row[x], red_thresholds))
-                {
-                    continue;
-                }
-                min_x = std::min(min_x, x);
-                max_x = std::max(max_x, x);
-                min_y = std::min(min_y, y);
-                max_y = std::max(max_y, y);
-                ++area;
-                row_has_red = true;
-            }
+            const int brick_x0 = std::max(bands.left_brick_x0, gate_left_x);
+            const int brick_x1 = std::min(bands.left_brick_x1, gate_right_x);
+            AccumulateTrackBrickRedRuns(
+                row,
+                brick_x0,
+                brick_x1,
+                y,
+                boundary_y,
+                left_x,
+                right_x,
+                red_thresholds,
+                &left_brick);
         }
 
         if (bands.has_right_brick)
         {
-            for (int x = bands.right_brick_x0; x <= bands.right_brick_x1; ++x)
-            {
-                if (!IsTaskStrictRedPixel(row[x], red_thresholds))
-                {
-                    continue;
-                }
-                min_x = std::min(min_x, x);
-                max_x = std::max(max_x, x);
-                min_y = std::min(min_y, y);
-                max_y = std::max(max_y, y);
-                ++area;
-                row_has_red = true;
-            }
-        }
-
-        if (row_has_red && y >= best_row_y)
-        {
-            best_row_y = boundary_y;
-            best_left_x = left_x;
-            best_right_x = right_x;
+            const int brick_x0 = std::max(bands.right_brick_x0, gate_left_x);
+            const int brick_x1 = std::min(bands.right_brick_x1, gate_right_x);
+            AccumulateTrackBrickRedRuns(
+                row,
+                brick_x0,
+                brick_x1,
+                y,
+                boundary_y,
+                left_x,
+                right_x,
+                red_thresholds,
+                &right_brick);
         }
     }
 
-    if (area <= 0 || max_x < min_x || max_y < min_y)
+    const TaskBrickBandAccumulator* selected = nullptr;
+    if (left_brick.Valid() && right_brick.Valid())
+    {
+        if (left_brick.area != right_brick.area)
+        {
+            selected = (left_brick.area > right_brick.area)
+                ? &left_brick
+                : &right_brick;
+        }
+        else
+        {
+            selected = (left_brick.max_y >= right_brick.max_y)
+                ? &left_brick
+                : &right_brick;
+        }
+    }
+    else if (left_brick.Valid())
+    {
+        selected = &left_brick;
+    }
+    else if (right_brick.Valid())
+    {
+        selected = &right_brick;
+    }
+
+    if (selected == nullptr)
     {
         return false;
     }
 
-    *out_box = cv::Rect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1);
-    *out_area = static_cast<double>(area);
+    *out_box = selected->Box();
+    *out_area = static_cast<double>(selected->area);
     if (out_classification != nullptr)
     {
         out_classification->type = TaskTrackCandidateType::ROADBLOCK;
         out_classification->classify_point =
             cv::Point(out_box->x + out_box->width / 2, out_box->y + out_box->height - 1);
-        out_classification->left_boundary_x = best_left_x;
-        out_classification->right_boundary_x = best_right_x;
-        out_classification->boundary_row_y = best_row_y;
+        out_classification->left_boundary_x = selected->best_left_x;
+        out_classification->right_boundary_x = selected->best_right_x;
+        out_classification->boundary_row_y = selected->best_boundary_y;
     }
     return true;
 }
@@ -2371,11 +2942,12 @@ static bool ChooseLowestTaskRedBand(const cv::Mat& mask,
         const int top = stats.at<int>(label, cv::CC_STAT_TOP);
         const int width = stats.at<int>(label, cv::CC_STAT_WIDTH);
         const int height = stats.at<int>(label, cv::CC_STAT_HEIGHT);
-        const double aspect_ratio = static_cast<double>(width) / std::max(1, height);
+        // A long marker rotated by perspective can have an almost square
+        // axis-aligned box. Resolve orientation later from the rotated box and
+        // local track direction instead of rejecting it here.
         if (area < kTaskMinBandArea ||
             width < kTaskMinBandWidth ||
-            height < kTaskMinBandHeight ||
-            aspect_ratio < kTaskMinBandAspectRatio)
+            height < kTaskMinBandHeight)
         {
             continue;
         }
@@ -2484,10 +3056,8 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
     out_result->track_region_polygon = track_state.region_polygon;
     if (collect_debug_geometry)
     {
-        out_result->track_left_boundary =
-            BuildTrackBoundaryDisplayPoints(track_state.seed_left_x, track_state.seed_y, track_state.left_points);
-        out_result->track_right_boundary =
-            BuildTrackBoundaryDisplayPoints(track_state.seed_right_x, track_state.seed_y, track_state.right_points);
+        out_result->track_left_boundary = track_state.effective_left_boundary;
+        out_result->track_right_boundary = track_state.effective_right_boundary;
     }
 
     const int rows = frame_bgr.rows;
@@ -2514,6 +3084,12 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
         recognition_marker_mask = cv::Mat::zeros(recog_y1 - recog_y0, cols, CV_8UC1);
     }
     TaskPrefilterRedBounds recognition_brick_bounds;
+    int gate_left_x = -1;
+    int gate_right_x = -1;
+    if (!BuildImageXGateRange(cols, &gate_left_x, &gate_right_x))
+    {
+        return true;
+    }
 
     for (int y = scan_y0; y < scan_y1; ++y)
     {
@@ -2537,7 +3113,9 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
             BuildTaskTrackRowSearchBands(left_x, right_x, cols, y);
         if (bands.has_marker)
         {
-            for (int x = bands.marker_x0; x <= bands.marker_x1; ++x)
+            const int marker_x0 = std::max(bands.marker_x0, gate_left_x);
+            const int marker_x1 = std::min(bands.marker_x1, gate_right_x);
+            for (int x = marker_x0; x <= marker_x1; ++x)
             {
                 if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
                 {
@@ -2561,7 +3139,9 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
 
         if (bands.has_left_brick)
         {
-            for (int x = bands.left_brick_x0; x <= bands.left_brick_x1; ++x)
+            const int brick_x0 = std::max(bands.left_brick_x0, gate_left_x);
+            const int brick_x1 = std::min(bands.left_brick_x1, gate_right_x);
+            for (int x = brick_x0; x <= brick_x1; ++x)
             {
                 if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
                 {
@@ -2573,7 +3153,9 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
 
         if (bands.has_right_brick)
         {
-            for (int x = bands.right_brick_x0; x <= bands.right_brick_x1; ++x)
+            const int brick_x0 = std::max(bands.right_brick_x0, gate_left_x);
+            const int brick_x1 = std::min(bands.right_brick_x1, gate_right_x);
+            for (int x = brick_x0; x <= brick_x1; ++x)
             {
                 if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
                 {
@@ -2650,6 +3232,19 @@ static bool DetectTrackBrickOnly(const cv::Mat& frame_bgr,
     result->timing_red_band_ms += elapsed_ms(brick_band_begin, steady_clock_t::now());
     if (!has_brick)
     {
+        return false;
+    }
+
+    if (!CandidatePassesImageXGate(
+            frame_bgr.cols,
+            brick_classification.classify_point,
+            nullptr,
+            nullptr,
+            nullptr))
+    {
+        result->max_red_reject_stage = "image_x_gate";
+        result->ipm_reason = "red_image_x_rejected";
+        result->status = "miss";
         return false;
     }
 
@@ -2768,10 +3363,8 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
         }
         else
         {
-            result.track_left_boundary =
-                BuildTrackBoundaryDisplayPoints(track_state.seed_left_x, track_state.seed_y, track_state.left_points);
-            result.track_right_boundary =
-                BuildTrackBoundaryDisplayPoints(track_state.seed_right_x, track_state.seed_y, track_state.right_points);
+            result.track_left_boundary = track_state.effective_left_boundary;
+            result.track_right_boundary = track_state.effective_right_boundary;
         }
         result.has_track_left_boundary = !result.track_left_boundary.empty();
         result.has_track_right_boundary = !result.track_right_boundary.empty();
@@ -2906,55 +3499,79 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
         return result;
     }
 
-    FillCandidateFields(&result, candidate_box, candidate_area);
-    result.target_type = "marker";
-
-    float candidate_track_u = 0.5f;
-    int candidate_track_left_x = -1;
-    int candidate_track_right_x = -1;
-    int candidate_track_row_y = -1;
-    if (!MarkerPassesFarTrackLateralGate(
-            track_state,
-            candidate_box,
-            &candidate_track_u,
-            &candidate_track_left_x,
-            &candidate_track_right_x,
-            &candidate_track_row_y))
+    float candidate_image_x_ratio = 0.5f;
+    int candidate_gate_left_x = -1;
+    int candidate_gate_right_x = -1;
+    const cv::Point candidate_center(
+        candidate_box.x + candidate_box.width / 2,
+        candidate_box.y + candidate_box.height / 2);
+    if (!CandidatePassesImageXGate(
+            image_width,
+            candidate_center,
+            &candidate_image_x_ratio,
+            &candidate_gate_left_x,
+            &candidate_gate_right_x))
     {
         result.has_track_classify_point = true;
-        result.track_classify_point = cv::Point(
-            candidate_box.x + candidate_box.width / 2,
-            candidate_box.y + candidate_box.height / 2);
-        if (candidate_track_left_x >= 0 && candidate_track_right_x >= candidate_track_left_x)
+        result.track_classify_point = candidate_center;
+        if (candidate_gate_left_x >= 0 && candidate_gate_right_x >= candidate_gate_left_x)
         {
             result.has_track_classify_bounds = true;
-            result.track_classify_left_x = candidate_track_left_x;
-            result.track_classify_right_x = candidate_track_right_x;
-            result.track_classify_row_y = candidate_track_row_y;
+            result.track_classify_left_x = candidate_gate_left_x;
+            result.track_classify_right_x = candidate_gate_right_x;
+            result.track_classify_row_y = candidate_center.y;
         }
-        if (candidate_track_left_x < 0 ||
-            candidate_track_right_x <= candidate_track_left_x)
+        if (candidate_gate_left_x < 0 ||
+            candidate_gate_right_x < candidate_gate_left_x)
         {
-            result.ipm_reason = "far_track_bounds_missing";
+            result.ipm_reason = "red_image_x_gate_invalid";
         }
-        else if (candidate_track_u < kTaskMarkerFarTrackUMin)
+        else if (candidate_image_x_ratio < kTaskRedImageXMinRatio)
         {
-            result.ipm_reason = "far_track_u_left_of_gate";
+            result.ipm_reason = "red_image_x_left_of_gate";
         }
         else
         {
-            result.ipm_reason = "far_track_u_right_of_gate";
+            result.ipm_reason = "red_image_x_right_of_gate";
         }
-        result.status = "marker_far_lateral_rejected";
+        result.max_red_reject_stage = "image_x_gate";
+        result.status = "miss";
         return result;
+    }
+
+    FillCandidateFields(&result, candidate_box, candidate_area);
+    result.target_type = "marker";
+
+    TrackForwardDirection track_forward;
+    const cv::Point2f candidate_center_f(
+        static_cast<float>(candidate_center.x),
+        static_cast<float>(candidate_center.y));
+    EstimateTrackForwardDirection(
+        track_state,
+        candidate_center_f,
+        image_width,
+        image_height,
+        &track_forward);
+    if (track_forward.valid)
+    {
+        result.has_track_forward_direction = true;
+        result.track_forward_origin = track_forward.origin_raw;
+        result.track_forward_vector = track_forward.raw_unit;
     }
 
     const auto roi_build_warp_begin = steady_clock_t::now();
     result.blob_quad = RotatedBoxPointsFromContour(candidate_contour);
     const BuildRoiQuadResult build_result =
-        BuildRoiQuadFromBlobQuad(result.blob_quad, image_width, image_height, roi_method);
+        BuildRoiQuadFromBlobQuad(
+            result.blob_quad,
+            image_width,
+            image_height,
+            roi_method,
+            track_forward.valid ? &track_forward : nullptr);
     result.blob_quad_final = build_result.blob_quad_final;
     result.roi_quad_final = build_result.roi_quad_final;
+    result.roi_used_track_forward_direction =
+        build_result.used_track_forward_direction;
     if (build_result.has_raw_height_ratio)
     {
         result.has_ipm_backproject_height_ratio = true;
@@ -3066,6 +3683,30 @@ void DrawRoiDebugOverlay(cv::Mat& image_bgr, const RoiExtractionResult& result)
             (result.target_type == "roadblock") ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0),
             -1,
             cv::LINE_AA);
+    }
+    if (result.has_track_forward_direction)
+    {
+        const cv::Point direction_start(
+            static_cast<int>(std::lround(result.track_forward_origin.x)),
+            static_cast<int>(std::lround(result.track_forward_origin.y)));
+        const cv::Point direction_end(
+            static_cast<int>(std::lround(
+                result.track_forward_origin.x + 24.0f * result.track_forward_vector.x)),
+            static_cast<int>(std::lround(
+                result.track_forward_origin.y + 24.0f * result.track_forward_vector.y)));
+        const cv::Scalar direction_color =
+            result.roi_used_track_forward_direction
+                ? cv::Scalar(0, 255, 0)
+                : cv::Scalar(0, 165, 255);
+        cv::arrowedLine(
+            image_bgr,
+            direction_start,
+            direction_end,
+            direction_color,
+            2,
+            cv::LINE_AA,
+            0,
+            0.25);
     }
     if (result.has_support_rect)
     {

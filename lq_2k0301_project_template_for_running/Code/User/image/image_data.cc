@@ -308,11 +308,13 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
 
     g_remote_recognition.last_rx_ms = t_ms;
 
-    if (g_remote_recognition.last_seq_valid && g_remote_recognition.last_seq == seq)
+    // Sender restart resets seq to zero. Treat only an identical (seq, code)
+    // pair as a duplicate so a changed state can establish the new sender epoch.
+    if (g_remote_recognition.last_seq_valid &&
+        g_remote_recognition.last_seq == seq &&
+        g_remote_recognition.current_code == code)
     {
-        if (code == g_remote_recognition.current_code &&
-            (code == BoardVisionCode::VEHICLE ||
-             code == BoardVisionCode::NO_RESULT))
+        if (code == BoardVisionCode::VEHICLE)
         {
             remote_vehicle_route_apply(current_pure_angle, t_ms);
         }
@@ -393,8 +395,10 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
 
     if (code == BoardVisionCode::NO_RESULT)
     {
+        g_remote_recognition.follow_state = remote_follow_state_t::NONE;
+        g_remote_recognition.vehicle_hold_until_ms = 0;
+        g_remote_recognition.vehicle_hold_yaw = 0.0f;
         g_remote_recognition.brick_block_until_ms = 0;
-        remote_vehicle_route_apply(current_pure_angle, t_ms);
         return;
     }
 

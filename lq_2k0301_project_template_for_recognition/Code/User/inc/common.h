@@ -118,23 +118,18 @@
 #define BW_RECOG_MARKER_ROI_TOP_EXPAND_PIXELS 16
 #endif
 
-// [开关] 远端 marker 只允许出现在所在行赛道宽度的中部，抑制弯道远端左右边缘误识别。
-#ifndef BW_RECOG_MARKER_FAR_LATERAL_GATE_ENABLE
-#define BW_RECOG_MARKER_FAR_LATERAL_GATE_ENABLE 1
+// [开关] marker、提前减速红块和红砖只允许出现在整幅画面的指定 x 比例区间。
+#ifndef BW_RECOG_RED_IMAGE_X_GATE_ENABLE
+#define BW_RECOG_RED_IMAGE_X_GATE_ENABLE 1
 #endif
 
-// [先调] 候选底边不高于该 y 时启用远端横向门控。
-#ifndef BW_RECOG_MARKER_FAR_LATERAL_GATE_Y_MAX
-#define BW_RECOG_MARKER_FAR_LATERAL_GATE_Y_MAX 90
+// [先调] 红色允许参与检测的画面 x 比例范围；门控外不触发 u/b/识别。
+#ifndef BW_RECOG_RED_IMAGE_X_MIN_RATIO
+#define BW_RECOG_RED_IMAGE_X_MIN_RATIO 0.20f
 #endif
 
-// [先调] 远端候选中心在当前行赛道宽度内允许的归一化横向范围。
-#ifndef BW_RECOG_MARKER_FAR_TRACK_U_MIN
-#define BW_RECOG_MARKER_FAR_TRACK_U_MIN 0.20f
-#endif
-
-#ifndef BW_RECOG_MARKER_FAR_TRACK_U_MAX
-#define BW_RECOG_MARKER_FAR_TRACK_U_MAX 0.80f
+#ifndef BW_RECOG_RED_IMAGE_X_MAX_RATIO
+#define BW_RECOG_RED_IMAGE_X_MAX_RATIO 0.80f
 #endif
 
 // [谨慎调] 仅用于提前发 u / 减速的前置红色检测带上边界。
@@ -636,6 +631,11 @@
 // 红砖带向赛道内侧的最大像素；y=60 为 0，向下线性增加至该值。
 #ifndef BW_RECOG_TRACK_BRICK_INNER_MAX_PIXELS
 #define BW_RECOG_TRACK_BRICK_INNER_MAX_PIXELS 5
+#endif
+
+// 红砖带单行最少连续严格红像素；只过滤孤立噪点，不是面积阈值。
+#ifndef BW_RECOG_TRACK_BRICK_MIN_HORIZONTAL_RUN_PIXELS
+#define BW_RECOG_TRACK_BRICK_MIN_HORIZONTAL_RUN_PIXELS 2
 #endif
 
 #pragma endregion

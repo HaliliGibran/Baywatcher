@@ -937,13 +937,14 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         {
             const BoardVisionCode blocked_code = BoardVisionCode::UNKNOWN;
             bool should_send_blocked_state = false;
-            if (blocked_code != last_sent_code)
+            const bool blocked_state_changed = blocked_code != last_sent_code;
+            uint8_t blocked_tx_seq = tx_seq;
+            if (blocked_state_changed)
             {
                 if (last_sent_code != BoardVisionCode::INVALID)
                 {
-                    ++tx_seq;
+                    blocked_tx_seq = static_cast<uint8_t>(tx_seq + 1u);
                 }
-                last_sent_code = blocked_code;
                 should_send_blocked_state = true;
             }
             else if (last_send_ms == 0 ||
@@ -957,8 +958,17 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
 
             if (should_send_blocked_state)
             {
-                comm.send_state(blocked_code, tx_seq);
-                last_send_ms = gate_poll_ms;
+                const bool blocked_send_ok =
+                    comm.send_state(blocked_code, blocked_tx_seq);
+                if (blocked_send_ok)
+                {
+                    if (blocked_state_changed)
+                    {
+                        tx_seq = blocked_tx_seq;
+                        last_sent_code = blocked_code;
+                    }
+                    last_send_ms = gate_poll_ms;
+                }
             }
             usleep(5 * 1000);
             continue;
@@ -980,6 +990,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         bool early_u_send_called = false;
         bool early_u_send_ok = false;
         uint8_t early_u_tx_seq = 0;
+        uint8_t send_state_tx_seq = tx_seq;
         bool publish_called = false;
         steady_time_point_t send_end_time;
         steady_time_point_t early_u_send_end_time;
@@ -1125,18 +1136,23 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                     if (kRecognitionTriggerFrameEarlyUSend &&
                         last_sent_code != BoardVisionCode::NO_RESULT)
                     {
+                        uint8_t proposed_u_tx_seq = tx_seq;
                         if (last_sent_code != BoardVisionCode::INVALID)
                         {
-                            ++tx_seq;
+                            proposed_u_tx_seq = static_cast<uint8_t>(tx_seq + 1u);
                         }
-                        last_sent_code = BoardVisionCode::NO_RESULT;
-                        early_u_tx_seq = tx_seq;
+                        early_u_tx_seq = proposed_u_tx_seq;
                         const steady_time_point_t early_send_begin = steady_clock_t::now();
                         early_u_send_ok = comm.send_state(BoardVisionCode::NO_RESULT, early_u_tx_seq);
                         early_u_send_end_time = steady_clock_t::now();
                         early_u_send_ms = elapsed_ms_between(early_send_begin, early_u_send_end_time);
                         early_u_send_called = true;
-                        last_send_ms = t_ms;
+                        if (early_u_send_ok)
+                        {
+                            tx_seq = proposed_u_tx_seq;
+                            last_sent_code = BoardVisionCode::NO_RESULT;
+                            last_send_ms = t_ms;
+                        }
                     }
 
                     frame_stage = RuntimeFrameStage::TRIGGER_FRAME_INFER;
@@ -1176,15 +1192,14 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         // 6. 状态流模式下，状态变化立即发包；未变化时按心跳周期补发。
         const BoardVisionCode code = code_after_chain;
         bool should_send_state = false;
-        bool state_changed = false;
-        if (code != last_sent_code)
+        const bool state_changed = code != last_sent_code;
+        uint8_t proposed_tx_seq = tx_seq;
+        if (state_changed)
         {
             if (last_sent_code != BoardVisionCode::INVALID)
             {
-                ++tx_seq;
+                proposed_tx_seq = static_cast<uint8_t>(tx_seq + 1u);
             }
-            last_sent_code = code;
-            state_changed = true;
             should_send_state = true;
         }
         else if (last_send_ms == 0 ||
@@ -1195,17 +1210,26 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         }
         if (should_send_state)
         {
+            send_state_tx_seq = proposed_tx_seq;
             const steady_time_point_t send_begin = steady_clock_t::now();
-            send_state_ok = comm.send_state(code, tx_seq);
+            send_state_ok = comm.send_state(code, send_state_tx_seq);
             const steady_time_point_t send_end = steady_clock_t::now();
             send_end_time = send_end;
             send_state_ms = elapsed_ms_between(send_begin, send_end);
             send_state_called = true;
-            last_send_ms = t_ms;
+            if (send_state_ok)
+            {
+                if (state_changed)
+                {
+                    tx_seq = proposed_tx_seq;
+                    last_sent_code = code;
+                }
+                last_send_ms = t_ms;
+            }
             if (kRecognitionResultLog && state_changed && IsBrickCode(code))
             {
                 std::cout << "[RECOG] tx_state=" << VisionCodeText(code)
-                          << ", seq=" << static_cast<int>(tx_seq)
+                          << ", seq=" << static_cast<int>(send_state_tx_seq)
                           << ", ok=" << (send_state_ok ? "yes" : "no")
                           << ", send_ms=" << std::fixed << std::setprecision(2)
                           << send_state_ms << std::endl;
@@ -1254,7 +1278,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
             : 0.0;
         timing_sample.send_attempted = send_state_called;
         timing_sample.send_ok = send_state_ok;
-        timing_sample.tx_seq = tx_seq;
+        timing_sample.tx_seq = send_state_called ? send_state_tx_seq : tx_seq;
         timing_sample.early_u_send_attempted = early_u_send_called;
         timing_sample.early_u_send_ok = early_u_send_ok;
         timing_sample.early_u_tx_seq = early_u_tx_seq;
