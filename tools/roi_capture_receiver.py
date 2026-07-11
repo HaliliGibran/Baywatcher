@@ -6,7 +6,7 @@ from pathlib import Path
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 5001
-DEFAULT_OUTPUT_DIR = r"D:\aaa走马观碑代码\yolo\灵眼pro320\板端实拍传输ROI"
+DEFAULT_OUTPUT_DIR = r"D:\aaa走马观碑代码\yolo\灵眼pro320\板端实拍传输ROI_PNG"
 DEFAULT_FRAME_OUTPUT_DIR = r"D:\aaa走马观碑代码\yolo\灵眼pro320\板端实拍全帧图"
 PROTOCOL_MAGIC = "BWROI1"
 
