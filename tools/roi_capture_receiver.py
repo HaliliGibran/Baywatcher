@@ -96,7 +96,9 @@ def handle_connection(conn, roi_output_dir, frame_output_dir):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Receive ROI/full-frame JPEGs pushed from recognition board.")
+    parser = argparse.ArgumentParser(
+        description="Receive ROI JPEGs and lossless full-frame PNGs pushed from recognition board."
+    )
     parser.add_argument("--host", default=DEFAULT_HOST, help="listen host, default: %(default)s")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="listen port, default: %(default)s")
     parser.add_argument(

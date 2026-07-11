@@ -51,10 +51,25 @@ struct RoiBurstSendState
     int target_count = BW_RECOG_ROI_CAPTURE_BURST_COUNT;
 };
 
+struct FullFrameBurstSendState
+{
+    bool active = false;
+    int success_count = 0;
+    int target_count = BW_RECOG_FULLFRAME_CAPTURE_BURST_COUNT;
+    uint64_t start_after_frame_index = 0;
+};
+
+enum class CaptureImageEncoding : uint8_t
+{
+    JPEG = 0,
+    PNG,
+};
+
 static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
                                        const cv::Mat& image_bgr,
                                        const char* name_prefix,
                                        uint64_t t_ms,
+                                       CaptureImageEncoding encoding,
                                        std::string* out_message);
 
 static bool send_all_bytes(int fd, const void* data, size_t size)
@@ -189,13 +204,20 @@ static bool send_roi_to_pc(const RoiCaptureTransferConfig& config,
                            uint64_t t_ms,
                            std::string* out_message)
 {
-    return send_named_bgr_image_to_pc(config, roi_bgr, "roi", t_ms, out_message);
+    return send_named_bgr_image_to_pc(
+        config,
+        roi_bgr,
+        "roi",
+        t_ms,
+        CaptureImageEncoding::JPEG,
+        out_message);
 }
 
 static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
                                        const cv::Mat& image_bgr,
                                        const char* name_prefix,
                                        uint64_t t_ms,
+                                       CaptureImageEncoding encoding,
                                        std::string* out_message)
 {
     if (out_message != nullptr)
@@ -212,15 +234,25 @@ static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
         return false;
     }
 
-    std::vector<unsigned char> jpeg_bytes;
-    std::vector<int> jpeg_params;
-    jpeg_params.push_back(cv::IMWRITE_JPEG_QUALITY);
-    jpeg_params.push_back(BW_RECOG_ROI_CAPTURE_JPEG_QUALITY);
-    if (!cv::imencode(".jpg", image_bgr, jpeg_bytes, jpeg_params) || jpeg_bytes.empty())
+    const bool use_png = (encoding == CaptureImageEncoding::PNG);
+    const char* extension = use_png ? ".png" : ".jpg";
+    std::vector<unsigned char> encoded_bytes;
+    std::vector<int> encode_params;
+    if (use_png)
+    {
+        encode_params.push_back(cv::IMWRITE_PNG_COMPRESSION);
+        encode_params.push_back(BW_RECOG_FULLFRAME_CAPTURE_PNG_COMPRESSION);
+    }
+    else
+    {
+        encode_params.push_back(cv::IMWRITE_JPEG_QUALITY);
+        encode_params.push_back(BW_RECOG_ROI_CAPTURE_JPEG_QUALITY);
+    }
+    if (!cv::imencode(extension, image_bgr, encoded_bytes, encode_params) || encoded_bytes.empty())
     {
         if (out_message != nullptr)
         {
-            *out_message = "jpeg encode failed";
+            *out_message = use_png ? "png encode failed" : "jpeg encode failed";
         }
         return false;
     }
@@ -238,15 +270,15 @@ static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
 
     const char* prefix = (name_prefix != nullptr && name_prefix[0] != '\0') ? name_prefix : "capture";
     std::ostringstream name;
-    name << prefix << "_" << t_ms << ".jpg";
+    name << prefix << "_" << t_ms << extension;
     std::ostringstream header;
     header << "BWROI1\n";
     header << "name " << name.str() << "\n";
-    header << "size " << jpeg_bytes.size() << "\n";
+    header << "size " << encoded_bytes.size() << "\n";
     header << "\n";
 
     bool ok = send_all_bytes(fd, header.str().data(), header.str().size()) &&
-              send_all_bytes(fd, jpeg_bytes.data(), jpeg_bytes.size());
+              send_all_bytes(fd, encoded_bytes.data(), encoded_bytes.size());
 
     std::string ack_line;
     if (ok)
@@ -333,7 +365,7 @@ static void draw_roi_capture_idle_view(const cv::Mat& frame_bgr,
     view = frame_bgr.clone();
     cv::putText(view, "ROI Capture Idle", cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX,
                 0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
-    cv::putText(view, "Press 1: preview ROI | 2: send 10 ROI | 3: send frame(y30-160) | 0: idle",
+    cv::putText(view, "1: preview | 2: send 10 ROI | 3: send 10 lossless frames | 0: idle",
                 cv::Point(10, 52), cv::FONT_HERSHEY_SIMPLEX,
                 0.50, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
     std::ostringstream host_info;
@@ -347,7 +379,8 @@ static void draw_roi_capture_overlay(cv::Mat& view,
                                      const RoiExtractionResult& roi_result,
                                      const RoiCaptureTransferConfig& config,
                                      const RoiSendFeedback& feedback,
-                                     const RoiBurstSendState& burst_state,
+                                     const RoiBurstSendState& roi_burst_state,
+                                     const FullFrameBurstSendState& fullframe_burst_state,
                                      uint64_t t_ms)
 {
     if (view.empty())
@@ -360,7 +393,7 @@ static void draw_roi_capture_overlay(cv::Mat& view,
 
     cv::putText(view, "ROI Capture Preview", cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX,
                 0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
-    cv::putText(view, "1: preview  2: send 10 ROI  3: send frame(y30-160)  0: idle", cv::Point(10, 52),
+    cv::putText(view, "1: preview  2: send 10 ROI  3: send 10 lossless frames  0: idle", cv::Point(10, 52),
                 cv::FONT_HERSHEY_SIMPLEX, 0.50, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
 
     std::ostringstream roi_info;
@@ -379,10 +412,19 @@ static void draw_roi_capture_overlay(cv::Mat& view,
 
     std::ostringstream burst_info;
     burst_info << "burst_roi="
-               << (burst_state.active ? "RUN " : "IDLE ")
-               << burst_state.success_count << "/" << std::max(0, burst_state.target_count);
+               << (roi_burst_state.active ? "RUN " : "IDLE ")
+               << roi_burst_state.success_count << "/" << std::max(0, roi_burst_state.target_count)
+               << "  burst_frame="
+               << (fullframe_burst_state.active ? "RUN " : "IDLE ")
+               << fullframe_burst_state.success_count << "/"
+               << std::max(0, fullframe_burst_state.target_count);
     cv::putText(view, burst_info.str(), cv::Point(10, 136), cv::FONT_HERSHEY_SIMPLEX,
-                0.50, burst_state.active ? cv::Scalar(0, 255, 0) : cv::Scalar(255, 220, 0), 2, cv::LINE_AA);
+                0.50,
+                (roi_burst_state.active || fullframe_burst_state.active)
+                    ? cv::Scalar(0, 255, 0)
+                    : cv::Scalar(255, 220, 0),
+                2,
+                cv::LINE_AA);
 
     if (feedback.valid_until_ms > t_ms && !feedback.text.empty())
     {
@@ -521,9 +563,11 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
     const bool render_debug = stream_enabled;
     bool latest_frame_running = false;
     uint64_t last_consumed_frame_seq = 0;
+    uint64_t consumed_frame_index = 0;
     RoiCaptureModeState mode = RoiCaptureModeState::IDLE;
     RoiSendFeedback feedback;
-    RoiBurstSendState burst_state;
+    RoiBurstSendState roi_burst_state;
+    FullFrameBurstSendState fullframe_burst_state;
 
     stream.Initialize(stream_enabled);
 
@@ -542,6 +586,10 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
                   << (transfer_config.host.empty() ? "<unset>" : transfer_config.host)
                   << ":" << transfer_config.port
                   << " roi=" << BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE << "x" << BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE
+                  << " roi_burst=" << BW_RECOG_ROI_CAPTURE_BURST_COUNT
+                  << " fullframe_burst=" << BW_RECOG_FULLFRAME_CAPTURE_BURST_COUNT
+                  << " fullframe_format=png"
+                  << " png_compression=" << BW_RECOG_FULLFRAME_CAPTURE_PNG_COMPRESSION
                   << std::endl;
     }
 
@@ -582,6 +630,7 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             }
             last_consumed_frame_seq = current_frame_seq;
         }
+        ++consumed_frame_index;
 
         const uint64_t t_ms = recognition_runtime::now_ms();
         recognition_runtime::prepare_frame_for_processing(&img, true);
@@ -602,8 +651,10 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             if (key == '1')
             {
                 mode = RoiCaptureModeState::PREVIEW;
-                burst_state.active = false;
-                burst_state.success_count = 0;
+                roi_burst_state.active = false;
+                roi_burst_state.success_count = 0;
+                fullframe_burst_state.active = false;
+                fullframe_burst_state.success_count = 0;
                 feedback.text = "preview on";
                 feedback.color = cv::Scalar(0, 255, 255);
                 feedback.valid_until_ms = t_ms + 1200;
@@ -618,9 +669,11 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
                 }
                 else
                 {
-                    burst_state.active = true;
-                    burst_state.success_count = 0;
-                    burst_state.target_count = std::max(1, BW_RECOG_ROI_CAPTURE_BURST_COUNT);
+                    fullframe_burst_state.active = false;
+                    fullframe_burst_state.success_count = 0;
+                    roi_burst_state.active = true;
+                    roi_burst_state.success_count = 0;
+                    roi_burst_state.target_count = std::max(1, BW_RECOG_ROI_CAPTURE_BURST_COUNT);
                     feedback.text = "burst send start";
                     feedback.color = cv::Scalar(0, 255, 255);
                     feedback.valid_until_ms = t_ms + 1500;
@@ -628,67 +681,48 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             }
             else if (key == '3')
             {
-                const cv::Mat fullframe_crop = build_fullframe_capture_crop(img);
-                if (fullframe_crop.empty())
-                {
-                    feedback.text = "no valid frame crop";
-                    feedback.color = cv::Scalar(0, 0, 255);
-                    feedback.valid_until_ms = t_ms + 1500;
-                }
-                else
-                {
-                    std::ostringstream prefix;
-                    prefix << "frame_y" << BW_RECOG_PROCESS_KEEP_Y_MIN
-                           << "_" << (BW_RECOG_PROCESS_KEEP_Y_MAX - 1);
-                    std::string send_message;
-                    if (send_named_bgr_image_to_pc(
-                            transfer_config,
-                            fullframe_crop,
-                            prefix.str().c_str(),
-                            t_ms,
-                            &send_message))
-                    {
-                        feedback.text = "frame send ok: " + send_message;
-                        feedback.color = cv::Scalar(0, 255, 0);
-                        feedback.valid_until_ms = t_ms + 2000;
-                    }
-                    else
-                    {
-                        feedback.text = "frame send fail: " + send_message;
-                        feedback.color = cv::Scalar(0, 0, 255);
-                        feedback.valid_until_ms = t_ms + 2500;
-                    }
-                }
+                roi_burst_state.active = false;
+                roi_burst_state.success_count = 0;
+                fullframe_burst_state.active = true;
+                fullframe_burst_state.success_count = 0;
+                fullframe_burst_state.target_count =
+                    std::max(1, BW_RECOG_FULLFRAME_CAPTURE_BURST_COUNT);
+                fullframe_burst_state.start_after_frame_index = consumed_frame_index;
+                feedback.text = "lossless frame burst start";
+                feedback.color = cv::Scalar(0, 255, 255);
+                feedback.valid_until_ms = t_ms + 1500;
             }
             else if (key == '0')
             {
                 mode = RoiCaptureModeState::IDLE;
-                burst_state.active = false;
-                burst_state.success_count = 0;
+                roi_burst_state.active = false;
+                roi_burst_state.success_count = 0;
+                fullframe_burst_state.active = false;
+                fullframe_burst_state.success_count = 0;
                 feedback.text = "preview off";
                 feedback.color = cv::Scalar(0, 255, 255);
                 feedback.valid_until_ms = t_ms + 1200;
             }
         }
 
-        if (mode == RoiCaptureModeState::PREVIEW && burst_state.active)
+        if (mode == RoiCaptureModeState::PREVIEW && roi_burst_state.active)
         {
             if (roi_result.status == "rotated_roi" && !roi_result.roi_bgr.empty())
             {
                 std::string send_message;
                 if (send_roi_to_pc(transfer_config, roi_result.roi_bgr, t_ms, &send_message))
                 {
-                    ++burst_state.success_count;
+                    ++roi_burst_state.success_count;
                     std::ostringstream ok_text;
-                    ok_text << "burst send ok " << burst_state.success_count
-                            << "/" << burst_state.target_count << ": " << send_message;
+                    ok_text << "burst send ok " << roi_burst_state.success_count
+                            << "/" << roi_burst_state.target_count << ": " << send_message;
                     feedback.text = ok_text.str();
                     feedback.color = cv::Scalar(0, 255, 0);
                     feedback.valid_until_ms = t_ms + 1200;
 
-                    if (burst_state.success_count >= burst_state.target_count)
+                    if (roi_burst_state.success_count >= roi_burst_state.target_count)
                     {
-                        burst_state.active = false;
+                        roi_burst_state.active = false;
                         feedback.text = "burst done";
                         feedback.color = cv::Scalar(0, 255, 0);
                         feedback.valid_until_ms = t_ms + 2000;
@@ -697,8 +731,8 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
                 else
                 {
                     std::ostringstream fail_text;
-                    fail_text << "burst send fail " << burst_state.success_count
-                              << "/" << burst_state.target_count << ": " << send_message;
+                    fail_text << "burst send fail " << roi_burst_state.success_count
+                              << "/" << roi_burst_state.target_count << ": " << send_message;
                     feedback.text = fail_text.str();
                     feedback.color = cv::Scalar(0, 0, 255);
                     feedback.valid_until_ms = t_ms + 1200;
@@ -707,11 +741,63 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             else
             {
                 std::ostringstream wait_text;
-                wait_text << "waiting valid roi " << burst_state.success_count
-                          << "/" << burst_state.target_count;
+                wait_text << "waiting valid roi " << roi_burst_state.success_count
+                          << "/" << roi_burst_state.target_count;
                 feedback.text = wait_text.str();
                 feedback.color = cv::Scalar(0, 165, 255);
                 feedback.valid_until_ms = t_ms + 500;
+            }
+        }
+
+        if (fullframe_burst_state.active &&
+            consumed_frame_index > fullframe_burst_state.start_after_frame_index)
+        {
+            const cv::Mat fullframe_crop = build_fullframe_capture_crop(img);
+            if (fullframe_crop.empty())
+            {
+                feedback.text = "no valid frame crop";
+                feedback.color = cv::Scalar(0, 0, 255);
+                feedback.valid_until_ms = t_ms + 1200;
+            }
+            else
+            {
+                std::ostringstream prefix;
+                prefix << "frame_y" << BW_RECOG_PROCESS_KEEP_Y_MIN
+                       << "_" << (BW_RECOG_PROCESS_KEEP_Y_MAX - 1);
+                std::string send_message;
+                if (send_named_bgr_image_to_pc(
+                        transfer_config,
+                        fullframe_crop,
+                        prefix.str().c_str(),
+                        t_ms,
+                        CaptureImageEncoding::PNG,
+                        &send_message))
+                {
+                    ++fullframe_burst_state.success_count;
+                    std::ostringstream ok_text;
+                    ok_text << "frame send ok " << fullframe_burst_state.success_count
+                            << "/" << fullframe_burst_state.target_count << ": " << send_message;
+                    feedback.text = ok_text.str();
+                    feedback.color = cv::Scalar(0, 255, 0);
+                    feedback.valid_until_ms = t_ms + 1200;
+
+                    if (fullframe_burst_state.success_count >= fullframe_burst_state.target_count)
+                    {
+                        fullframe_burst_state.active = false;
+                        feedback.text = "lossless frame burst done";
+                        feedback.color = cv::Scalar(0, 255, 0);
+                        feedback.valid_until_ms = t_ms + 2000;
+                    }
+                }
+                else
+                {
+                    std::ostringstream fail_text;
+                    fail_text << "frame send fail " << fullframe_burst_state.success_count
+                              << "/" << fullframe_burst_state.target_count << ": " << send_message;
+                    feedback.text = fail_text.str();
+                    feedback.color = cv::Scalar(0, 0, 255);
+                    feedback.valid_until_ms = t_ms + 1200;
+                }
             }
         }
 
@@ -720,7 +806,14 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             if (mode == RoiCaptureModeState::PREVIEW)
             {
                 view = img.clone();
-                draw_roi_capture_overlay(view, roi_result, transfer_config, feedback, burst_state, t_ms);
+                draw_roi_capture_overlay(
+                    view,
+                    roi_result,
+                    transfer_config,
+                    feedback,
+                    roi_burst_state,
+                    fullframe_burst_state,
+                    t_ms);
             }
             else
             {
