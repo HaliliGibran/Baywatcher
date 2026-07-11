@@ -52,6 +52,8 @@ float g_remote_speed_cap_log_value = 0.0f;
 uint32_t g_remote_speed_cap_log_reasons = 0;
 bool g_remote_follow_speed_log_active = false;
 bool g_remote_follow_speed_log_inner = false;
+bool g_remote_follow_speed_log_circle = false;
+bool g_remote_follow_speed_log_circle_inner = false;
 bool g_remote_follow_speed_log_released = false;
 float g_remote_follow_speed_log_ratio = 1.0f;
 std::atomic<bool> g_circle_recognition_gate_blocked{false};
@@ -535,6 +537,8 @@ void image_remote_recognition_set_follow_path_state(bool active, bool inner_foll
         std::printf("[绕行平均速度] 解除\n");
         g_remote_follow_speed_log_active = false;
         g_remote_follow_speed_log_inner = false;
+        g_remote_follow_speed_log_circle = false;
+        g_remote_follow_speed_log_circle_inner = false;
         g_remote_follow_speed_log_released = false;
         g_remote_follow_speed_log_ratio = 1.0f;
     }
@@ -551,12 +555,29 @@ bool image_remote_recognition_get_follow_average_speed_ratio(float* out_ratio)
         return false;
     }
 
-    float ratio = g_remote_recognition.inner_follow_active
-        ? BW_REMOTE_FOLLOW_INNER_AVERAGE_SPEED_RATIO
-        : BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO;
+    const bool circle_follow =
+        circle_state == CircleState::CIRCLE_RUNNING &&
+        (circle_direction == CircleDirection::CIRCLE_DIR_LEFT ||
+         circle_direction == CircleDirection::CIRCLE_DIR_RIGHT);
+    const bool circle_inner_follow =
+        circle_follow && g_remote_recognition.inner_follow_active;
+    const bool circle_outer_follow =
+        circle_follow && !g_remote_recognition.inner_follow_active;
+    float ratio = circle_inner_follow
+        ? BW_REMOTE_FOLLOW_CIRCLE_INNER_AVERAGE_SPEED_RATIO
+        : (circle_outer_follow
+            ? BW_REMOTE_FOLLOW_CIRCLE_OUTER_AVERAGE_SPEED_RATIO
+            : (g_remote_recognition.inner_follow_active
+                ? BW_REMOTE_FOLLOW_INNER_AVERAGE_SPEED_RATIO
+                : BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO));
     ratio = std::max(0.0f, std::min(ratio, 1.0f));
+    const float release_angle = circle_inner_follow
+        ? BW_REMOTE_FOLLOW_CIRCLE_INNER_SPEED_RELEASE_ANGLE_DEG
+        : (circle_outer_follow
+            ? BW_REMOTE_FOLLOW_CIRCLE_OUTER_SPEED_RELEASE_ANGLE_DEG
+            : BW_REMOTE_FOLLOW_SPEED_RELEASE_ANGLE_DEG);
     const bool small_angle_released =
-        std::fabs(pure_angle) <= BW_REMOTE_FOLLOW_SPEED_RELEASE_ANGLE_DEG;
+        std::fabs(pure_angle) <= release_angle;
     if (small_angle_released)
     {
         ratio = 1.0f;
@@ -564,17 +585,25 @@ bool image_remote_recognition_get_follow_average_speed_ratio(float* out_ratio)
 
     if (!g_remote_follow_speed_log_active ||
         g_remote_follow_speed_log_inner != g_remote_recognition.inner_follow_active ||
+        g_remote_follow_speed_log_circle != circle_follow ||
+        g_remote_follow_speed_log_circle_inner != circle_inner_follow ||
         g_remote_follow_speed_log_released != small_angle_released ||
         std::fabs(g_remote_follow_speed_log_ratio - ratio) >= 0.01f)
     {
         std::printf("[绕行平均速度] %s倍率=%.2f%s, pure_angle=%.1f\n",
-                    g_remote_recognition.inner_follow_active ? "内绕" : "外绕",
+                    circle_inner_follow
+                        ? "环岛内绕"
+                        : (circle_outer_follow
+                            ? "环岛外绕"
+                            : (g_remote_recognition.inner_follow_active ? "内绕" : "外绕")),
                     ratio,
                     small_angle_released ? "（小角解除）" : "",
                     pure_angle);
     }
     g_remote_follow_speed_log_active = true;
     g_remote_follow_speed_log_inner = g_remote_recognition.inner_follow_active;
+    g_remote_follow_speed_log_circle = circle_follow;
+    g_remote_follow_speed_log_circle_inner = circle_inner_follow;
     g_remote_follow_speed_log_released = small_angle_released;
     g_remote_follow_speed_log_ratio = ratio;
 

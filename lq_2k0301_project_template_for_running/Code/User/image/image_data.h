@@ -278,7 +278,8 @@ void image_remote_recognition_set_follow_path_state(bool active, bool inner_foll
 
 // 功能: 查询当前绕行对左右轮目标平均速度使用的倍率
 // 类型: 全局状态查询函数
-// 说明：内外绕分别使用独立倍率；小偏航角时返回 1.0。返回 false 表示当前未使用锁边绕行 path。
+// 说明：普通内绕、普通外绕、环岛 RUNNING 内绕和环岛 RUNNING 外绕分别使用独立倍率；
+// 小偏航角时返回 1.0。返回 false 表示当前未使用锁边绕行 path。
 bool image_remote_recognition_get_follow_average_speed_ratio(float* out_ratio);
 
 // 功能: 查询当前是否处于砖块触发的短时环岛压制窗口
