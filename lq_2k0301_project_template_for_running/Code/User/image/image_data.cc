@@ -1,5 +1,6 @@
 #include "image_data.h"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 
@@ -53,6 +54,8 @@ bool g_remote_follow_speed_log_active = false;
 bool g_remote_follow_speed_log_inner = false;
 bool g_remote_follow_speed_log_released = false;
 float g_remote_follow_speed_log_ratio = 1.0f;
+std::atomic<bool> g_circle_recognition_gate_blocked{false};
+uint64_t g_circle_recognition_gate_hold_until_ms = 0;
 
 void remote_vehicle_route_apply(float current_pure_angle, uint64_t t_ms)
 {
@@ -139,6 +142,43 @@ void print_remote_speed_cap_log(bool active, float cap, uint32_t reasons)
     g_remote_speed_cap_log_reasons = reasons;
 }
 
+const char* circle_gate_reason_text(bool circle_candidate, bool hold_active)
+{
+    if (circle_state == CircleState::CIRCLE_RUNNING)
+    {
+        return "circle_running";
+    }
+    if (circle_candidate)
+    {
+        return "circle_candidate";
+    }
+    switch (circle_state)
+    {
+    case CircleState::CIRCLE_BEGIN: return "circle_begin";
+    case CircleState::CIRCLE_IN: return "circle_in";
+    case CircleState::CIRCLE_OUT: return "circle_out";
+    case CircleState::CIRCLE_END: return "circle_end";
+    default: return hold_active ? "post_hold" : "normal";
+    }
+}
+
+void reset_remote_recognition_runtime(bool reset_follow_mode)
+{
+    g_remote_recognition.last_seq_valid = false;
+    g_remote_recognition.last_seq = 0;
+    g_remote_recognition.current_code = BoardVisionCode::UNKNOWN;
+    g_remote_recognition.last_rx_ms = 0;
+    g_remote_recognition.vehicle_hold_until_ms = 0;
+    g_remote_recognition.vehicle_hold_yaw = 0.0f;
+    g_remote_recognition.follow_state = remote_follow_state_t::NONE;
+    g_remote_recognition.brick_block_until_ms = 0;
+    image_remote_recognition_set_follow_path_state(false, false);
+    if (reset_follow_mode)
+    {
+        follow_mode = FollowLine::MIXED;
+    }
+}
+
 } // namespace
 
 bool zebra_stop = false;
@@ -192,16 +232,66 @@ track_debug_status g_track_debug = {0, 0, 0};
 
 void image_remote_recognition_reset()
 {
-    g_remote_recognition.last_seq_valid = false;
-    g_remote_recognition.last_seq = 0;
-    g_remote_recognition.current_code = BoardVisionCode::UNKNOWN;
-    g_remote_recognition.last_rx_ms = 0;
-    g_remote_recognition.vehicle_hold_until_ms = 0;
-    g_remote_recognition.vehicle_hold_yaw = 0.0f;
-    g_remote_recognition.follow_state = remote_follow_state_t::NONE;
-    g_remote_recognition.brick_block_until_ms = 0;
-    image_remote_recognition_set_follow_path_state(false, false);
-    follow_mode = FollowLine::MIXED;
+    reset_remote_recognition_runtime(true);
+}
+
+void image_circle_recognition_gate_update(bool circle_candidate, uint64_t t_ms)
+{
+    if (BW_CIRCLE_RECOGNITION_GATE_ENABLE == 0)
+    {
+        g_circle_recognition_gate_hold_until_ms = 0;
+        g_circle_recognition_gate_blocked.store(false);
+        return;
+    }
+
+    bool blocked = false;
+    if (circle_state == CircleState::CIRCLE_RUNNING)
+    {
+        g_circle_recognition_gate_hold_until_ms = 0;
+    }
+    else
+    {
+        const bool circle_phase_block =
+            circle_state == CircleState::CIRCLE_BEGIN ||
+            circle_state == CircleState::CIRCLE_IN ||
+            circle_state == CircleState::CIRCLE_OUT ||
+            circle_state == CircleState::CIRCLE_END;
+        if (circle_candidate || circle_phase_block)
+        {
+            g_circle_recognition_gate_hold_until_ms =
+                t_ms + static_cast<uint64_t>(BW_CIRCLE_RECOGNITION_GATE_HOLD_MS);
+        }
+        blocked = circle_candidate ||
+                  circle_phase_block ||
+                  t_ms < g_circle_recognition_gate_hold_until_ms;
+    }
+
+    const bool previous = g_circle_recognition_gate_blocked.exchange(blocked);
+    if (blocked)
+    {
+        const bool reset_follow_mode =
+            element_type == ElementType::NORMAL &&
+            circle_state == CircleState::CIRCLE_NONE &&
+            crossing_state == CrossingState::CROSSING_NONE;
+        reset_remote_recognition_runtime(reset_follow_mode);
+    }
+
+    if (previous != blocked)
+    {
+        const bool hold_active =
+            !circle_candidate &&
+            circle_state == CircleState::CIRCLE_NONE &&
+            t_ms < g_circle_recognition_gate_hold_until_ms;
+        std::printf("[环岛识别门控] %s, 原因=%s\n",
+                    blocked ? "BLOCK" : "ALLOW",
+                    circle_gate_reason_text(circle_candidate, hold_active));
+    }
+}
+
+bool image_circle_recognition_gate_is_blocked()
+{
+    return BW_CIRCLE_RECOGNITION_GATE_ENABLE != 0 &&
+           g_circle_recognition_gate_blocked.load();
 }
 
 void image_remote_recognition_apply_state(BoardVisionCode code,
@@ -209,7 +299,7 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
                                           float current_pure_angle,
                                           uint64_t t_ms)
 {
-    if (code == BoardVisionCode::INVALID)
+    if (code == BoardVisionCode::INVALID || image_circle_recognition_gate_is_blocked())
     {
         return;
     }
@@ -324,7 +414,9 @@ void image_remote_recognition_tick(uint64_t t_ms)
 
 bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw)
 {
-    if (hold_yaw == nullptr || t_ms >= g_remote_recognition.vehicle_hold_until_ms)
+    if (image_circle_recognition_gate_is_blocked() ||
+        hold_yaw == nullptr ||
+        t_ms >= g_remote_recognition.vehicle_hold_until_ms)
     {
         return false;
     }
@@ -336,6 +428,7 @@ bool image_remote_recognition_try_get_hold_yaw(uint64_t t_ms, float* hold_yaw)
 float image_remote_recognition_get_speed_ratio_override()
 {
     const bool u_slowdown_active =
+        !image_circle_recognition_gate_is_blocked() &&
         (BW_REMOTE_U_SLOWDOWN_ENABLE != 0) &&
         g_remote_recognition.current_code == BoardVisionCode::NO_RESULT;
     const float ratio = u_slowdown_active
@@ -372,6 +465,7 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
     uint32_t reasons = 0;
 
     add_remote_speed_cap_candidate(
+        !image_circle_recognition_gate_is_blocked() &&
         g_remote_recognition.current_code == BoardVisionCode::CLOTH_STOP,
         BW_REMOTE_CLOTH_STOP_SPEED_CAP,
         kRemoteSpeedCapReasonCloth,
@@ -390,12 +484,18 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
 
 bool image_remote_recognition_is_vehicle_active(uint64_t t_ms)
 {
-    return (g_remote_recognition.follow_state == remote_follow_state_t::VEHICLE_ROUTE) &&
+    return !image_circle_recognition_gate_is_blocked() &&
+           (g_remote_recognition.follow_state == remote_follow_state_t::VEHICLE_ROUTE) &&
            (t_ms < g_remote_recognition.vehicle_hold_until_ms);
 }
 
 bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms)
 {
+    if (image_circle_recognition_gate_is_blocked())
+    {
+        return false;
+    }
+
     if (g_remote_recognition.follow_state == remote_follow_state_t::LEFT_EDGE_ROUTE ||
         g_remote_recognition.follow_state == remote_follow_state_t::RIGHT_EDGE_ROUTE)
     {
@@ -408,7 +508,7 @@ bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms)
 
 bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode)
 {
-    if (out_mode == nullptr)
+    if (image_circle_recognition_gate_is_blocked() || out_mode == nullptr)
     {
         return false;
     }
@@ -444,7 +544,9 @@ void image_remote_recognition_set_follow_path_state(bool active, bool inner_foll
 
 bool image_remote_recognition_get_follow_average_speed_ratio(float* out_ratio)
 {
-    if (out_ratio == nullptr || !g_remote_recognition.follow_path_active)
+    if (image_circle_recognition_gate_is_blocked() ||
+        out_ratio == nullptr ||
+        !g_remote_recognition.follow_path_active)
     {
         return false;
     }
@@ -482,12 +584,13 @@ bool image_remote_recognition_get_follow_average_speed_ratio(float* out_ratio)
 
 bool image_remote_recognition_should_block_circle(uint64_t t_ms)
 {
-    return t_ms < g_remote_recognition.brick_block_until_ms;
+    return !image_circle_recognition_gate_is_blocked() &&
+           t_ms < g_remote_recognition.brick_block_until_ms;
 }
 
 bool image_remote_recognition_get_brick_avoid_shift_direction(int* out_direction)
 {
-    if (out_direction == nullptr)
+    if (image_circle_recognition_gate_is_blocked() || out_direction == nullptr)
     {
         return false;
     }

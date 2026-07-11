@@ -342,6 +342,23 @@
 
 // ===== 远端状态保持与减速参数 =====
 
+// 环岛识别门控总开关。
+// 开启后，运行板在环岛候选、BEGIN、IN、OUT、END 阶段阻断识别板；
+// 仅普通赛道和 CIRCLE_RUNNING 阶段允许识别。
+#ifndef BW_CIRCLE_RECOGNITION_GATE_ENABLE
+#define BW_CIRCLE_RECOGNITION_GATE_ENABLE 1
+#endif
+
+// 环岛候选消失或环岛退出后的门控保持时间（毫秒），用于抑制边界抖动。
+#ifndef BW_CIRCLE_RECOGNITION_GATE_HOLD_MS
+#define BW_CIRCLE_RECOGNITION_GATE_HOLD_MS 150
+#endif
+
+// 运行板反向发送 ALLOW/BLOCK 门控心跳的周期（毫秒）。
+#ifndef BW_CIRCLE_RECOGNITION_GATE_HEARTBEAT_MS
+#define BW_CIRCLE_RECOGNITION_GATE_HEARTBEAT_MS 50
+#endif
+
 // 远端识别状态总过期时间（毫秒）。
 // 作用：
 // - 识别板心跳若长时间收不到，这里会整体清空远端接管状态。

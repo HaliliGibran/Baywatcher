@@ -68,10 +68,23 @@ uint8_t BoardComm::calculate_crc8(const uint8_t* data, size_t len) const {
 }
 
 bool BoardComm::send_state(BoardVisionCode code, uint8_t seq) {
-    if (uart_dev == nullptr || code == BoardVisionCode::INVALID) {
+    if (code == BoardVisionCode::INVALID) {
         return false;
     }
+    return send_packet_code(static_cast<uint8_t>(code), seq);
+}
 
+bool BoardComm::send_recognition_gate(BoardRecognitionGate gate, uint8_t seq) {
+    if (gate == BoardRecognitionGate::INVALID) {
+        return false;
+    }
+    return send_packet_code(static_cast<uint8_t>(gate), seq);
+}
+
+bool BoardComm::send_packet_code(uint8_t code, uint8_t seq) {
+    if (uart_dev == nullptr || code == 0u) {
+        return false;
+    }
     BoardStatePacket pkt{};
     pkt.header1 = kBoardEventHeader1;
     pkt.header2 = kBoardEventHeader2;
@@ -85,7 +98,7 @@ bool BoardComm::send_state(BoardVisionCode code, uint8_t seq) {
            static_cast<ssize_t>(sizeof(BoardStatePacket));
 }
 
-bool BoardComm::try_parse_cached_packet(BoardVisionCode* out_code, uint8_t* out_seq) {
+bool BoardComm::try_parse_cached_packet(uint8_t* out_code, uint8_t* out_seq) {
     const size_t kPacketSize = sizeof(BoardStatePacket);
 
     while (rx_cache_.size() >= kPacketSize) {
@@ -100,23 +113,11 @@ bool BoardComm::try_parse_cached_packet(BoardVisionCode* out_code, uint8_t* out_
         }
 
         const uint8_t expected_crc = calculate_crc8(&pkt.version, 3);
-        const bool valid_code =
-            pkt.code == static_cast<uint8_t>(BoardVisionCode::VEHICLE) ||
-            pkt.code == static_cast<uint8_t>(BoardVisionCode::WEAPON) ||
-            pkt.code == static_cast<uint8_t>(BoardVisionCode::SUPPLY) ||
-            pkt.code == static_cast<uint8_t>(BoardVisionCode::BRICK) ||
-            pkt.code == static_cast<uint8_t>(BoardVisionCode::BRICK_LEFT) ||
-            pkt.code == static_cast<uint8_t>(BoardVisionCode::BRICK_RIGHT) ||
-            pkt.code == static_cast<uint8_t>(BoardVisionCode::NO_RESULT) ||
-            pkt.code == static_cast<uint8_t>(BoardVisionCode::CLOTH_STOP) ||
-            pkt.code == static_cast<uint8_t>(BoardVisionCode::UNKNOWN);
-
         if (pkt.version == kBoardEventVersion &&
             pkt.tail == kBoardEventTail &&
-            pkt.crc8 == expected_crc &&
-            valid_code) {
+            pkt.crc8 == expected_crc) {
             if (out_code != nullptr) {
-                *out_code = static_cast<BoardVisionCode>(pkt.code);
+                *out_code = pkt.code;
             }
             if (out_seq != nullptr) {
                 *out_seq = pkt.seq;
@@ -131,9 +132,9 @@ bool BoardComm::try_parse_cached_packet(BoardVisionCode* out_code, uint8_t* out_
     return false;
 }
 
-bool BoardComm::try_receive_state(BoardVisionCode* out_code, uint8_t* out_seq) {
+void BoardComm::read_into_cache() {
     if (uart_dev == nullptr) {
-        return false;
+        return;
     }
 
     uint8_t rx_buffer[64] = {0};
@@ -145,6 +146,65 @@ bool BoardComm::try_receive_state(BoardVisionCode* out_code, uint8_t* out_seq) {
                             rx_cache_.end() - static_cast<ptrdiff_t>(sizeof(BoardStatePacket)));
         }
     }
+}
 
-    return try_parse_cached_packet(out_code, out_seq);
+bool BoardComm::try_receive_state(BoardVisionCode* out_code, uint8_t* out_seq) {
+    uint8_t raw_code = 0;
+    uint8_t seq = 0;
+    const auto take_cached_state = [&]() -> bool {
+        while (try_parse_cached_packet(&raw_code, &seq)) {
+            const bool valid_code =
+                raw_code == static_cast<uint8_t>(BoardVisionCode::VEHICLE) ||
+                raw_code == static_cast<uint8_t>(BoardVisionCode::WEAPON) ||
+                raw_code == static_cast<uint8_t>(BoardVisionCode::SUPPLY) ||
+                raw_code == static_cast<uint8_t>(BoardVisionCode::BRICK) ||
+                raw_code == static_cast<uint8_t>(BoardVisionCode::BRICK_LEFT) ||
+                raw_code == static_cast<uint8_t>(BoardVisionCode::BRICK_RIGHT) ||
+                raw_code == static_cast<uint8_t>(BoardVisionCode::NO_RESULT) ||
+                raw_code == static_cast<uint8_t>(BoardVisionCode::CLOTH_STOP) ||
+                raw_code == static_cast<uint8_t>(BoardVisionCode::UNKNOWN);
+            if (!valid_code) {
+                continue;
+            }
+            if (out_code != nullptr) {
+                *out_code = static_cast<BoardVisionCode>(raw_code);
+            }
+            if (out_seq != nullptr) {
+                *out_seq = seq;
+            }
+            return true;
+        }
+        return false;
+    };
+    if (take_cached_state()) {
+        return true;
+    }
+    read_into_cache();
+    return take_cached_state();
+}
+
+bool BoardComm::try_receive_recognition_gate(BoardRecognitionGate* out_gate, uint8_t* out_seq) {
+    uint8_t raw_code = 0;
+    uint8_t seq = 0;
+    const auto take_cached_gate = [&]() -> bool {
+        while (try_parse_cached_packet(&raw_code, &seq)) {
+            if (raw_code != static_cast<uint8_t>(BoardRecognitionGate::ALLOW) &&
+                raw_code != static_cast<uint8_t>(BoardRecognitionGate::BLOCK)) {
+                continue;
+            }
+            if (out_gate != nullptr) {
+                *out_gate = static_cast<BoardRecognitionGate>(raw_code);
+            }
+            if (out_seq != nullptr) {
+                *out_seq = seq;
+            }
+            return true;
+        }
+        return false;
+    };
+    if (take_cached_gate()) {
+        return true;
+    }
+    read_into_cache();
+    return take_cached_gate();
 }

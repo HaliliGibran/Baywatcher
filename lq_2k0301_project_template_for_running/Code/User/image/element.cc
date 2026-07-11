@@ -157,14 +157,61 @@ static bool window_is_straight(const pts_well_processed& ctx, int center_id, int
     return good >= need;
 }
 
+struct element_candidate_result_t
+{
+    bool want_crossing;
+    bool want_circle;
+    CircleDirection want_circle_dir;
+};
+
+static element_candidate_result_t detect_current_element_candidate()
+{
+    element_candidate_result_t result = {
+        false,
+        false,
+        CircleDirection::CIRCLE_DIR_NONE,
+    };
+    const bool lcorner = pts_left.corner_found;
+    const bool rcorner = pts_right.corner_found;
+
+    if (lcorner && rcorner &&
+        pts_left.corner_id <= ID_THRESHOLD_crossing_state_change &&
+        pts_right.corner_id <= ID_THRESHOLD_crossing_state_change)
+    {
+        result.want_crossing = true;
+        return result;
+    }
+
+    const int win = WINDOW_THRESHOLD_roundabout_opposite_straightness;
+    if (lcorner && !rcorner)
+    {
+        result.want_circle = window_is_straight(pts_right, pts_left.corner_id, win);
+        if (result.want_circle)
+        {
+            result.want_circle_dir = CircleDirection::CIRCLE_DIR_LEFT;
+        }
+    }
+    else if (rcorner && !lcorner)
+    {
+        result.want_circle = window_is_straight(pts_left, pts_right.corner_id, win);
+        if (result.want_circle)
+        {
+            result.want_circle_dir = CircleDirection::CIRCLE_DIR_RIGHT;
+        }
+    }
+    return result;
+}
+
+bool track_has_circle_candidate()
+{
+    return detect_current_element_candidate().want_circle;
+}
+
 // 功能: 元素判定与状态机入口（投票 + 保护帧）
 // 类型: 图像处理函数
 // 关键参数: 无（使用全局 pts_left/pts_right 等）
 void element_detect()
 {
-    // 可选输出
-    const bool lcorner = pts_left.corner_found;
-    const bool rcorner = pts_right.corner_found;
     // 通过“连续帧计数 + 保护帧”做抗抖，避免单帧误检导致 element_type 来回跳。
     static int crossing_vote = 0;
     static int circle_vote = 0;
@@ -215,36 +262,10 @@ void element_detect()
         return;
     }
 
-    // 候选判定
-    bool want_crossing = false;
-    bool want_circle = false;
-    CircleDirection want_circle_dir = CircleDirection::CIRCLE_DIR_NONE;
-
-    // 十字：双角点
-    if (lcorner && rcorner)
-    {
-        if (pts_left.corner_id <= ID_THRESHOLD_crossing_state_change &&
-            pts_right.corner_id <= ID_THRESHOLD_crossing_state_change)
-        {
-            want_crossing = true;
-        }
-    }
-
-    // 环岛：单侧角点 + 对侧在对应位置附近“更像直线”
-    if (!want_crossing)
-    {
-        const int win = WINDOW_THRESHOLD_roundabout_opposite_straightness; // 窗口半宽（点数）
-        if (lcorner && !rcorner)
-        {
-            want_circle = window_is_straight(pts_right, pts_left.corner_id, win);
-            if (want_circle) want_circle_dir = CircleDirection::CIRCLE_DIR_LEFT;
-        }
-        else if (rcorner && !lcorner)
-        {
-            want_circle = window_is_straight(pts_left, pts_right.corner_id, win);
-            if (want_circle) want_circle_dir = CircleDirection::CIRCLE_DIR_RIGHT;
-        }
-    }
+    const element_candidate_result_t candidate = detect_current_element_candidate();
+    const bool want_crossing = candidate.want_crossing;
+    const bool want_circle = candidate.want_circle;
+    const CircleDirection want_circle_dir = candidate.want_circle_dir;
 
     // 更新投票：
     if (want_crossing) crossing_vote = (crossing_vote < 1000) ? (crossing_vote + 1) : crossing_vote;

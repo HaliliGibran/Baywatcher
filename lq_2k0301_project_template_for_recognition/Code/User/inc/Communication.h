@@ -32,6 +32,13 @@ enum class BoardVisionCode : uint8_t {
     UNKNOWN = 'n',
 };
 
+// 运行板反向发送给识别板的识别门控。
+enum class BoardRecognitionGate : uint8_t {
+    INVALID = 0,
+    ALLOW = 'A',
+    BLOCK = 'X',
+};
+
 static constexpr uint8_t kBoardEventHeader1 = 0x5A;
 static constexpr uint8_t kBoardEventHeader2 = 0xA5;
 static constexpr uint8_t kBoardEventVersion = 0x01;
@@ -57,13 +64,17 @@ public:
     bool init(const std::string& port = UART1, uint32_t baud = B115200);
     bool send_state(BoardVisionCode code, uint8_t seq);
     bool try_receive_state(BoardVisionCode* out_code, uint8_t* out_seq);
+    bool send_recognition_gate(BoardRecognitionGate gate, uint8_t seq);
+    bool try_receive_recognition_gate(BoardRecognitionGate* out_gate, uint8_t* out_seq);
 
 private:
     ls_uart* uart_dev;
     std::vector<uint8_t> rx_cache_;
 
     uint8_t calculate_crc8(const uint8_t* data, size_t len) const;
-    bool try_parse_cached_packet(BoardVisionCode* out_code, uint8_t* out_seq);
+    bool send_packet_code(uint8_t code, uint8_t seq);
+    void read_into_cache();
+    bool try_parse_cached_packet(uint8_t* out_code, uint8_t* out_seq);
 };
 
 extern BoardComm comm;

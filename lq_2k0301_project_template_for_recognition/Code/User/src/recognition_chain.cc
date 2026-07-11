@@ -16,6 +16,7 @@
 #include <limits>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <unistd.h>
 
 namespace {
@@ -709,18 +710,10 @@ static DeployCalibration load_deploy_calibration_json(const std::string& path)
 
 static std::vector<std::string> load_class_names_from_json(const std::string& path)
 {
-    const auto default_class_names = []() -> std::vector<std::string> {
-        if (kRecognitionUseSubclassModel)
-        {
-            return {"急救包", "急救包（空白）", "急救车", "望远镜", "手枪", "步枪", "炸药包", "装甲车"};
-        }
-        return {"weapon", "supply", "vehicle"};
-    };
-
     std::ifstream fin(path);
     if (!fin.is_open())
     {
-        return default_class_names();
+        return {};
     }
 
     std::ostringstream ss;
@@ -758,11 +751,44 @@ static std::vector<std::string> load_class_names_from_json(const std::string& pa
         }
     }
 
-    if (out.empty())
-    {
-        out = default_class_names();
-    }
     return out;
+}
+
+static std::vector<std::string> expected_class_names()
+{
+    if (kRecognitionUseSubclassModel)
+    {
+        return {"急救包", "急救包（空白）", "急救车", "手枪", "望远镜", "步枪", "炸药包", "装甲车"};
+    }
+    return {"weapon", "supply", "vehicle"};
+}
+
+static std::string describe_class_name_mismatch(const std::vector<std::string>& actual,
+                                                const std::vector<std::string>& expected)
+{
+    std::ostringstream message;
+    if (actual.empty())
+    {
+        message << "class_names.json missing, unreadable, or empty";
+        return message.str();
+    }
+    if (actual.size() != expected.size())
+    {
+        message << "class count mismatch: expected=" << expected.size()
+                << ", actual=" << actual.size();
+        return message.str();
+    }
+    for (size_t i = 0; i < expected.size(); ++i)
+    {
+        if (actual[i] != expected[i])
+        {
+            message << "class order mismatch at index " << i
+                    << ": expected=" << expected[i]
+                    << ", actual=" << actual[i];
+            return message.str();
+        }
+    }
+    return {};
 }
 
 // [Recognition Chain] 模型标签到车体策略标签的映射。
@@ -1718,6 +1744,15 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
         net_.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
         net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
         class_names_ = load_class_names_from_json(class_path);
+        const std::vector<std::string> expected_names = expected_class_names();
+        const std::string class_mismatch =
+            describe_class_name_mismatch(class_names_, expected_names);
+        if (!class_mismatch.empty())
+        {
+            throw std::runtime_error(
+                std::string("invalid class_names.json: ") + class_mismatch +
+                ", path=" + class_path);
+        }
         const DeployCalibration calibration = load_deploy_calibration_json(calibration_path);
         calibration_temperature_ = calibration.temperature;
         logit_bias_ = calibration.logit_bias;
@@ -1883,6 +1918,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         view.release();
     }
 
+    RoiTrackRedPrefilterResult lightweight_track_prefilter;
     if (kRecognitionLightweightRedPrefilterEnable &&
         !is_success_symbol_code(latched_symbol_code_))
     {
@@ -1892,7 +1928,6 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         cv::Rect lightweight_recognition_rect;
         bool has_lightweight_slowdown_red = false;
         bool has_lightweight_recognition_red = false;
-        RoiTrackRedPrefilterResult lightweight_track_prefilter;
         detect_lightweight_red_prefilter(
             frame_bgr,
             full_frame_rect,
@@ -1983,7 +2018,14 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     const RoiMethod roi_method = DefaultRoiMethod();
     const auto extract_begin = steady_clock_t::now();
     RoiExtractionResult trigger_roi =
-        ExtractRotatedRoi(frame_bgr, kRecognitionModelInputSize, roi_method, render_debug);
+        ExtractRotatedRoi(
+            frame_bgr,
+            kRecognitionModelInputSize,
+            roi_method,
+            render_debug,
+            lightweight_track_prefilter.has_track_boundaries
+                ? &lightweight_track_prefilter
+                : nullptr);
     const auto extract_end = steady_clock_t::now();
     last_perf_sample_.extract_roi_ms =
         std::chrono::duration<double, std::milli>(extract_end - extract_begin).count();
@@ -2325,7 +2367,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     }
 
     // [Recognition Chain Step 4] 识别态自适应 1/2 帧推理。
-    // 作用：按文档流程重新提取 marker ROI，高置信单帧输出，低置信等待第二帧聚合。
+    // 作用：达到门槛时单帧输出，否则保留首帧概率等待第二个有效推理帧。
     if (render_debug)
     {
         view = frame_bgr.clone();
@@ -2510,15 +2552,6 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     const auto classify_begin = steady_clock_t::now();
     last_perf_sample_.classify_total_called = true;
     const size_t active_class_count = recognition_accum_class_count(class_names_.size());
-    const RoiQualityMetrics quality =
-        ComputeLowInformationRoiMetrics(roi_result.roi_bgr, roi_method, roi_result);
-    std::ostringstream quality_info;
-    quality_info << "quality: " << quality.reason;
-    if (render_debug)
-    {
-        cv::putText(view, quality_info.str(), cv::Point(16, 140), cv::FONT_HERSHEY_SIMPLEX,
-                    0.55, cv::Scalar(255, 255, 0), 2, cv::LINE_AA);
-    }
 
     const auto infer_begin = steady_clock_t::now();
     RoiClassificationTiming cls_timing;
@@ -2700,39 +2733,36 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         summarize_probabilities(decision_prob_sum, active_class_count, decision_valid_count);
 
     // [Recognition Chain Step 5] 自适应 1/2 帧判定。
-    // 作用：高置信单帧直接输出；低置信首帧等待第二帧概率平均后再输出。
+    // 作用：达到门槛时单帧输出；否则第二个有效推理帧按两帧平均 top1 强制输出。
     std::string label = "no_decision";
     TargetClass target = TargetClass::UNKNOWN;
     bool has_final_decision = false;
-    bool forced_two_frame_low_conf = false;
+    bool forced_two_frame_top1 = false;
     BoardVisionCode final_code = BoardVisionCode::NO_RESULT;
     std::string failure_reason =
         (decision_valid_count > 0) ? "low_confidence_or_margin_reject" :
         (was_waiting_second_frame ? "second_frame_invalid_model_output" : "invalid_model_output");
-    if (decision_valid_count > 0 &&
+    const bool has_valid_top1 =
+        decision_valid_count > 0 &&
         prob_summary.top1_index >= 0 &&
-        prob_summary.top1_index < static_cast<int>(active_class_count) &&
+        prob_summary.top1_index < static_cast<int>(active_class_count);
+    const bool passes_normal_threshold =
+        has_valid_top1 &&
         prob_summary.top1_prob >= decision_top1_threshold_ &&
-        prob_summary.margin >= decision_margin_threshold_)
+        prob_summary.margin >= decision_margin_threshold_;
+    forced_two_frame_top1 = was_waiting_second_frame && has_valid_top1;
+    if (passes_normal_threshold || forced_two_frame_top1)
     {
         label = runtime_decision_label(prob_summary.top1_index, class_names_);
         target = static_cast<TargetClass>(runtime_decision_target_code(prob_summary.top1_index, class_names_));
         final_code = vision_code_from_target_code(static_cast<uint8_t>(target));
         has_final_decision = (final_code != BoardVisionCode::INVALID);
-    }
-    else if (was_waiting_second_frame &&
-             decision_valid_count > 0 &&
-             prob_summary.top1_index >= 0 &&
-             prob_summary.top1_index < static_cast<int>(active_class_count))
-    {
-        label = runtime_decision_label(prob_summary.top1_index, class_names_);
-        target = static_cast<TargetClass>(runtime_decision_target_code(prob_summary.top1_index, class_names_));
-        final_code = vision_code_from_target_code(static_cast<uint8_t>(target));
-        has_final_decision = (final_code != BoardVisionCode::INVALID);
-        forced_two_frame_low_conf = has_final_decision;
-        failure_reason = forced_two_frame_low_conf
-            ? "two_frame_force_top1_after_low_conf"
-            : "two_frame_invalid_target_code";
+        if (forced_two_frame_top1)
+        {
+            failure_reason = has_final_decision
+                ? "two_frame_force_top1"
+                : "two_frame_invalid_target_code";
+        }
     }
 
     if (render_debug)
@@ -2750,17 +2780,13 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     {
         std::cout << "[RECOG] result=" << label
                   << ", valid_frames=" << decision_valid_count
-                  << ", mode=" << (was_waiting_second_frame ? "two_frame_avg" : "single_high_conf")
+                  << ", mode=" << (forced_two_frame_top1 ? "two_frame_forced_avg" : "single_high_conf")
                   << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
                   << ", forward_ms=" << cls_timing.forward_ms
                   << ", cls_ms=" << last_perf_sample_.classify_total_ms
                   << ", top1_prob=" << std::fixed << std::setprecision(4) << prob_summary.top1_prob
                   << ", margin=" << prob_summary.margin;
-        if (forced_two_frame_low_conf)
-        {
-            std::cout << ", reason=" << failure_reason;
-        }
-        else if (!has_final_decision)
+        if (forced_two_frame_top1 || !has_final_decision)
         {
             std::cout << ", reason=" << failure_reason;
         }

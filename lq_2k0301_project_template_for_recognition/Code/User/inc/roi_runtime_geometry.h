@@ -129,18 +129,11 @@ struct RoiExtractionResult
     double timing_roi_build_warp_ms = 0.0;
 };
 
-struct RoiQualityMetrics
-{
-    bool valid = false;
-    std::string reason;
-    double gray_std_top = 0.0;
-    double canny_density_top = 0.0;
-    double lap_var_top = 0.0;
-};
-
 struct RoiTrackRedPrefilterResult
 {
     bool has_track_boundaries = false;
+    int frame_width = 0;
+    int frame_height = 0;
     std::vector<cv::Point> track_left_boundary;
     std::vector<cv::Point> track_right_boundary;
     std::vector<cv::Point> track_region_polygon;
@@ -169,10 +162,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
 RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
                                       int output_size,
                                       RoiMethod roi_method,
-                                      bool render_debug);
-
-RoiQualityMetrics ComputeLowInformationRoiMetrics(const cv::Mat& roi_bgr,
-                                                  RoiMethod roi_method,
-                                                  const RoiExtractionResult& roi_result);
+                                      bool render_debug,
+                                      const RoiTrackRedPrefilterResult* track_prefilter = nullptr);
 
 void DrawRoiDebugOverlay(cv::Mat& image_bgr, const RoiExtractionResult& result);

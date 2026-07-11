@@ -226,6 +226,59 @@ void task_target_handler(void* arg){
 void task_board_comm_rx(void* arg)
 {
     static bool g_board_comm_link_logged = false;
+    static BoardRecognitionGate last_gate_sent = BoardRecognitionGate::INVALID;
+    static uint8_t gate_tx_seq = 0;
+    static uint64_t last_gate_send_ms = 0;
+    static uint64_t last_gate_attempt_ms = 0;
+    static uint64_t last_gate_failure_log_ms = 0;
+
+    const uint64_t now_ms = board_comm_now_ms();
+    const BoardRecognitionGate current_gate =
+        image_circle_recognition_gate_is_blocked()
+            ? BoardRecognitionGate::BLOCK
+            : BoardRecognitionGate::ALLOW;
+    const bool gate_changed = current_gate != last_gate_sent;
+    const bool gate_heartbeat_due =
+        last_gate_send_ms == 0 ||
+        BW_CIRCLE_RECOGNITION_GATE_HEARTBEAT_MS <= 0 ||
+        now_ms >= last_gate_send_ms +
+                      static_cast<uint64_t>(BW_CIRCLE_RECOGNITION_GATE_HEARTBEAT_MS);
+    const bool gate_retry_due =
+        last_gate_attempt_ms == 0 ||
+        BW_CIRCLE_RECOGNITION_GATE_HEARTBEAT_MS <= 0 ||
+        now_ms >= last_gate_attempt_ms +
+                      static_cast<uint64_t>(BW_CIRCLE_RECOGNITION_GATE_HEARTBEAT_MS);
+    if ((gate_changed || gate_heartbeat_due) && gate_retry_due)
+    {
+        last_gate_attempt_ms = now_ms;
+        const uint8_t send_seq =
+            (gate_changed && last_gate_sent != BoardRecognitionGate::INVALID)
+                ? static_cast<uint8_t>(gate_tx_seq + 1u)
+                : gate_tx_seq;
+        const bool send_ok = comm.send_recognition_gate(current_gate, send_seq);
+        if (send_ok)
+        {
+            gate_tx_seq = send_seq;
+            last_gate_sent = current_gate;
+            last_gate_send_ms = now_ms;
+        }
+        if (gate_changed && send_ok)
+        {
+            printf("[BoardComm] recognition gate tx=%s, seq=%u, ok=%s\n",
+                   current_gate == BoardRecognitionGate::BLOCK ? "BLOCK" : "ALLOW",
+                   static_cast<unsigned int>(send_seq),
+                   "yes");
+        }
+        else if (!send_ok &&
+                 (last_gate_failure_log_ms == 0 ||
+                  now_ms >= last_gate_failure_log_ms + 1000u))
+        {
+            last_gate_failure_log_ms = now_ms;
+            printf("[BoardComm] recognition gate tx=%s failed\n",
+                   current_gate == BoardRecognitionGate::BLOCK ? "BLOCK" : "ALLOW");
+        }
+    }
+
     BoardVisionCode code = BoardVisionCode::INVALID;
     uint8_t seq = 0;
     if (!comm.try_receive_state(&code, &seq))
@@ -244,7 +297,11 @@ void task_board_comm_rx(void* arg)
         printf("====================================================\n\n");
     }
 
-    image_remote_recognition_apply_state(code, seq, pure_angle, board_comm_now_ms());
+    if (image_circle_recognition_gate_is_blocked())
+    {
+        return;
+    }
+    image_remote_recognition_apply_state(code, seq, pure_angle, now_ms);
 }
 
 // ==================== 主函数 ====================

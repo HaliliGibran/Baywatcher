@@ -24,6 +24,49 @@ constexpr bool kRecognitionUToResultTimingLog = (BW_RECOG_U_TO_RESULT_TIMING_LOG
 constexpr bool kRecognitionTriggerFrameEarlyUSend =
     (BW_RECOG_TRIGGER_FRAME_EARLY_U_SEND_ENABLE != 0);
 
+struct RecognitionGateRuntime
+{
+    bool blocked = false;
+    uint64_t last_rx_ms = 0;
+    uint8_t last_seq = 0;
+};
+
+static bool PollRecognitionGate(RecognitionGateRuntime* gate,
+                                uint64_t t_ms,
+                                bool* stale_fail_open)
+{
+    if (stale_fail_open != nullptr)
+    {
+        *stale_fail_open = false;
+    }
+    if (gate == nullptr || BW_RECOG_CIRCLE_GATE_ENABLE == 0)
+    {
+        return false;
+    }
+
+    BoardRecognitionGate rx_gate = BoardRecognitionGate::INVALID;
+    uint8_t rx_seq = 0;
+    while (comm.try_receive_recognition_gate(&rx_gate, &rx_seq))
+    {
+        gate->blocked = (rx_gate == BoardRecognitionGate::BLOCK);
+        gate->last_rx_ms = t_ms;
+        gate->last_seq = rx_seq;
+    }
+
+    if (gate->blocked &&
+        gate->last_rx_ms > 0 &&
+        BW_RECOG_CIRCLE_GATE_STALE_MS > 0 &&
+        t_ms >= gate->last_rx_ms + static_cast<uint64_t>(BW_RECOG_CIRCLE_GATE_STALE_MS))
+    {
+        gate->blocked = false;
+        if (stale_fail_open != nullptr)
+        {
+            *stale_fail_open = true;
+        }
+    }
+    return gate->blocked;
+}
+
 static void ApplyRecognitionWhiteReferenceNormalization(cv::Mat* frame_bgr, bool allow_adapt)
 {
 #if BW_RECOG_WHITE_REF_NORMALIZE_ENABLE == 0
@@ -303,6 +346,7 @@ struct RuntimeFrameTimingSample
     steady_time_point_t chain_end;
     steady_time_point_t send_end;
     double capture_ms = 0.0;
+    double frame_age_ms = 0.0;
     double prepare_ms = 0.0;
     double chain_ms = 0.0;
     double overlay_ms = 0.0;
@@ -376,6 +420,7 @@ static void PrintTimingFrameLine(const char* label,
               << ", 识别态=" << (sample.in_recognition_before ? "1" : "0")
               << "->" << (sample.in_recognition_after ? "1" : "0")
               << ", 读帧_ms=" << sample.capture_ms
+              << ", 帧龄_ms=" << sample.frame_age_ms
               << ", 预处理_ms=" << sample.prepare_ms
               << ", 链路处理_ms=" << sample.chain_ms
               << ", 叠字_ms=" << sample.overlay_ms
@@ -426,6 +471,7 @@ static void PrintUToResultTimingTrace(const UToResultTimingState& state,
 
     const steady_time_point_t result_trace_end = timing_frame_trace_end(result_frame);
     const double total_ms = elapsed_ms_since(state.trigger_read_begin, result_trace_end);
+    const double capture_to_result_ms = trigger_frame.frame_age_ms + total_ms;
     const double trigger_to_first_u_send_ms =
         state.first_u_sent ? state.first_u_send_offset_ms : -1.0;
     const double trigger_to_enter_read_ms =
@@ -439,6 +485,7 @@ static void PrintUToResultTimingTrace(const UToResultTimingState& state,
               << ", 结果=" << VisionCodeText(result_frame.code_after)
               << ", 总耗时_读帧到结果发包完成_ms=" << std::fixed << std::setprecision(2)
               << total_ms
+              << ", 总耗时_采集完成到结果发包完成_ms=" << capture_to_result_ms
               << ", 触发到首次u发包完成_ms=" << trigger_to_first_u_send_ms
               << ", 触发到进入识别帧读取_ms=" << trigger_to_enter_read_ms
               << ", 触发到进入识别帧处理完成_ms=" << trigger_to_enter_done_ms
@@ -823,6 +870,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
     BoardVisionCode brick_hold_code = BoardVisionCode::INVALID;
     int brick_hold_remaining_frames = 0;
     UToResultTimingState u_to_result_timing;
+    RecognitionGateRuntime recognition_gate;
     const bool render_debug = stream_enabled;
     const bool latest_frame_enabled = (BW_RECOG_LATEST_FRAME_ENABLE != 0);
     bool latest_frame_running = false;
@@ -859,8 +907,66 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
 
     while (1)
     {
+        const uint64_t gate_poll_ms = recognition_runtime::now_ms();
+        const bool gate_blocked_before = recognition_gate.blocked;
+        bool gate_stale_fail_open = false;
+        const bool gate_blocked = PollRecognitionGate(
+            &recognition_gate,
+            gate_poll_ms,
+            &gate_stale_fail_open);
+        if (gate_blocked != gate_blocked_before)
+        {
+            if (gate_blocked)
+            {
+                recognition.Reset();
+                brick_hold_code = BoardVisionCode::INVALID;
+                brick_hold_remaining_frames = 0;
+                u_to_result_timing = UToResultTimingState();
+                prev_in_recognition = false;
+                manual_cycle_finished = false;
+                view.release();
+            }
+            std::cout << "[环岛识别门控] "
+                      << (gate_blocked ? "BLOCK，识别链已清空" : "ALLOW，识别链重新待机")
+                      << ", seq=" << static_cast<int>(recognition_gate.last_seq)
+                      << (gate_stale_fail_open ? ", 原因=门控心跳超时自动放行" : "")
+                      << std::endl;
+        }
+
+        if (gate_blocked)
+        {
+            const BoardVisionCode blocked_code = BoardVisionCode::UNKNOWN;
+            bool should_send_blocked_state = false;
+            if (blocked_code != last_sent_code)
+            {
+                if (last_sent_code != BoardVisionCode::INVALID)
+                {
+                    ++tx_seq;
+                }
+                last_sent_code = blocked_code;
+                should_send_blocked_state = true;
+            }
+            else if (last_send_ms == 0 ||
+                     BW_RECOG_STATE_HEARTBEAT_INTERVAL_MS <= 0 ||
+                     gate_poll_ms >=
+                         last_send_ms +
+                             static_cast<uint64_t>(BW_RECOG_STATE_HEARTBEAT_INTERVAL_MS))
+            {
+                should_send_blocked_state = true;
+            }
+
+            if (should_send_blocked_state)
+            {
+                comm.send_state(blocked_code, tx_seq);
+                last_send_ms = gate_poll_ms;
+            }
+            usleep(5 * 1000);
+            continue;
+        }
+
         const steady_time_point_t loop_begin = steady_clock_t::now();
         double capture_ms = 0.0;
+        double frame_age_ms = 0.0;
         double prepare_ms = 0.0;
         double chain_ms = 0.0;
         double overlay_ms = 0.0;
@@ -868,6 +974,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         double early_u_send_ms = 0.0;
         double publish_ms = 0.0;
         uint64_t current_frame_seq = 0;
+        uint64_t current_frame_capture_ms = 0;
         bool send_state_called = false;
         bool send_state_ok = false;
         bool early_u_send_called = false;
@@ -890,7 +997,10 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         const steady_time_point_t capture_begin = steady_clock_t::now();
         if (latest_frame_running)
         {
-            if (!latest_frame_source.GetLatestFrameSnapshot(&img, &current_frame_seq, nullptr))
+            if (!latest_frame_source.GetLatestFrameSnapshot(
+                    &img,
+                    &current_frame_seq,
+                    &current_frame_capture_ms))
             {
                 usleep(1000);
                 continue;
@@ -902,6 +1012,15 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         }
         const steady_time_point_t capture_end = steady_clock_t::now();
         capture_ms = elapsed_ms_between(capture_begin, capture_end);
+        if (latest_frame_running && current_frame_capture_ms > 0)
+        {
+            const uint64_t frame_read_begin_ms = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    capture_begin.time_since_epoch()).count());
+            frame_age_ms = frame_read_begin_ms >= current_frame_capture_ms
+                ? static_cast<double>(frame_read_begin_ms - current_frame_capture_ms)
+                : 0.0;
+        }
         if (img.empty())
         {
             usleep(5 * 1000);
@@ -1120,6 +1239,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         timing_sample.chain_end = chain_end;
         timing_sample.send_end = send_end_time;
         timing_sample.capture_ms = capture_ms;
+        timing_sample.frame_age_ms = frame_age_ms;
         timing_sample.prepare_ms = prepare_ms;
         timing_sample.chain_ms = chain_ms;
         timing_sample.overlay_ms = overlay_ms;

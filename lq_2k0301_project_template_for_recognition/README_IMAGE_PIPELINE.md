@@ -379,7 +379,7 @@
 10. `ipm_square_from_top_edge` 先在逆透视坐标系里推正方形，再回投到原图
 11. ROI 统一透视到 `64x64`
 12. 轻微条带误选会被 `strip_reject`
-13. 低纹理 ROI 会被 `low_info_reject` / `ipm_shallow_low_info_reject`
+13. ROI 低信息过滤链已删除，低纹理不再作为独立 reject 条件
 
 当前识别板这次只同步了白跑道横向范围约束，没有同步测试侧实验用的 `5:12` 红色标识块模型校验。
 

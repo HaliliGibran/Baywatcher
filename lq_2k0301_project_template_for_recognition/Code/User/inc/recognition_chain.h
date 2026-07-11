@@ -72,7 +72,7 @@ public:
     bool HasPendingTriggerRoiForImmediateInference() const;
     void ProcessPendingTriggerRoi(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
     // [Recognition Chain Step 4-5A] 识别态自适应 1/2 帧推理并给出结果。
-    // 作用：高置信单帧输出，低置信首帧保留识别态等待第二帧聚合。
+    // 作用：达到门槛时单帧输出，否则第二个有效推理帧按两帧平均 top1 强制输出。
     void ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
 
 private:

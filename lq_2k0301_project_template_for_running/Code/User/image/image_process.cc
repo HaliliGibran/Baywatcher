@@ -895,14 +895,8 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
         return;
     }
 
-    const bool vehicle_active = image_remote_recognition_is_vehicle_active(t_ms);
-    FollowLine forced_follow_mode = FollowLine::MIXED;
-    const bool remote_follow_locked =
-        image_remote_recognition_get_forced_follow_mode(&forced_follow_mode);
-    const bool remote_circle_block = image_remote_recognition_should_block_circle(t_ms);
-    const bool remote_route_active = image_remote_recognition_should_freeze_state_machine(t_ms);
-
     // follow_mode 由上层策略决定，这里只消费，不在主链入口硬重置。
+    const bool vehicle_active = image_remote_recognition_is_vehicle_active(t_ms);
     const track_search_result_t track_search = process_track_edges(img, vehicle_active);
     const bool zebra_special_lock = update_zebra_rush_state(img, t_ms);
     if (track_search == TRACK_SEARCH_VEHICLE_FALLBACK_HOLD)
@@ -922,6 +916,14 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
         return;
     }
 
+    // 环岛门控必须抢在远端接管分支前更新：单帧候选一出现就清掉远端状态，
+    // 不等待 element_detect 的多帧投票完成。
+    const bool circle_candidate =
+        !zebra_special_lock && track_has_circle_candidate();
+    image_circle_recognition_gate_update(circle_candidate, t_ms);
+
+    const bool remote_circle_block = image_remote_recognition_should_block_circle(t_ms);
+    const bool remote_route_active = image_remote_recognition_should_freeze_state_machine(t_ms);
 
     //=====================================================================================
 
@@ -979,9 +981,10 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
         image_reset_far_line_state();
         follow_mode = FollowLine::MIXED;
     }
-    else if (remote_route_active)
+    else if (remote_route_active && circle_state != CircleState::CIRCLE_RUNNING)
     {
-        // 远端 w/s/v 期间只“冻结”当前元素状态机，不再推进；u 进 vehicle 特殊巡线但不进此分支。
+        // 普通赛道远端 w/s/v 期间冻结元素状态机。
+        // CIRCLE_RUNNING 仍推进环岛状态机；一旦切到 OUT，门控会立即清掉远端接管。
         // 不清 element_type/circle_state/crossing_state，便于退出远端接管后继续沿原上下文恢复。
         // 只有 b/bl/br（remote_circle_block）会走清状态机分支。
     }
@@ -994,6 +997,13 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
         update_track_state_machine(img);
     }
 
+    // 状态机可能在本帧进入 RUNNING（放行）或从 RUNNING 进入 OUT（阻断），
+    // 因此在选择最终 path 前再同步一次门控。
+    image_circle_recognition_gate_update(circle_candidate, t_ms);
+
+    FollowLine forced_follow_mode = FollowLine::MIXED;
+    const bool remote_follow_locked =
+        image_remote_recognition_get_forced_follow_mode(&forced_follow_mode);
     bool remote_follow_override_applied = false;
     if (remote_follow_locked && !zebra_special_lock)
     {
