@@ -400,6 +400,11 @@ static std::string roi_reject_reason_text(const RoiExtractionResult& roi_result)
     {
         oss << ", reference_spans=" << roi_result.merged_reference_span_count;
     }
+    if (roi_result.has_track_forward_direction)
+    {
+        oss << ", track_forward="
+            << (roi_result.roi_used_track_forward_direction ? "used" : "fallback");
+    }
     if (!roi_result.ipm_reason.empty())
     {
         oss << ", ipm_reason=" << roi_result.ipm_reason;
@@ -1946,10 +1951,16 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         {
             recent_red_candidate_until_ms_ = t_ms + kRecognitionRecentCandidateHoldMs;
         }
+        if (!lightweight_track_prefilter.has_track_boundaries)
+        {
+            recent_red_candidate_until_ms_ = 0;
+        }
 
         if (!has_lightweight_recognition_red)
         {
-            const bool hold_recent_u = t_ms < recent_red_candidate_until_ms_;
+            const bool hold_recent_u =
+                lightweight_track_prefilter.has_track_boundaries &&
+                t_ms < recent_red_candidate_until_ms_;
             const bool output_u = has_lightweight_slowdown_red || hold_recent_u;
             current_blob_area_ = has_lightweight_slowdown_red
                 ? static_cast<double>(lightweight_slowdown_rect.area())
@@ -2405,6 +2416,65 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
         recent_red_candidate_until_ms_ = t_ms + kRecognitionRecentCandidateHoldMs;
     }
 
+    const size_t active_class_count = recognition_accum_class_count(class_names_.size());
+    const auto force_cached_first_frame_decision =
+        [&](const char* reason) -> bool {
+            const ProbabilityDecisionSummary cached_summary =
+                summarize_probabilities(
+                    adaptive_prob_sum_,
+                    active_class_count,
+                    adaptive_valid_frame_count_);
+            const bool has_valid_top1 =
+                adaptive_valid_frame_count_ > 0 &&
+                cached_summary.top1_index >= 0 &&
+                cached_summary.top1_index < static_cast<int>(active_class_count);
+            if (!has_valid_top1)
+            {
+                return false;
+            }
+
+            const TargetClass target = static_cast<TargetClass>(
+                runtime_decision_target_code(cached_summary.top1_index, class_names_));
+            const BoardVisionCode final_code =
+                vision_code_from_target_code(static_cast<uint8_t>(target));
+            if (final_code == BoardVisionCode::INVALID)
+            {
+                return false;
+            }
+
+            current_vision_code_ = final_code;
+            latched_symbol_code_ = is_success_symbol_code(final_code)
+                ? final_code
+                : BoardVisionCode::INVALID;
+            latched_release_pending_ = false;
+            latched_release_deadline_ms_ = 0;
+
+            if (kRecognitionResultLog)
+            {
+                std::cout << "[RECOG] result="
+                          << runtime_decision_label(cached_summary.top1_index, class_names_)
+                          << ", valid_frames=" << adaptive_valid_frame_count_
+                          << ", mode=cached_first_frame_fallback"
+                          << ", top1_prob=" << std::fixed << std::setprecision(4)
+                          << cached_summary.top1_prob
+                          << ", margin=" << cached_summary.margin
+                          << ", reason=" << reason
+                          << std::endl;
+                std::cout << "[RECOG] state_out="
+                          << vision_code_text(current_vision_code_)
+                          << ", blob_area=" << std::fixed << std::setprecision(1)
+                          << current_blob_area_
+                          << std::endl;
+            }
+
+            ClearAdaptiveDecision();
+            mode_ = Mode::NORMAL;
+            last_perf_sample_.process_recog_total_ms =
+                std::chrono::duration<double, std::milli>(
+                    steady_clock_t::now() - process_begin).count();
+            return true;
+        };
+
     const auto keep_adaptive_wait_on_bad_roi =
         [&](const char* roi_status, const std::string& reject_text) -> bool {
             if (!adaptive_decision_pending_)
@@ -2413,17 +2483,12 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
             }
 
             ++adaptive_bad_frame_count_;
-            if (adaptive_bad_frame_count_ > kRecognitionAdaptiveTwoFrameMaxBadFrames)
+            if (adaptive_bad_frame_count_ >= kRecognitionAdaptiveTwoFrameMaxBadFrames)
             {
-                if (kRecognitionResultLog)
-                {
-                    std::cout << "[RECOG] result=abort_second_frame_wait"
-                              << ", bad_frames=" << adaptive_bad_frame_count_
-                              << ", roi_status=" << roi_status
-                              << ", reason=" << reject_text
-                              << std::endl;
-                }
-                return false;
+                const std::string fallback_reason =
+                    std::string("second_frame_roi_timeout:") +
+                    roi_status + ":" + reject_text;
+                return force_cached_first_frame_decision(fallback_reason.c_str());
             }
 
             current_vision_code_ = BoardVisionCode::NO_RESULT;
@@ -2551,7 +2616,6 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     const auto classify_begin = steady_clock_t::now();
     last_perf_sample_.classify_total_called = true;
-    const size_t active_class_count = recognition_accum_class_count(class_names_.size());
 
     const auto infer_begin = steady_clock_t::now();
     RoiClassificationTiming cls_timing;
@@ -2630,7 +2694,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     if (was_waiting_second_frame && frame_valid_count <= 0)
     {
         ++adaptive_bad_frame_count_;
-        if (adaptive_bad_frame_count_ <= kRecognitionAdaptiveTwoFrameMaxBadFrames)
+        if (adaptive_bad_frame_count_ < kRecognitionAdaptiveTwoFrameMaxBadFrames)
         {
             current_vision_code_ = BoardVisionCode::NO_RESULT;
             latched_symbol_code_ = BoardVisionCode::INVALID;
@@ -2649,6 +2713,10 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
             }
             last_perf_sample_.process_recog_total_ms =
                 std::chrono::duration<double, std::milli>(steady_clock_t::now() - process_begin).count();
+            return;
+        }
+        if (force_cached_first_frame_decision("second_frame_invalid_model_output_timeout"))
+        {
             return;
         }
     }
