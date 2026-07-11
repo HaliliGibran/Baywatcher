@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <sstream>
 
@@ -896,6 +897,96 @@ static std::vector<cv::Point> BuildTrackBoundaryDisplayPoints(int seed_x,
     return points;
 }
 
+static float Cross2d(const cv::Point2f& a, const cv::Point2f& b)
+{
+    return a.x * b.y - a.y * b.x;
+}
+
+static bool FindStrictConnectorIntersection(const cv::Point2f& connector_start,
+                                            const cv::Point2f& connector_end,
+                                            const cv::Point2f& segment_start,
+                                            const cv::Point2f& segment_end,
+                                            cv::Point2f* out_intersection)
+{
+    if (out_intersection == nullptr)
+    {
+        return false;
+    }
+
+    const cv::Point2f connector = connector_end - connector_start;
+    const cv::Point2f segment = segment_end - segment_start;
+    const float denominator = Cross2d(connector, segment);
+    if (std::abs(denominator) <= 1e-6f)
+    {
+        return false;
+    }
+
+    const cv::Point2f start_delta = segment_start - connector_start;
+    const float connector_t = Cross2d(start_delta, segment) / denominator;
+    const float segment_t = Cross2d(start_delta, connector) / denominator;
+    constexpr float kEndpointEpsilon = 1e-4f;
+    if (connector_t <= kEndpointEpsilon ||
+        connector_t >= 1.0f - kEndpointEpsilon ||
+        segment_t < -kEndpointEpsilon ||
+        segment_t > 1.0f + kEndpointEpsilon)
+    {
+        return false;
+    }
+
+    *out_intersection = connector_start + connector * connector_t;
+    return true;
+}
+
+static bool TrimBoundaryTailAtConnectorIntersection(
+    const cv::Point& connector_start,
+    const cv::Point& connector_end,
+    std::vector<cv::Point>* boundary)
+{
+    if (boundary == nullptr || boundary->size() < 2)
+    {
+        return false;
+    }
+
+    const cv::Point2f connector_start_f(
+        static_cast<float>(connector_start.x),
+        static_cast<float>(connector_start.y));
+    const cv::Point2f connector_end_f(
+        static_cast<float>(connector_end.x),
+        static_cast<float>(connector_end.y));
+
+    for (size_t i = 0; i + 1 < boundary->size(); ++i)
+    {
+        cv::Point2f intersection;
+        if (!FindStrictConnectorIntersection(
+                connector_start_f,
+                connector_end_f,
+                cv::Point2f(
+                    static_cast<float>((*boundary)[i].x),
+                    static_cast<float>((*boundary)[i].y)),
+                cv::Point2f(
+                    static_cast<float>((*boundary)[i + 1].x),
+                    static_cast<float>((*boundary)[i + 1].y)),
+                &intersection))
+        {
+            continue;
+        }
+
+        std::vector<cv::Point> trimmed(
+            boundary->begin(),
+            boundary->begin() + static_cast<std::ptrdiff_t>(i + 1));
+        const cv::Point intersection_point(
+            static_cast<int>(std::lround(intersection.x)),
+            static_cast<int>(std::lround(intersection.y)));
+        if (trimmed.empty() || trimmed.back() != intersection_point)
+        {
+            trimmed.push_back(intersection_point);
+        }
+        boundary->swap(trimmed);
+        return true;
+    }
+    return false;
+}
+
 static std::vector<cv::Point> BuildTrackRegionPolygon(const TaskTrackBoundaryState& state)
 {
     if (!state.region_polygon.empty())
@@ -909,20 +1000,41 @@ static std::vector<cv::Point> BuildTrackRegionPolygon(const TaskTrackBoundarySta
         return polygon;
     }
 
-    const cv::Point bottom_left(state.seed_left_x, state.seed_y);
-    const cv::Point bottom_right(state.seed_right_x, state.seed_y);
-    const cv::Point top_right =
-        state.right_points.empty() ? bottom_right : state.right_points.back();
+    std::vector<cv::Point> left_boundary = BuildTrackBoundaryDisplayPoints(
+        state.seed_left_x, state.seed_y, state.left_points);
+    std::vector<cv::Point> right_boundary = BuildTrackBoundaryDisplayPoints(
+        state.seed_right_x, state.seed_y, state.right_points);
+    if (left_boundary.empty() || right_boundary.empty())
+    {
+        return polygon;
+    }
 
-    polygon.reserve(state.left_points.size() + state.right_points.size() + 4);
-    polygon.push_back(bottom_left);
-    polygon.insert(polygon.end(), state.left_points.begin(), state.left_points.end());
+    // Endpoint connectors must not cut through either traced boundary. If they
+    // do, discard the looped tail and close the track region at the crossing.
+    const size_t max_trim_passes = left_boundary.size() + right_boundary.size();
+    for (size_t pass = 0; pass < max_trim_passes; ++pass)
+    {
+        bool trimmed = false;
+        trimmed |= TrimBoundaryTailAtConnectorIntersection(
+            left_boundary.back(), right_boundary.back(), &right_boundary);
+        trimmed |= TrimBoundaryTailAtConnectorIntersection(
+            left_boundary.back(), right_boundary.back(), &left_boundary);
+        if (!trimmed)
+        {
+            break;
+        }
+    }
+
+    const cv::Point bottom_right = right_boundary.front();
+    const cv::Point top_right = right_boundary.back();
+    polygon.reserve(left_boundary.size() + right_boundary.size() + 2);
+    polygon.insert(polygon.end(), left_boundary.begin(), left_boundary.end());
     if (polygon.empty() || polygon.back() != top_right)
     {
         polygon.push_back(top_right);
     }
-    for (std::vector<cv::Point>::const_reverse_iterator it = state.right_points.rbegin();
-         it != state.right_points.rend();
+    for (std::vector<cv::Point>::const_reverse_iterator it = right_boundary.rbegin();
+         it != right_boundary.rend();
          ++it)
     {
         if (polygon.empty() || polygon.back() != *it)
