@@ -59,18 +59,11 @@ struct FullFrameBurstSendState
     uint64_t start_after_frame_index = 0;
 };
 
-enum class CaptureImageEncoding : uint8_t
-{
-    JPEG = 0,
-    PNG,
-};
-
-static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
-                                       const cv::Mat& image_bgr,
-                                       const char* name_prefix,
-                                       uint64_t t_ms,
-                                       CaptureImageEncoding encoding,
-                                       std::string* out_message);
+static bool send_named_bgr_png_to_pc(const RoiCaptureTransferConfig& config,
+                                     const cv::Mat& image_bgr,
+                                     const char* name_prefix,
+                                     uint64_t t_ms,
+                                     std::string* out_message);
 
 static bool send_all_bytes(int fd, const void* data, size_t size)
 {
@@ -204,21 +197,19 @@ static bool send_roi_to_pc(const RoiCaptureTransferConfig& config,
                            uint64_t t_ms,
                            std::string* out_message)
 {
-    return send_named_bgr_image_to_pc(
+    return send_named_bgr_png_to_pc(
         config,
         roi_bgr,
         "roi",
         t_ms,
-        CaptureImageEncoding::JPEG,
         out_message);
 }
 
-static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
-                                       const cv::Mat& image_bgr,
-                                       const char* name_prefix,
-                                       uint64_t t_ms,
-                                       CaptureImageEncoding encoding,
-                                       std::string* out_message)
+static bool send_named_bgr_png_to_pc(const RoiCaptureTransferConfig& config,
+                                     const cv::Mat& image_bgr,
+                                     const char* name_prefix,
+                                     uint64_t t_ms,
+                                     std::string* out_message)
 {
     if (out_message != nullptr)
     {
@@ -234,25 +225,15 @@ static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
         return false;
     }
 
-    const bool use_png = (encoding == CaptureImageEncoding::PNG);
-    const char* extension = use_png ? ".png" : ".jpg";
     std::vector<unsigned char> encoded_bytes;
     std::vector<int> encode_params;
-    if (use_png)
-    {
-        encode_params.push_back(cv::IMWRITE_PNG_COMPRESSION);
-        encode_params.push_back(BW_RECOG_FULLFRAME_CAPTURE_PNG_COMPRESSION);
-    }
-    else
-    {
-        encode_params.push_back(cv::IMWRITE_JPEG_QUALITY);
-        encode_params.push_back(BW_RECOG_ROI_CAPTURE_JPEG_QUALITY);
-    }
-    if (!cv::imencode(extension, image_bgr, encoded_bytes, encode_params) || encoded_bytes.empty())
+    encode_params.push_back(cv::IMWRITE_PNG_COMPRESSION);
+    encode_params.push_back(BW_RECOG_CAPTURE_PNG_COMPRESSION);
+    if (!cv::imencode(".png", image_bgr, encoded_bytes, encode_params) || encoded_bytes.empty())
     {
         if (out_message != nullptr)
         {
-            *out_message = use_png ? "png encode failed" : "jpeg encode failed";
+            *out_message = "png encode failed";
         }
         return false;
     }
@@ -270,7 +251,7 @@ static bool send_named_bgr_image_to_pc(const RoiCaptureTransferConfig& config,
 
     const char* prefix = (name_prefix != nullptr && name_prefix[0] != '\0') ? name_prefix : "capture";
     std::ostringstream name;
-    name << prefix << "_" << t_ms << extension;
+    name << prefix << "_" << t_ms << ".png";
     std::ostringstream header;
     header << "BWROI1\n";
     header << "name " << name.str() << "\n";
@@ -331,6 +312,83 @@ static cv::Mat build_fullframe_capture_crop(const cv::Mat& frame_bgr)
     return crop;
 }
 
+static RoiExtractionResult extract_model_input_roi(const cv::Mat& frame_bgr,
+                                                   bool render_debug,
+                                                   bool* out_hold_white_reference)
+{
+    if (out_hold_white_reference != nullptr)
+    {
+        *out_hold_white_reference = false;
+    }
+
+    if (BW_RECOG_LIGHTWEIGHT_RED_PREFILTER_ENABLE == 0)
+    {
+        RoiExtractionResult result = ExtractRotatedRoi(
+            frame_bgr,
+            BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE,
+            DefaultRoiMethod(),
+            render_debug);
+        if (out_hold_white_reference != nullptr)
+        {
+            *out_hold_white_reference =
+                result.status == "rotated_roi" && result.target_type == "marker";
+        }
+        return result;
+    }
+
+    RoiTrackRedPrefilterResult track_prefilter;
+    const int early_slowdown_y_max =
+        std::min(BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MAX, BW_RECOG_TRIGGER_SEARCH_Y_MIN);
+    const bool prefilter_ok = DetectTrackAwareRedPrefilter(
+        frame_bgr,
+        BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN,
+        early_slowdown_y_max,
+        BW_RECOG_TRIGGER_SEARCH_Y_MIN,
+        BW_RECOG_TRIGGER_SEARCH_Y_MAX,
+        render_debug,
+        &track_prefilter);
+
+    RoiExtractionResult result;
+    if (!prefilter_ok)
+    {
+        result.status = "prefilter_failed";
+        return result;
+    }
+
+    const bool has_early_marker =
+        BW_RECOG_EARLY_SLOWDOWN_ENABLE != 0 && track_prefilter.has_early_marker_red;
+    if (out_hold_white_reference != nullptr)
+    {
+        *out_hold_white_reference =
+            has_early_marker || track_prefilter.has_recognition_marker_red;
+    }
+
+    const bool has_recognition_red =
+        track_prefilter.has_recognition_marker_red ||
+        track_prefilter.has_recognition_brick_red;
+    if (!has_recognition_red)
+    {
+        if (render_debug)
+        {
+            result.track_left_boundary = track_prefilter.track_left_boundary;
+            result.track_right_boundary = track_prefilter.track_right_boundary;
+            result.track_region_polygon = track_prefilter.track_region_polygon;
+            result.has_track_left_boundary = !result.track_left_boundary.empty();
+            result.has_track_right_boundary = !result.track_right_boundary.empty();
+            result.has_track_region_polygon = result.track_region_polygon.size() >= 4;
+        }
+        result.status = "prefilter_no_trigger";
+        return result;
+    }
+
+    return ExtractRotatedRoi(
+        frame_bgr,
+        BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE,
+        DefaultRoiMethod(),
+        render_debug,
+        track_prefilter.has_track_boundaries ? &track_prefilter : nullptr);
+}
+
 static void draw_roi_preview_panel(cv::Mat& view, const cv::Mat& roi_bgr)
 {
     if (view.empty() || roi_bgr.empty())
@@ -365,7 +423,7 @@ static void draw_roi_capture_idle_view(const cv::Mat& frame_bgr,
     view = frame_bgr.clone();
     cv::putText(view, "ROI Capture Idle", cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX,
                 0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
-    cv::putText(view, "1: preview | 2: send 10 ROI | 3: send 10 lossless frames | 0: idle",
+    cv::putText(view, "1: preview | 2: send 10 lossless ROI | 3: send 10 lossless frames | 0: idle",
                 cv::Point(10, 52), cv::FONT_HERSHEY_SIMPLEX,
                 0.50, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
     std::ostringstream host_info;
@@ -393,7 +451,8 @@ static void draw_roi_capture_overlay(cv::Mat& view,
 
     cv::putText(view, "ROI Capture Preview", cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX,
                 0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
-    cv::putText(view, "1: preview  2: send 10 ROI  3: send 10 lossless frames  0: idle", cv::Point(10, 52),
+    cv::putText(view, "1: preview  2: send 10 lossless ROI  3: send 10 lossless frames  0: idle",
+                cv::Point(10, 52),
                 cv::FONT_HERSHEY_SIMPLEX, 0.50, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
 
     std::ostringstream roi_info;
@@ -564,6 +623,7 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
     bool latest_frame_running = false;
     uint64_t last_consumed_frame_seq = 0;
     uint64_t consumed_frame_index = 0;
+    uint64_t white_reference_hold_until_ms = 0;
     RoiCaptureModeState mode = RoiCaptureModeState::IDLE;
     RoiSendFeedback feedback;
     RoiBurstSendState roi_burst_state;
@@ -587,9 +647,10 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
                   << ":" << transfer_config.port
                   << " roi=" << BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE << "x" << BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE
                   << " roi_burst=" << BW_RECOG_ROI_CAPTURE_BURST_COUNT
+                  << " roi_format=png"
                   << " fullframe_burst=" << BW_RECOG_FULLFRAME_CAPTURE_BURST_COUNT
                   << " fullframe_format=png"
-                  << " png_compression=" << BW_RECOG_FULLFRAME_CAPTURE_PNG_COMPRESSION
+                  << " png_compression=" << BW_RECOG_CAPTURE_PNG_COMPRESSION
                   << std::endl;
     }
 
@@ -633,16 +694,28 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
         ++consumed_frame_index;
 
         const uint64_t t_ms = recognition_runtime::now_ms();
-        recognition_runtime::prepare_frame_for_processing(&img, true);
+        const bool hold_white_reference =
+            mode == RoiCaptureModeState::PREVIEW &&
+            t_ms < white_reference_hold_until_ms;
+        recognition_runtime::prepare_frame_for_processing(&img, !hold_white_reference);
 
         RoiExtractionResult roi_result;
+        bool hold_white_reference_from_frame = false;
         if (mode == RoiCaptureModeState::PREVIEW)
         {
-            roi_result = ExtractRotatedRoi(
+            roi_result = extract_model_input_roi(
                 img,
-                BW_RECOG_ROI_CAPTURE_OUTPUT_SIZE,
-                DefaultRoiMethod(),
-                render_debug);
+                render_debug,
+                &hold_white_reference_from_frame);
+            if (hold_white_reference_from_frame)
+            {
+                white_reference_hold_until_ms =
+                    t_ms + static_cast<uint64_t>(std::max(0, BW_RECOG_U_LOSS_HOLD_MS));
+            }
+            else if (roi_result.status == "prefilter_failed")
+            {
+                white_reference_hold_until_ms = 0;
+            }
         }
 
         char key = 0;
@@ -695,6 +768,7 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
             else if (key == '0')
             {
                 mode = RoiCaptureModeState::IDLE;
+                white_reference_hold_until_ms = 0;
                 roi_burst_state.active = false;
                 roi_burst_state.success_count = 0;
                 fullframe_burst_state.active = false;
@@ -765,12 +839,11 @@ void RunRoiCaptureBoard(bool stream_enabled, const RoiCaptureTransferConfig& tra
                 prefix << "frame_y" << BW_RECOG_PROCESS_KEEP_Y_MIN
                        << "_" << (BW_RECOG_PROCESS_KEEP_Y_MAX - 1);
                 std::string send_message;
-                if (send_named_bgr_image_to_pc(
+                if (send_named_bgr_png_to_pc(
                         transfer_config,
                         fullframe_crop,
                         prefix.str().c_str(),
                         t_ms,
-                        CaptureImageEncoding::PNG,
                         &send_message))
                 {
                     ++fullframe_burst_state.success_count;

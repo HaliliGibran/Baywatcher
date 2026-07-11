@@ -36,13 +36,13 @@ def recv_exact(conn, size):
 def sanitize_filename(name):
     base = Path(name).name.strip()
     if not base:
-        base = "roi.jpg"
+        base = "roi.png"
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
     safe = "".join(ch if ch in allowed else "_" for ch in base)
     if not safe:
-        safe = "roi.jpg"
+        safe = "roi.png"
     if "." not in safe:
-        safe += ".jpg"
+        safe += ".png"
     return safe
 
 
@@ -51,7 +51,7 @@ def unique_output_path(output_dir, name):
     if not target.exists():
         return target
     stem = target.stem
-    suffix = target.suffix or ".jpg"
+    suffix = target.suffix or ".png"
     index = 1
     while True:
         candidate = output_dir / f"{stem}_{index}{suffix}"
@@ -72,7 +72,7 @@ def handle_connection(conn, roi_output_dir, frame_output_dir):
     if magic != PROTOCOL_MAGIC:
         raise ValueError(f"unexpected magic: {magic!r}")
 
-    filename = "roi.jpg"
+    filename = "roi.png"
     payload_size = None
     while True:
         line = recv_line(conn)
@@ -97,7 +97,7 @@ def handle_connection(conn, roi_output_dir, frame_output_dir):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Receive ROI JPEGs and lossless full-frame PNGs pushed from recognition board."
+        description="Receive lossless ROI/full-frame PNGs pushed from recognition board."
     )
     parser.add_argument("--host", default=DEFAULT_HOST, help="listen host, default: %(default)s")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="listen port, default: %(default)s")
