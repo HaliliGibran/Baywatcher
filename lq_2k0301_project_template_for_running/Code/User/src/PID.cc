@@ -1531,8 +1531,11 @@ void BayWatcher_Control_Init(void) {
     // // 有负压 22 0.40 70% 7.8
     // PID_Cube.Kp_a = 6.725f ;  PID_Cube.Kp_b = 0.5379f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 314.10f ; PID_Cube.Kd_b = 0.00100f;
 
-    // 有负压 22 0.40 70% 7.8
-    PID_Cube.Kp_a = 6.75f ;  PID_Cube.Kp_b = 0.5389f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 316.10f ; PID_Cube.Kd_b = 0.00100f;
+    // // 有负压 22 0.40 70% 7.8
+    // PID_Cube.Kp_a = 6.75f ;  PID_Cube.Kp_b = 0.5389f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 316.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // 有负压 22 0.40 70% 7.11 new tyre
+    PID_Cube.Kp_a = 6.775f ;  PID_Cube.Kp_b = 0.5399f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 316.10f ; PID_Cube.Kd_b = 0.00100f;
 
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100;

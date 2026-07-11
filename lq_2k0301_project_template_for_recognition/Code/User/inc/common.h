@@ -18,8 +18,8 @@
 
 // [先调] 图传编译期默认开关，可被 --stream / --no-stream 覆盖。
 #ifndef BW_ENABLE_STREAM
-#define BW_ENABLE_STREAM 1
-// #define BW_ENABLE_STREAM 0
+// #define BW_ENABLE_STREAM 1
+#define BW_ENABLE_STREAM 0
 #endif
 
 // [先调] 1：上电后等待按 c 启动；0：上电即持续运行识别链。
@@ -91,12 +91,12 @@
 
 // [谨慎调] 成功识别后短暂丢目标时保持上次成功结果的时间。
 #ifndef BW_RECOG_SIGN_LOSS_HOLD_MS
-#define BW_RECOG_SIGN_LOSS_HOLD_MS 100
+#define BW_RECOG_SIGN_LOSS_HOLD_MS 80
 #endif
 
 // [谨慎调] 红砖 b/bl/br 短暂丢失时的输出保持帧数。
 #ifndef BW_RECOG_BRICK_LOSS_HOLD_FRAMES
-#define BW_RECOG_BRICK_LOSS_HOLD_FRAMES 2
+#define BW_RECOG_BRICK_LOSS_HOLD_FRAMES 1
 #endif
 
 // [谨慎调] 已看到标识块后，边线或红色短暂丢失时保持 u 的时间。
