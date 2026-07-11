@@ -556,7 +556,7 @@
 #endif
 
 #ifndef BW_RECOG_TRACK_MAZE_MAX_STEPS
-#define BW_RECOG_TRACK_MAZE_MAX_STEPS 200
+#define BW_RECOG_TRACK_MAZE_MAX_STEPS 300
 #endif
 
 // [一般别动] 识别板白带迷宫爬线按需缓存半窗口；2 表示每次只缓存 x-2..x+2。

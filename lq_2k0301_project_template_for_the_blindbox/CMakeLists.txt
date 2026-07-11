@@ -27,6 +27,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(main
     Code/main.cpp
+    Code/User/src/ESC.cc
+    Code/User/src/Key.cc
+    Code/User/src/Menu.cpp
+    Code/User/src/Motor.cc
     LQ_Libraries_old/APP/Display/LQ_Font.cpp
     LQ_Libraries_old/APP/Display/LQ_TFT18_dri.cpp
     LQ_Libraries_old/Driver/LQ_ATIM_PWM.cpp
@@ -36,6 +40,8 @@ add_executable(main
 )
 
 target_include_directories(main PRIVATE
+    ${PROJECT_SOURCE_DIR}/Code
+    ${PROJECT_SOURCE_DIR}/Code/User/inc
     ${PROJECT_SOURCE_DIR}/LQ_Libraries_old/APP/Display
     ${PROJECT_SOURCE_DIR}/LQ_Libraries_old/Driver/inc
 )
