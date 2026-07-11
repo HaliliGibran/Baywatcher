@@ -422,9 +422,10 @@
 #define BW_RECOG_CIRCLE_GATE_ENABLE 1
 #endif
 
-// 连续收不到运行板门控心跳时自动恢复 ALLOW，避免反向链路异常后永久锁死。
+// BLOCK 后是否允许因门控心跳超时自动恢复 ALLOW。
+// 设为 0：关闭超时自动放行，必须收到运行板明确 ALLOW 才解除环岛门控。
 #ifndef BW_RECOG_CIRCLE_GATE_STALE_MS
-#define BW_RECOG_CIRCLE_GATE_STALE_MS 250
+#define BW_RECOG_CIRCLE_GATE_STALE_MS 0
 #endif
 
 // --- 概率阈值、ROI 几何与相对阈值 ---
