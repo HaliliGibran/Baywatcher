@@ -212,7 +212,7 @@ void image_reset_tracking_observation_state();
 void image_remote_recognition_reset();
 
 // 功能: 根据当前帧环岛候选和环岛状态更新识别门控
-// 说明：候选、BEGIN、IN、OUT、END 阶段阻断；CIRCLE_RUNNING 明确放行。
+// 说明：候选、BEGIN、IN、OUT、END 阶段阻断；CIRCLE_RUNNING 立即放行。
 void image_circle_recognition_gate_update(bool circle_candidate, uint64_t t_ms);
 
 // 功能: 供串口线程和控制链查询当前是否应忽略识别板状态

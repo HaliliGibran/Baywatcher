@@ -382,7 +382,7 @@
 
 // 环岛识别门控总开关。
 // 开启后，运行板在环岛候选、BEGIN、IN、OUT、END 阶段阻断识别板；
-// 仅普通赛道和 CIRCLE_RUNNING 阶段允许识别。
+// 普通赛道和 CIRCLE_RUNNING 阶段允许识别。
 #ifndef BW_CIRCLE_RECOGNITION_GATE_ENABLE
 #define BW_CIRCLE_RECOGNITION_GATE_ENABLE 1
 #endif
