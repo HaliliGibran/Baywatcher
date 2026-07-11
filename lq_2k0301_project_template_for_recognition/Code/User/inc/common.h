@@ -118,18 +118,28 @@
 #define BW_RECOG_MARKER_ROI_TOP_EXPAND_PIXELS 16
 #endif
 
-// [开关] marker、提前减速红块和红砖只允许出现在整幅画面的指定 x 比例区间。
+// [开关] marker、提前减速红块和红砖的完整候选中心只允许位于指定 x 比例区间。
 #ifndef BW_RECOG_RED_IMAGE_X_GATE_ENABLE
 #define BW_RECOG_RED_IMAGE_X_GATE_ENABLE 1
 #endif
 
-// [先调] 红色允许参与检测的画面 x 比例范围；门控外不触发 u/b/识别。
+// [先调] 候选中心允许参与检测的画面 x 比例范围；门控不裁剪红色连通块。
 #ifndef BW_RECOG_RED_IMAGE_X_MIN_RATIO
 #define BW_RECOG_RED_IMAGE_X_MIN_RATIO 0.20f
 #endif
 
 #ifndef BW_RECOG_RED_IMAGE_X_MAX_RATIO
 #define BW_RECOG_RED_IMAGE_X_MAX_RATIO 0.80f
+#endif
+
+// [开关] 红色候选靠近左右门控边界时启用滞回，防止候选中心抖动造成帧间反复允许/屏蔽。
+#ifndef BW_RECOG_RED_IMAGE_X_GATE_HYSTERESIS_ENABLE
+#define BW_RECOG_RED_IMAGE_X_GATE_HYSTERESIS_ENABLE 1
+#endif
+
+// [先调] 门控命中后向画面边缘临时放宽的像素数；320 宽下左界约从 64 放宽到 55。
+#ifndef BW_RECOG_RED_IMAGE_X_GATE_HYSTERESIS_PIXELS
+#define BW_RECOG_RED_IMAGE_X_GATE_HYSTERESIS_PIXELS 9
 #endif
 
 // [谨慎调] 仅用于提前发 u / 减速的前置红色检测带上边界。

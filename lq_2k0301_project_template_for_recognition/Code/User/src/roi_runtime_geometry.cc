@@ -41,6 +41,10 @@ constexpr int kTaskMarkerSearchYMax = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr bool kTaskRedImageXGateEnable = BW_RECOG_RED_IMAGE_X_GATE_ENABLE != 0;
 constexpr float kTaskRedImageXMinRatio = BW_RECOG_RED_IMAGE_X_MIN_RATIO;
 constexpr float kTaskRedImageXMaxRatio = BW_RECOG_RED_IMAGE_X_MAX_RATIO;
+constexpr bool kTaskRedImageXGateHysteresisEnable =
+    BW_RECOG_RED_IMAGE_X_GATE_HYSTERESIS_ENABLE != 0;
+constexpr int kTaskRedImageXGateHysteresisPixels =
+    BW_RECOG_RED_IMAGE_X_GATE_HYSTERESIS_PIXELS;
 constexpr int kTaskRedScoreThreshold = 140;
 constexpr int kTaskRedMinR = 90;
 constexpr int kTaskRedDomThreshold = 80;
@@ -73,8 +77,24 @@ static_assert(kTaskRedImageXMinRatio >= 0.0f &&
                   kTaskRedImageXMinRatio < kTaskRedImageXMaxRatio &&
                   kTaskRedImageXMaxRatio <= 1.0f,
               "red image-x gate must stay inside [0, 1]");
+static_assert(kTaskRedImageXGateHysteresisPixels >= 0,
+              "red image-x gate hysteresis must not be negative");
 static_assert(kTrackBrickMinHorizontalRunPixels >= 1,
               "brick horizontal run threshold must be positive");
+
+struct TaskRedImageXGateState
+{
+    bool left_extended = false;
+    bool right_extended = false;
+};
+
+TaskRedImageXGateState g_task_red_image_x_gate_state;
+
+static bool CandidatePassesImageXGate(int image_width,
+                                      const cv::Point& candidate_center,
+                                      float* out_image_x_ratio,
+                                      int* out_gate_left_x,
+                                      int* out_gate_right_x);
 
 constexpr int kTrackDirectionFront[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
 constexpr int kTrackDirectionFrontLeft[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
@@ -561,9 +581,10 @@ static bool FindTaskPrefilterConnectedRedComponent(const cv::Mat& mask,
                                                    int min_pixel_count,
                                                    int min_width,
                                                    int min_height,
+                                                   int image_width,
                                                    cv::Rect* out_rect)
 {
-    if (mask.empty() || mask.type() != CV_8UC1)
+    if (mask.empty() || mask.type() != CV_8UC1 || image_width <= 0)
     {
         return false;
     }
@@ -585,7 +606,19 @@ static bool FindTaskPrefilterConnectedRedComponent(const cv::Mat& mask,
         {
             continue;
         }
+        const int left = stats.at<int>(label, cv::CC_STAT_LEFT);
+        const int center_x = left + width / 2;
         const int top = stats.at<int>(label, cv::CC_STAT_TOP);
+        const int center_y = top + height / 2 + image_y_offset;
+        if (!CandidatePassesImageXGate(
+                image_width,
+                cv::Point(center_x, center_y),
+                nullptr,
+                nullptr,
+                nullptr))
+        {
+            continue;
+        }
         const int bottom = top + height - 1;
         if (best_label < 0 || bottom > best_bottom ||
             (bottom == best_bottom && area > best_area))
@@ -1330,9 +1363,9 @@ static bool FindTrackRegionBoundsAtRow(const TaskTrackBoundaryState& state,
     return false;
 }
 
-static bool BuildImageXGateRange(int image_width,
-                                 int* out_gate_left_x,
-                                 int* out_gate_right_x)
+static bool BuildNominalImageXGateRange(int image_width,
+                                        int* out_gate_left_x,
+                                        int* out_gate_right_x)
 {
     if (out_gate_left_x == nullptr || out_gate_right_x == nullptr || image_width <= 0)
     {
@@ -1350,6 +1383,31 @@ static bool BuildImageXGateRange(int image_width,
         kTaskRedImageXMinRatio * image_x_max));
     *out_gate_right_x = static_cast<int>(std::floor(
         kTaskRedImageXMaxRatio * image_x_max));
+    return *out_gate_left_x <= *out_gate_right_x;
+}
+
+static bool BuildImageXGateRange(int image_width,
+                                 int* out_gate_left_x,
+                                 int* out_gate_right_x)
+{
+    int nominal_left_x = -1;
+    int nominal_right_x = -1;
+    if (!BuildNominalImageXGateRange(
+            image_width, &nominal_left_x, &nominal_right_x))
+    {
+        return false;
+    }
+
+    const int hysteresis_pixels =
+        kTaskRedImageXGateHysteresisEnable
+            ? kTaskRedImageXGateHysteresisPixels
+            : 0;
+    *out_gate_left_x = g_task_red_image_x_gate_state.left_extended
+        ? std::max(0, nominal_left_x - hysteresis_pixels)
+        : nominal_left_x;
+    *out_gate_right_x = g_task_red_image_x_gate_state.right_extended
+        ? std::min(image_width - 1, nominal_right_x + hysteresis_pixels)
+        : nominal_right_x;
     return *out_gate_left_x <= *out_gate_right_x;
 }
 
@@ -1395,8 +1453,51 @@ static bool CandidatePassesImageXGate(int image_width,
     {
         *out_gate_right_x = gate_right_x;
     }
-    return candidate_center.x >= gate_left_x &&
-           candidate_center.x <= gate_right_x;
+
+    const bool passes =
+        candidate_center.x >= gate_left_x &&
+        candidate_center.x <= gate_right_x;
+    if (!kTaskRedImageXGateEnable ||
+        !kTaskRedImageXGateHysteresisEnable ||
+        kTaskRedImageXGateHysteresisPixels <= 0)
+    {
+        g_task_red_image_x_gate_state = TaskRedImageXGateState();
+        return passes;
+    }
+
+    int nominal_left_x = -1;
+    int nominal_right_x = -1;
+    if (!BuildNominalImageXGateRange(
+            image_width, &nominal_left_x, &nominal_right_x))
+    {
+        g_task_red_image_x_gate_state = TaskRedImageXGateState();
+        return false;
+    }
+
+    if (!passes)
+    {
+        if (candidate_center.x < gate_left_x)
+        {
+            g_task_red_image_x_gate_state.left_extended = false;
+        }
+        if (candidate_center.x > gate_right_x)
+        {
+            g_task_red_image_x_gate_state.right_extended = false;
+        }
+        return false;
+    }
+
+    if (candidate_center.x <=
+        nominal_left_x + kTaskRedImageXGateHysteresisPixels)
+    {
+        g_task_red_image_x_gate_state.left_extended = true;
+    }
+    if (candidate_center.x >=
+        nominal_right_x - kTaskRedImageXGateHysteresisPixels)
+    {
+        g_task_red_image_x_gate_state.right_extended = true;
+    }
+    return true;
 }
 
 static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
@@ -2599,12 +2700,6 @@ static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_b
     }
 
     cv::Mat local_mask = cv::Mat::zeros(clamped.height, clamped.width, CV_8UC1);
-    int gate_left_x = -1;
-    int gate_right_x = -1;
-    if (!BuildImageXGateRange(frame_bgr.cols, &gate_left_x, &gate_right_x))
-    {
-        return local_mask;
-    }
     const int y0 = std::max(clamped.y, std::max(0, std::min(y_min, frame_bgr.rows)));
     const int y1 = std::min(
         clamped.y + clamped.height,
@@ -2626,10 +2721,8 @@ static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_b
             continue;
         }
 
-        const int x0 = std::max(std::max(clamped.x, bands.marker_x0), gate_left_x);
-        const int x1 = std::min(
-            std::min(clamped.x + clamped.width - 1, bands.marker_x1),
-            gate_right_x);
+        const int x0 = std::max(clamped.x, bands.marker_x0);
+        const int x1 = std::min(clamped.x + clamped.width - 1, bands.marker_x1);
         if (x1 < x0)
         {
             continue;
@@ -2788,13 +2881,6 @@ static bool FindTrackBrickRedInOuterBand(const cv::Mat& frame_bgr,
 
     TaskBrickBandAccumulator left_brick(frame_bgr.cols, frame_bgr.rows);
     TaskBrickBandAccumulator right_brick(frame_bgr.cols, frame_bgr.rows);
-    int gate_left_x = -1;
-    int gate_right_x = -1;
-    if (!BuildImageXGateRange(frame_bgr.cols, &gate_left_x, &gate_right_x))
-    {
-        return false;
-    }
-
     const int y0 = std::max(0, std::min(y_min, frame_bgr.rows));
     const int y1 = std::max(y0, std::min(y_max, frame_bgr.rows));
     for (int y = y0; y < y1; ++y)
@@ -2812,12 +2898,10 @@ static bool FindTrackBrickRedInOuterBand(const cv::Mat& frame_bgr,
             BuildTaskTrackRowSearchBands(left_x, right_x, frame_bgr.cols, y);
         if (bands.has_left_brick)
         {
-            const int brick_x0 = std::max(bands.left_brick_x0, gate_left_x);
-            const int brick_x1 = std::min(bands.left_brick_x1, gate_right_x);
             AccumulateTrackBrickRedRuns(
                 row,
-                brick_x0,
-                brick_x1,
+                bands.left_brick_x0,
+                bands.left_brick_x1,
                 y,
                 boundary_y,
                 left_x,
@@ -2828,12 +2912,10 @@ static bool FindTrackBrickRedInOuterBand(const cv::Mat& frame_bgr,
 
         if (bands.has_right_brick)
         {
-            const int brick_x0 = std::max(bands.right_brick_x0, gate_left_x);
-            const int brick_x1 = std::min(bands.right_brick_x1, gate_right_x);
             AccumulateTrackBrickRedRuns(
                 row,
-                brick_x0,
-                brick_x1,
+                bands.right_brick_x0,
+                bands.right_brick_x1,
                 y,
                 boundary_y,
                 left_x,
@@ -3084,12 +3166,6 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
         recognition_marker_mask = cv::Mat::zeros(recog_y1 - recog_y0, cols, CV_8UC1);
     }
     TaskPrefilterRedBounds recognition_brick_bounds;
-    int gate_left_x = -1;
-    int gate_right_x = -1;
-    if (!BuildImageXGateRange(cols, &gate_left_x, &gate_right_x))
-    {
-        return true;
-    }
 
     for (int y = scan_y0; y < scan_y1; ++y)
     {
@@ -3113,9 +3189,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
             BuildTaskTrackRowSearchBands(left_x, right_x, cols, y);
         if (bands.has_marker)
         {
-            const int marker_x0 = std::max(bands.marker_x0, gate_left_x);
-            const int marker_x1 = std::min(bands.marker_x1, gate_right_x);
-            for (int x = marker_x0; x <= marker_x1; ++x)
+            for (int x = bands.marker_x0; x <= bands.marker_x1; ++x)
             {
                 if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
                 {
@@ -3139,9 +3213,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
 
         if (bands.has_left_brick)
         {
-            const int brick_x0 = std::max(bands.left_brick_x0, gate_left_x);
-            const int brick_x1 = std::min(bands.left_brick_x1, gate_right_x);
-            for (int x = brick_x0; x <= brick_x1; ++x)
+            for (int x = bands.left_brick_x0; x <= bands.left_brick_x1; ++x)
             {
                 if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
                 {
@@ -3153,9 +3225,7 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
 
         if (bands.has_right_brick)
         {
-            const int brick_x0 = std::max(bands.right_brick_x0, gate_left_x);
-            const int brick_x1 = std::min(bands.right_brick_x1, gate_right_x);
-            for (int x = brick_x0; x <= brick_x1; ++x)
+            for (int x = bands.right_brick_x0; x <= bands.right_brick_x1; ++x)
             {
                 if (!IsTaskPrefilterRedPixel(row[x], red_thresholds))
                 {
@@ -3168,12 +3238,41 @@ bool DetectTrackAwareRedPrefilter(const cv::Mat& frame_bgr,
 
     out_result->has_early_marker_red =
         FindTaskPrefilterConnectedRedComponent(
-            early_marker_mask, early_y0, 24, 4, 4, &out_result->early_marker_rect);
+            early_marker_mask,
+            early_y0,
+            24,
+            4,
+            4,
+            cols,
+            &out_result->early_marker_rect);
     out_result->has_recognition_marker_red =
         FindTaskPrefilterConnectedRedComponent(
-            recognition_marker_mask, recog_y0, 8, 2, 2, &out_result->recognition_marker_rect);
-    out_result->has_recognition_brick_red =
-        recognition_brick_bounds.ToRect(1, 1, 1, &out_result->recognition_brick_rect);
+            recognition_marker_mask,
+            recog_y0,
+            8,
+            2,
+            2,
+            cols,
+            &out_result->recognition_marker_rect);
+
+    cv::Rect recognition_brick_rect;
+    if (recognition_brick_bounds.ToRect(1, 1, 1, &recognition_brick_rect))
+    {
+        const int brick_center_x =
+            recognition_brick_rect.x + recognition_brick_rect.width / 2;
+        const int brick_center_y =
+            recognition_brick_rect.y + recognition_brick_rect.height / 2;
+        if (CandidatePassesImageXGate(
+                cols,
+                cv::Point(brick_center_x, brick_center_y),
+                nullptr,
+                nullptr,
+                nullptr))
+        {
+            out_result->has_recognition_brick_red = true;
+            out_result->recognition_brick_rect = recognition_brick_rect;
+        }
+    }
     return true;
 }
 
