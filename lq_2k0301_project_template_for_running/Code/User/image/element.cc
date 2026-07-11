@@ -202,9 +202,16 @@ static element_candidate_result_t detect_current_element_candidate()
     return result;
 }
 
-bool track_has_circle_candidate()
+bool track_get_circle_candidate_direction(CircleDirection* out_direction)
 {
-    return detect_current_element_candidate().want_circle;
+    const element_candidate_result_t candidate = detect_current_element_candidate();
+    if (out_direction != nullptr)
+    {
+        *out_direction = candidate.want_circle
+            ? candidate.want_circle_dir
+            : CircleDirection::CIRCLE_DIR_NONE;
+    }
+    return candidate.want_circle;
 }
 
 // 功能: 元素判定与状态机入口（投票 + 保护帧）

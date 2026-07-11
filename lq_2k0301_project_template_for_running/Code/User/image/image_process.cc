@@ -29,6 +29,10 @@ typedef struct
 // 作用域：文件内静态，全局共享一份丢线补偿状态
 static pure_angle_lost_state_t g_pure_angle_lost = {0};
 static bool g_remote_inner_follow_log_active = false;
+static bool g_remote_inner_follow_log_circle = false;
+static int32_t g_circle_gate_candidate_streak = 0;
+static CircleDirection g_circle_gate_candidate_direction =
+    CircleDirection::CIRCLE_DIR_NONE;
 
 // 功能: 限幅单步变化量（用于丢线趋势外推的步长夹紧）
 // 类型: 局部功能函数
@@ -36,6 +40,33 @@ static bool g_remote_inner_follow_log_active = false;
 static inline float clip_step(float v, float max_abs)
 {
     return fclip(v, -max_abs, max_abs);
+}
+
+static bool update_circle_gate_candidate_confirmation(bool enabled)
+{
+    CircleDirection direction = CircleDirection::CIRCLE_DIR_NONE;
+    const bool raw_candidate =
+        enabled && track_get_circle_candidate_direction(&direction);
+    if (!raw_candidate)
+    {
+        g_circle_gate_candidate_streak = 0;
+        g_circle_gate_candidate_direction = CircleDirection::CIRCLE_DIR_NONE;
+        return false;
+    }
+
+    if (direction != g_circle_gate_candidate_direction)
+    {
+        g_circle_gate_candidate_direction = direction;
+        g_circle_gate_candidate_streak = 1;
+    }
+    else if (g_circle_gate_candidate_streak < 1000)
+    {
+        ++g_circle_gate_candidate_streak;
+    }
+
+    const int32_t confirm_frames =
+        std::max<int32_t>(1, BW_CIRCLE_RECOGNITION_GATE_CANDIDATE_CONFIRM_FRAMES);
+    return g_circle_gate_candidate_streak >= confirm_frames;
 }
 
 // 功能: pure_angle 丢线补偿（趋势外推+回线软切换）
@@ -592,6 +623,17 @@ static bool is_remote_follow_inner(bool is_left,
     return signed_curve_deg <= -BW_REMOTE_FOLLOW_INNER_CURVE_THRESHOLD_DEG;
 }
 
+static bool is_circle_running_inner_follow(bool is_left)
+{
+    if (circle_state != CircleState::CIRCLE_RUNNING)
+    {
+        return false;
+    }
+
+    return (circle_direction == CircleDirection::CIRCLE_DIR_LEFT && is_left) ||
+           (circle_direction == CircleDirection::CIRCLE_DIR_RIGHT && !is_left);
+}
+
 // 功能: 远端 w/s 锁边时，基于锁定侧边线生成绕行 path
 // 类型: 局部功能函数
 // 关键参数: forced_mode-锁定到左/右边线
@@ -623,20 +665,33 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         return false;
     }
 
+    const bool circle_running =
+        circle_state == CircleState::CIRCLE_RUNNING &&
+        (circle_direction == CircleDirection::CIRCLE_DIR_LEFT ||
+         circle_direction == CircleDirection::CIRCLE_DIR_RIGHT);
+    const bool circle_inner_follow =
+        circle_running && is_circle_running_inner_follow(is_left);
+    const float initial_offset_ratio = circle_running
+        ? (circle_inner_follow
+            ? BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO
+            : BW_REMOTE_FOLLOW_CIRCLE_OUTER_OFFSET_RATIO)
+        : BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO;
+
     float forced_line[PT_MAXLEN][2] = {};
     int32_t forced_count = 0;
     BuildRemoteFollowOuterLine(is_left,
                                src->pts_resample, &src->pts_resample_count,
                                forced_line, &forced_count,
-                               BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO);
+                               initial_offset_ratio);
     if (forced_count <= 0)
     {
         return false;
     }
 
-    const bool inner_follow =
-        is_remote_follow_inner(is_left, forced_line, forced_count);
-    if (inner_follow)
+    const bool inner_follow = circle_running
+        ? circle_inner_follow
+        : is_remote_follow_inner(is_left, forced_line, forced_count);
+    if (inner_follow && !circle_running)
     {
         forced_count = 0;
         BuildRemoteFollowOuterLine(is_left,
@@ -657,14 +712,18 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         return false;
     }
 
-    if (inner_follow && !g_remote_inner_follow_log_active)
+    if (inner_follow &&
+        (!g_remote_inner_follow_log_active ||
+         g_remote_inner_follow_log_circle != circle_inner_follow))
     {
-        printf("内绕\n");
+        printf("%s\n", circle_inner_follow ? "环岛内绕" : "内绕");
         g_remote_inner_follow_log_active = true;
+        g_remote_inner_follow_log_circle = circle_inner_follow;
     }
     else if (!inner_follow)
     {
         g_remote_inner_follow_log_active = false;
+        g_remote_inner_follow_log_circle = false;
     }
 
     CalculatePureAngleFromPath(midline.path, midline.path_count, &pure_angle);
@@ -891,6 +950,7 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     image_remote_recognition_tick(t_ms);
     if (handle_zebra_stop_lifecycle(t_ms))
     {
+        update_circle_gate_candidate_confirmation(false);
         image_remote_recognition_set_follow_path_state(false, false);
         return;
     }
@@ -901,6 +961,7 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     const bool zebra_special_lock = update_zebra_rush_state(img, t_ms);
     if (track_search == TRACK_SEARCH_VEHICLE_FALLBACK_HOLD)
     {
+        update_circle_gate_candidate_confirmation(false);
         float hold_yaw = 0.0f;
 
         if (image_remote_recognition_try_get_hold_yaw(t_ms, &hold_yaw))
@@ -916,10 +977,10 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
         return;
     }
 
-    // 环岛门控必须抢在远端接管分支前更新：单帧候选一出现就清掉远端状态，
-    // 不等待 element_detect 的多帧投票完成。
+    // 环岛门控必须抢在远端接管分支前更新；候选使用独立的短确认，
+    // 既早于 element_detect 的环岛状态确认，又过滤十字角点不同步造成的单帧误报。
     const bool circle_candidate =
-        !zebra_special_lock && track_has_circle_candidate();
+        update_circle_gate_candidate_confirmation(!zebra_special_lock);
     image_circle_recognition_gate_update(circle_candidate, t_ms);
 
     const bool remote_circle_block = image_remote_recognition_should_block_circle(t_ms);
@@ -1014,6 +1075,7 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     if (!remote_follow_override_applied)
     {
         g_remote_inner_follow_log_active = false;
+        g_remote_inner_follow_log_circle = false;
         image_remote_recognition_set_follow_path_state(false, false);
         build_midline_from_current_state();
         build_path_and_measure_pure_angle();

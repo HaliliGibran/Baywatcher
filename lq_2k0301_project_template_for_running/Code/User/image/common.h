@@ -340,6 +340,44 @@
 #define BW_REMOTE_FOLLOW_SPEED_RELEASE_ANGLE_DEG 3.0f
 #endif
 
+// ===== 环岛 RUNNING 内外绕专用参数 =====
+// 环岛内外绕判定不再依赖曲率符号：
+// - 左环岛锁左边线为内绕；
+// - 右环岛锁右边线为内绕。
+// - 左环岛锁右边线、右环岛锁左边线为外绕。
+
+// 环岛内绕时，锁定边线向外推的赛道宽比例。
+// 初值与普通内绕一致，调参时只修改本宏，不影响普通弯道内绕。
+#ifndef BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO
+#define BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO 0.10f
+#endif
+
+// 环岛内绕时左右轮目标平均速度倍率，只缩放平均速度，不改变差速量。
+#ifndef BW_REMOTE_FOLLOW_CIRCLE_INNER_AVERAGE_SPEED_RATIO
+#define BW_REMOTE_FOLLOW_CIRCLE_INNER_AVERAGE_SPEED_RATIO 0.8f
+#endif
+
+// 环岛内绕的小角解除减速阈值（度）。
+#ifndef BW_REMOTE_FOLLOW_CIRCLE_INNER_SPEED_RELEASE_ANGLE_DEG
+#define BW_REMOTE_FOLLOW_CIRCLE_INNER_SPEED_RELEASE_ANGLE_DEG 3.0f
+#endif
+
+// 环岛外绕时，锁定边线向外推的赛道宽比例。
+// 初值与普通外绕一致，调参时只修改本宏，不影响普通路段外绕。
+#ifndef BW_REMOTE_FOLLOW_CIRCLE_OUTER_OFFSET_RATIO
+#define BW_REMOTE_FOLLOW_CIRCLE_OUTER_OFFSET_RATIO 0.08f
+#endif
+
+// 环岛外绕时左右轮目标平均速度倍率，只缩放平均速度，不改变差速量。
+#ifndef BW_REMOTE_FOLLOW_CIRCLE_OUTER_AVERAGE_SPEED_RATIO
+#define BW_REMOTE_FOLLOW_CIRCLE_OUTER_AVERAGE_SPEED_RATIO 1.0f
+#endif
+
+// 环岛外绕的小角解除减速阈值（度）。
+#ifndef BW_REMOTE_FOLLOW_CIRCLE_OUTER_SPEED_RELEASE_ANGLE_DEG
+#define BW_REMOTE_FOLLOW_CIRCLE_OUTER_SPEED_RELEASE_ANGLE_DEG 3.0f
+#endif
+
 // ===== 远端状态保持与减速参数 =====
 
 // 环岛识别门控总开关。
@@ -352,6 +390,12 @@
 // 环岛候选消失或环岛退出后的门控保持时间（毫秒），用于抑制边界抖动。
 #ifndef BW_CIRCLE_RECOGNITION_GATE_HOLD_MS
 #define BW_CIRCLE_RECOGNITION_GATE_HOLD_MS 150
+#endif
+
+// 原始环岛单角点候选需要同方向连续出现的帧数，确认后才提前阻断识别板。
+// 2 帧可过滤十字左右角点不同步产生的单帧假环岛，同时仍早于 3 帧环岛状态机确认。
+#ifndef BW_CIRCLE_RECOGNITION_GATE_CANDIDATE_CONFIRM_FRAMES
+#define BW_CIRCLE_RECOGNITION_GATE_CANDIDATE_CONFIRM_FRAMES 2
 #endif
 
 // 运行板反向发送 ALLOW/BLOCK 门控心跳的周期（毫秒）。
