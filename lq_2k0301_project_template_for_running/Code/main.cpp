@@ -155,6 +155,8 @@ static const char* board_comm_code_text(BoardVisionCode code)
 // ====================== 线程任务  ===================
 void task_sensor_read(void* arg) {
     key_sys.Tick();
+    // printf("%f\n",vL);
+    // printf("%f\n",vR);
     // printf("%d\n",imu_sys.raw_gz);
     if (PID.is_running){
         // tof_left.Update();

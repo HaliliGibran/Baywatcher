@@ -1,35 +1,46 @@
-#include "Buzzer.h"
-#include "IMU.h"
 #include "LQ_ATIM_PWM.hpp"
 #include "LQ_GTIM_PWM.hpp"
 #include "LQ_HW_GPIO.hpp"
-#include "LQ_PWM_ENCODER.hpp"
 #include "LQ_TFT18_dri.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <csignal>
 #include <cstring>
-#include <cstdarg>
 #include <memory>
 #include <thread>
 
 namespace {
 
+// ===== 按键引脚：严格沿用 running 板 Key.cc =====
 constexpr uint8_t KEY_UP_PIN = 44;
 constexpr uint8_t KEY_DOWN_PIN = 45;
 constexpr uint8_t KEY_OK_PIN = 80;
 constexpr uint8_t KEY_CANCEL_PIN = 20;
 constexpr uint8_t KEY_BACK_PIN = 17;
 
+// ===== 电机参数：严格沿用 running 板 Motor.cc =====
+constexpr uint8_t MOTOR_RIGHT_PWM_PIN = 81; // Motor1，右轮
+constexpr uint8_t MOTOR_LEFT_PWM_PIN = 82;  // Motor2，左轮
+constexpr uint8_t MOTOR_RIGHT_DIR_PIN = 21;
+constexpr uint8_t MOTOR_LEFT_DIR_PIN = 22;
+constexpr uint32_t MOTOR_PWM_PERIOD = 17000;
+constexpr int16_t MOTOR_DUTY_HW_MAX = 10000;
+constexpr int16_t MOTOR_DUTY_TEST_MAX = 5000; // 测试限幅 50%，需要满幅时再手动放开
 constexpr int16_t MOTOR_DUTY_STEP = 500;
-constexpr int16_t MOTOR_DUTY_MAX = 5000;   // 测试默认限幅 50%，避免误伤
-constexpr int16_t ESC_PERCENT_STEP = 5;
-constexpr int16_t ESC_PERCENT_MAX = 50;    // 测试默认限幅 50%
+
+// ===== 电调参数：严格沿用 running 板 ESC.cc =====
+constexpr uint8_t ESC_RIGHT_PWM_PIN = 89; // TIM2CH3，右负压
+constexpr uint8_t ESC_LEFT_PWM_PIN = 77;  // TIM2CH4，左负压
+constexpr uint32_t ESC_PWM_FREQ = 50;
 constexpr uint16_t ESC_MIN_PWM = 500;
+constexpr uint16_t ESC_MAX_PWM = 1000;
+constexpr int16_t ESC_PERCENT_STEP = 5;
+constexpr int16_t ESC_PERCENT_TEST_MAX = 50; // 测试限幅 50%，避免负压电调直接满输出
 
 std::atomic_bool g_running{true};
 
@@ -42,51 +53,52 @@ enum class KeyEvent {
     Back,
 };
 
-enum class TestPage : uint8_t {
-    Buzzer = 0,
-    Encoder,
-    MotorPwm,
-    EscPwm,
-    Keys,
-    Imu,
-    Count,
+enum class Page : uint8_t {
+    Motor = 0,
+    Esc,
+};
+
+enum class MotorItem : uint8_t {
+    Enable = 1,
+    LeftDuty,
+    RightDuty,
+    Stop,
+};
+
+enum class EscItem : uint8_t {
+    Enable = 1,
+    Percent,
+    Stop,
 };
 
 struct DebouncedKey {
-    const char* name;
-    uint8_t pin;
-    KeyEvent event;
     std::unique_ptr<HWGpio> gpio;
+    KeyEvent event = KeyEvent::None;
     bool last_raw = true;
     bool stable = true;
     std::chrono::steady_clock::time_point changed_at{};
 
-    DebouncedKey(const char* key_name, uint8_t key_pin, KeyEvent key_event)
-        : name(key_name), pin(key_pin), event(key_event),
-          gpio(new HWGpio(key_pin, GPIO_Mode_In)),
+    DebouncedKey(uint8_t pin, KeyEvent key_event)
+        : gpio(new HWGpio(pin, GPIO_Mode_In)),
+          event(key_event),
           changed_at(std::chrono::steady_clock::now())
     {
     }
 
-    bool raw_level() const
-    {
-        return gpio->GetGpioValue();
-    }
-
     KeyEvent scan()
     {
-        const bool now_raw = raw_level();
+        const bool now_raw = gpio->GetGpioValue();
         const auto now = std::chrono::steady_clock::now();
 
         if (now_raw != last_raw) {
-            changed_at = now;
             last_raw = now_raw;
+            changed_at = now;
         }
 
-        if (now - changed_at > std::chrono::milliseconds(20) && now_raw != stable) {
+        if ((now - changed_at) > std::chrono::milliseconds(20) && now_raw != stable) {
             stable = now_raw;
             if (!stable) {
-                return event; // 按键低电平有效
+                return event; // 低电平有效
             }
         }
         return KeyEvent::None;
@@ -94,16 +106,13 @@ struct DebouncedKey {
 };
 
 struct Hardware {
-    std::unique_ptr<LS_PwmEncoder> enc_l;
-    std::unique_ptr<LS_PwmEncoder> enc_r;
+    std::unique_ptr<AtimPwm> motor_right_pwm;
+    std::unique_ptr<AtimPwm> motor_left_pwm;
+    std::unique_ptr<HWGpio> motor_right_dir;
+    std::unique_ptr<HWGpio> motor_left_dir;
 
-    std::unique_ptr<AtimPwm> motor_l_pwm;
-    std::unique_ptr<AtimPwm> motor_r_pwm;
-    std::unique_ptr<HWGpio> motor_l_dir;
-    std::unique_ptr<HWGpio> motor_r_dir;
-
-    std::unique_ptr<GtimPwm> esc_l_pwm;
-    std::unique_ptr<GtimPwm> esc_r_pwm;
+    std::unique_ptr<GtimPwm> esc_right_pwm;
+    std::unique_ptr<GtimPwm> esc_left_pwm;
 
     std::unique_ptr<DebouncedKey> key_up;
     std::unique_ptr<DebouncedKey> key_down;
@@ -113,56 +122,48 @@ struct Hardware {
 };
 
 struct AppState {
-    TestPage page = TestPage::Buzzer;
+    Page page = Page::Motor;
+    uint8_t highlight = 1;
+    bool editing = false;
+
     bool motor_enabled = false;
-    bool esc_enabled = false;
     int16_t motor_left_duty = 0;
     int16_t motor_right_duty = 0;
+
+    bool esc_enabled = false;
     int16_t esc_percent = 0;
-    uint32_t buzzer_ms = 300;
-    float enc_l = 0.0f;
-    float enc_r = 0.0f;
 };
+
+int16_t clamp_motor_duty(int16_t duty)
+{
+    const int16_t safe_max = std::min<int16_t>(MOTOR_DUTY_TEST_MAX, MOTOR_DUTY_HW_MAX);
+    return std::max<int16_t>(-safe_max, std::min<int16_t>(safe_max, duty));
+}
+
+int16_t clamp_esc_percent(int16_t percent)
+{
+    return std::max<int16_t>(0, std::min<int16_t>(ESC_PERCENT_TEST_MAX, percent));
+}
+
+void reset_output_state(AppState& state)
+{
+    state.motor_enabled = false;
+    state.motor_left_duty = 0;
+    state.motor_right_duty = 0;
+    state.esc_enabled = false;
+    state.esc_percent = 0;
+    state.editing = false;
+}
 
 void handle_signal(int)
 {
     g_running = false;
 }
 
-void try_load_module(const char* module_name)
+void try_load_tft_modules()
 {
-    char cmd[256];
-    std::snprintf(cmd, sizeof(cmd),
-                  "lsmod | grep -w '%s' >/dev/null 2>&1 || "
-                  "insmod $(find /home -name '%s.ko' -print -quit) >/dev/null 2>&1 || true",
-                  module_name, module_name);
-    std::system(cmd);
-}
-
-void try_load_required_modules()
-{
-    try_load_module("lq_i2c_all_dev");
-    try_load_module("lq_i2c_mpu6050_drv");
-    try_load_module("TFT18_dev");
-    try_load_module("TFT18_dri");
-}
-
-const char* page_title(TestPage page)
-{
-    switch (page) {
-    case TestPage::Buzzer: return "Buzzer";
-    case TestPage::Encoder: return "Encoder";
-    case TestPage::MotorPwm: return "Motor PWM";
-    case TestPage::EscPwm: return "ESC PWM";
-    case TestPage::Keys: return "Keys";
-    case TestPage::Imu: return "IMU";
-    default: return "-";
-    }
-}
-
-uint8_t page_index(TestPage page)
-{
-    return static_cast<uint8_t>(page);
+    std::system("lsmod | grep -w TFT18_dev >/dev/null 2>&1 || insmod $(find /home -name 'TFT18_dev.ko' -print -quit) >/dev/null 2>&1 || true");
+    std::system("lsmod | grep -w TFT18_dri >/dev/null 2>&1 || insmod $(find /home -name 'TFT18_dri.ko' -print -quit) >/dev/null 2>&1 || true");
 }
 
 void draw_line(uint8_t row, const char* text, uint16_t color = u16WHITE)
@@ -182,37 +183,66 @@ void drawf(uint8_t row, uint16_t color, const char* fmt, ...)
     draw_line(row, buf, color);
 }
 
-void motor_stop(Hardware& hw, AppState& state)
+uint16_t esc_percent_to_pwm(int16_t percent)
+{
+    percent = clamp_esc_percent(percent);
+    uint16_t duty = static_cast<uint16_t>(ESC_MIN_PWM * (1.0f + percent * 0.01f));
+    if (duty > ESC_MAX_PWM) duty = ESC_MAX_PWM;
+    if (duty < ESC_MIN_PWM) duty = ESC_MIN_PWM;
+    return duty;
+}
+
+void apply_motor(Hardware& hw, const AppState& state)
+{
+    if (!state.motor_enabled) {
+        hw.motor_right_pwm->SetDutyCycle(0);
+        hw.motor_left_pwm->SetDutyCycle(0);
+        return;
+    }
+
+    const int16_t right = clamp_motor_duty(state.motor_right_duty);
+    const int16_t left = clamp_motor_duty(state.motor_left_duty);
+
+    // 方向逻辑沿用 running 的 Motor1_Set / Motor2_Set
+    hw.motor_right_dir->SetGpioValue(right >= 0 ? 0 : 1);
+    hw.motor_left_dir->SetGpioValue(left >= 0 ? 1 : 0);
+    hw.motor_right_pwm->SetDutyCycle(static_cast<uint16_t>(std::abs(right)));
+    hw.motor_left_pwm->SetDutyCycle(static_cast<uint16_t>(std::abs(left)));
+}
+
+void apply_esc(Hardware& hw, const AppState& state)
+{
+    const uint16_t duty = state.esc_enabled ? esc_percent_to_pwm(state.esc_percent) : ESC_MIN_PWM;
+    hw.esc_left_pwm->SetDutyCycle(duty);
+    hw.esc_right_pwm->SetDutyCycle(duty);
+}
+
+void stop_motor(Hardware& hw, AppState& state)
 {
     state.motor_enabled = false;
-    if (hw.motor_l_pwm) hw.motor_l_pwm->SetDutyCycle(0);
-    if (hw.motor_r_pwm) hw.motor_r_pwm->SetDutyCycle(0);
+    state.motor_left_duty = 0;
+    state.motor_right_duty = 0;
+    hw.motor_right_pwm->SetDutyCycle(0);
+    hw.motor_left_pwm->SetDutyCycle(0);
 }
 
-void esc_stop(Hardware& hw, AppState& state)
+void stop_esc(Hardware& hw, AppState& state)
 {
     state.esc_enabled = false;
-    if (hw.esc_l_pwm) hw.esc_l_pwm->SetDutyCycle(ESC_MIN_PWM);
-    if (hw.esc_r_pwm) hw.esc_r_pwm->SetDutyCycle(ESC_MIN_PWM);
+    state.esc_percent = 0;
+    hw.esc_left_pwm->SetDutyCycle(ESC_MIN_PWM);
+    hw.esc_right_pwm->SetDutyCycle(ESC_MIN_PWM);
 }
 
-void apply_motor_pwm(Hardware& hw, const AppState& state)
+void stop_all(Hardware& hw, AppState& state)
 {
-    const int16_t left = std::max<int16_t>(-MOTOR_DUTY_MAX, std::min<int16_t>(MOTOR_DUTY_MAX, state.motor_left_duty));
-    const int16_t right = std::max<int16_t>(-MOTOR_DUTY_MAX, std::min<int16_t>(MOTOR_DUTY_MAX, state.motor_right_duty));
-
-    hw.motor_l_dir->SetGpioValue(left >= 0 ? 1 : 0);  // 与 running 的 Motor2 左轮方向一致
-    hw.motor_r_dir->SetGpioValue(right >= 0 ? 0 : 1); // 与 running 的 Motor1 右轮方向一致
-    hw.motor_l_pwm->SetDutyCycle(static_cast<uint16_t>(std::abs(left)));
-    hw.motor_r_pwm->SetDutyCycle(static_cast<uint16_t>(std::abs(right)));
+    stop_motor(hw, state);
+    stop_esc(hw, state);
 }
 
-void apply_esc_pwm(Hardware& hw, const AppState& state)
+uint8_t max_highlight(Page page)
 {
-    const int16_t pct = std::max<int16_t>(0, std::min<int16_t>(ESC_PERCENT_MAX, state.esc_percent));
-    const uint16_t duty = static_cast<uint16_t>(ESC_MIN_PWM * (1.0f + pct * 0.01f));
-    hw.esc_l_pwm->SetDutyCycle(duty);  // 左负压 IO77
-    hw.esc_r_pwm->SetDutyCycle(duty);  // 右负压 IO89
+    return page == Page::Motor ? 4 : 3;
 }
 
 KeyEvent scan_keys(Hardware& hw)
@@ -226,192 +256,197 @@ KeyEvent scan_keys(Hardware& hw)
     };
 
     for (DebouncedKey* key : keys) {
-        KeyEvent event = key->scan();
-        if (event != KeyEvent::None) {
-            return event;
-        }
+        const KeyEvent event = key->scan();
+        if (event != KeyEvent::None) return event;
     }
     return KeyEvent::None;
+}
+
+void switch_page(AppState& state)
+{
+    state.editing = false;
+    state.highlight = 1;
+    state.page = (state.page == Page::Motor) ? Page::Esc : Page::Motor;
+}
+
+void adjust_selected(AppState& state, int delta)
+{
+    if (state.page == Page::Motor) {
+        if (state.highlight == static_cast<uint8_t>(MotorItem::LeftDuty)) {
+            state.motor_left_duty = std::max<int16_t>(
+                -MOTOR_DUTY_TEST_MAX,
+                std::min<int16_t>(MOTOR_DUTY_TEST_MAX, state.motor_left_duty + delta * MOTOR_DUTY_STEP));
+        } else if (state.highlight == static_cast<uint8_t>(MotorItem::RightDuty)) {
+            state.motor_right_duty = std::max<int16_t>(
+                -MOTOR_DUTY_TEST_MAX,
+                std::min<int16_t>(MOTOR_DUTY_TEST_MAX, state.motor_right_duty + delta * MOTOR_DUTY_STEP));
+        }
+    } else {
+        if (state.highlight == static_cast<uint8_t>(EscItem::Percent)) {
+            state.esc_percent = std::max<int16_t>(
+                0,
+                std::min<int16_t>(ESC_PERCENT_TEST_MAX, state.esc_percent + delta * ESC_PERCENT_STEP));
+        }
+    }
 }
 
 void handle_event(KeyEvent event, Hardware& hw, AppState& state)
 {
     if (event == KeyEvent::None) return;
 
-    if (event == KeyEvent::Cancel || event == KeyEvent::Back) {
-        motor_stop(hw, state);
-        esc_stop(hw, state);
-        buzzer_sys.off();
+    if (event == KeyEvent::Cancel) {
+        stop_all(hw, state);
+        state.editing = false;
         return;
     }
 
-    switch (state.page) {
-    case TestPage::Buzzer:
-        if (event == KeyEvent::OK) buzzer_sys.beep(state.buzzer_ms);
-        break;
+    if (event == KeyEvent::Back) {
+        state.editing = false;
+        switch_page(state);
+        return;
+    }
 
-    case TestPage::Encoder:
-        if (event == KeyEvent::OK && hw.enc_l && hw.enc_r) {
-            hw.enc_l->ResetCounter();
-            hw.enc_r->ResetCounter();
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            hw.enc_l->CloseResCounter();
-            hw.enc_r->CloseResCounter();
+    if (state.editing) {
+        if (event == KeyEvent::Up) adjust_selected(state, +1);
+        if (event == KeyEvent::Down) adjust_selected(state, -1);
+        if (event == KeyEvent::OK) state.editing = false;
+        apply_motor(hw, state);
+        apply_esc(hw, state);
+        return;
+    }
+
+    if (event == KeyEvent::Up && state.highlight > 1) {
+        state.highlight--;
+        return;
+    }
+    if (event == KeyEvent::Down && state.highlight < max_highlight(state.page)) {
+        state.highlight++;
+        return;
+    }
+
+    if (event != KeyEvent::OK) return;
+
+    if (state.page == Page::Motor) {
+        switch (static_cast<MotorItem>(state.highlight)) {
+        case MotorItem::Enable:
+            state.motor_enabled = !state.motor_enabled;
+            apply_motor(hw, state);
+            break;
+        case MotorItem::LeftDuty:
+        case MotorItem::RightDuty:
+            state.editing = true;
+            break;
+        case MotorItem::Stop:
+            stop_motor(hw, state);
+            break;
         }
-        break;
-
-    case TestPage::MotorPwm:
-        if (event == KeyEvent::Up) {
-            state.motor_left_duty = std::min<int16_t>(MOTOR_DUTY_MAX, state.motor_left_duty + MOTOR_DUTY_STEP);
-            state.motor_right_duty = std::min<int16_t>(MOTOR_DUTY_MAX, state.motor_right_duty + MOTOR_DUTY_STEP);
+    } else {
+        switch (static_cast<EscItem>(state.highlight)) {
+        case EscItem::Enable:
+            state.esc_enabled = !state.esc_enabled;
+            apply_esc(hw, state);
+            break;
+        case EscItem::Percent:
+            state.editing = true;
+            break;
+        case EscItem::Stop:
+            stop_esc(hw, state);
+            break;
         }
-        if (event == KeyEvent::Down) {
-            state.motor_left_duty = std::max<int16_t>(-MOTOR_DUTY_MAX, state.motor_left_duty - MOTOR_DUTY_STEP);
-            state.motor_right_duty = std::max<int16_t>(-MOTOR_DUTY_MAX, state.motor_right_duty - MOTOR_DUTY_STEP);
-        }
-        if (event == KeyEvent::OK) state.motor_enabled = !state.motor_enabled;
-        if (state.motor_enabled) apply_motor_pwm(hw, state);
-        else motor_stop(hw, state);
-        break;
-
-    case TestPage::EscPwm:
-        if (event == KeyEvent::Up) state.esc_percent = std::min<int16_t>(ESC_PERCENT_MAX, state.esc_percent + ESC_PERCENT_STEP);
-        if (event == KeyEvent::Down) state.esc_percent = std::max<int16_t>(0, state.esc_percent - ESC_PERCENT_STEP);
-        if (event == KeyEvent::OK) state.esc_enabled = !state.esc_enabled;
-        if (state.esc_enabled) apply_esc_pwm(hw, state);
-        else esc_stop(hw, state);
-        break;
-
-    case TestPage::Keys:
-    case TestPage::Imu:
-    case TestPage::Count:
-        break;
     }
 }
 
-void change_page(KeyEvent event, AppState& state)
+uint16_t item_color(const AppState& state, uint8_t item)
 {
-    if (event != KeyEvent::Up && event != KeyEvent::Down) return;
-
-    const int count = static_cast<int>(TestPage::Count);
-    int next = static_cast<int>(state.page);
-    if (event == KeyEvent::Up) next = (next + count - 1) % count;
-    if (event == KeyEvent::Down) next = (next + 1) % count;
-    state.page = static_cast<TestPage>(next);
+    if (state.highlight != item) return u16WHITE;
+    return state.editing ? u16RED : u16YELLOW;
 }
 
-void draw_screen(Hardware& hw, const AppState& state)
+const char* cursor(const AppState& state, uint8_t item)
+{
+    return state.highlight == item ? "> " : "  ";
+}
+
+void draw_motor_page(const AppState& state)
+{
+    TFTSPI_dir_P8X16Str(0, 0, "=== Motor PWM ===", u16GREEN, u16BLACK);
+    if (state.editing) TFTSPI_dir_P8X16Str(14, 0, "[E]", u16RED, u16BLACK);
+
+    drawf(1, item_color(state, 1), "%sOutput:%s",
+          cursor(state, 1), state.motor_enabled ? "ON" : "OFF");
+    drawf(2, item_color(state, 2), "%sLeft :%d",
+          cursor(state, 2), state.motor_left_duty);
+    drawf(3, item_color(state, 3), "%sRight:%d",
+          cursor(state, 3), state.motor_right_duty);
+    drawf(4, item_color(state, 4), "%sSTOP Motor", cursor(state, 4));
+    drawf(5, u16WHITE, "  Limit:+/-%d", MOTOR_DUTY_TEST_MAX);
+    draw_line(6, "UP/DN move/change");
+    draw_line(7, "BACK page CAN stop", u16CYAN);
+}
+
+void draw_esc_page(const AppState& state)
+{
+    TFTSPI_dir_P8X16Str(0, 0, "=== ESC PWM ===", u16GREEN, u16BLACK);
+    if (state.editing) TFTSPI_dir_P8X16Str(14, 0, "[E]", u16RED, u16BLACK);
+
+    drawf(1, item_color(state, 1), "%sOutput:%s",
+          cursor(state, 1), state.esc_enabled ? "ON" : "OFF");
+    drawf(2, item_color(state, 2), "%sPercent:%d%%",
+          cursor(state, 2), state.esc_percent);
+    drawf(3, u16WHITE, "  PWM:%u", esc_percent_to_pwm(state.esc_percent));
+    drawf(4, item_color(state, 3), "%sSTOP ESC", cursor(state, 3));
+    drawf(5, u16WHITE, "  Limit:%d%%", ESC_PERCENT_TEST_MAX);
+    draw_line(6, "UP/DN move/change");
+    draw_line(7, "BACK page CAN stop", u16CYAN);
+}
+
+void draw_screen(const AppState& state)
 {
     TFTSPI_dir_cls(u16BLACK);
-    drawf(0, u16GREEN, "[%u/%u] %s",
-          page_index(state.page) + 1,
-          static_cast<unsigned>(TestPage::Count),
-          page_title(state.page));
-
-    switch (state.page) {
-    case TestPage::Buzzer:
-        drawf(1, u16WHITE, "duration:%lums", static_cast<unsigned long>(state.buzzer_ms));
-        draw_line(2, "OK: beep");
-        draw_line(3, "UP/DN: page");
-        break;
-
-    case TestPage::Encoder:
-        drawf(1, u16WHITE, "L:%8.2f", state.enc_l);
-        drawf(2, u16WHITE, "R:%8.2f", state.enc_r);
-        draw_line(3, "OK: reset counter");
-        break;
-
-    case TestPage::MotorPwm:
-        drawf(1, state.motor_enabled ? u16GREEN : u16YELLOW,
-              "state:%s", state.motor_enabled ? "ON" : "OFF");
-        drawf(2, u16WHITE, "L duty:%d", state.motor_left_duty);
-        drawf(3, u16WHITE, "R duty:%d", state.motor_right_duty);
-        draw_line(4, "OK:on/off UP/DN");
-        draw_line(5, "BACK/CAN: stop");
-        break;
-
-    case TestPage::EscPwm:
-        drawf(1, state.esc_enabled ? u16GREEN : u16YELLOW,
-              "state:%s", state.esc_enabled ? "ON" : "OFF");
-        drawf(2, u16WHITE, "percent:%d%%", state.esc_percent);
-        drawf(3, u16WHITE, "pwm:%d", static_cast<int>(ESC_MIN_PWM * (1.0f + state.esc_percent * 0.01f)));
-        draw_line(4, "OK:on/off UP/DN");
-        draw_line(5, "BACK/CAN: stop");
-        break;
-
-    case TestPage::Keys:
-        drawf(1, u16WHITE, "UP:%d DN:%d", !hw.key_up->raw_level(), !hw.key_down->raw_level());
-        drawf(2, u16WHITE, "OK:%d CA:%d", !hw.key_ok->raw_level(), !hw.key_cancel->raw_level());
-        drawf(3, u16WHITE, "BACK:%d", !hw.key_back->raw_level());
-        draw_line(4, "low level = press");
-        break;
-
-    case TestPage::Imu:
-        drawf(1, imu_sys.is_initialized ? u16GREEN : u16RED,
-              "init:%s", imu_sys.is_initialized ? "OK" : "FAIL");
-        drawf(2, u16WHITE, "AX:%d AY:%d", imu_sys.raw_ax, imu_sys.raw_ay);
-        drawf(3, u16WHITE, "AZ:%d", imu_sys.raw_az);
-        drawf(4, u16WHITE, "GX:%d GY:%d", imu_sys.raw_gx, imu_sys.raw_gy);
-        drawf(5, u16WHITE, "GZ:%d T:%.1f", imu_sys.raw_gz, imu_sys.temperature);
-        break;
-
-    case TestPage::Count:
-        break;
+    if (state.page == Page::Motor) {
+        draw_motor_page(state);
+    } else {
+        draw_esc_page(state);
     }
-
-    draw_line(7, "UP/DN page OK test", u16CYAN);
     TFTSPI_dir_flush();
 }
 
 void init_hardware(Hardware& hw)
 {
-    try_load_required_modules();
+    try_load_tft_modules();
+
     TFTSPI_dri_init(1);
     TFTSPI_dir_cls(u16BLACK);
-    draw_line(0, "Blindbox tester", u16GREEN);
+    draw_line(0, "Blindbox PWM Test", u16GREEN);
     draw_line(1, "initializing...");
     TFTSPI_dir_flush();
 
-    buzzer_sys.init();
-    imu_sys.init("/dev/lq_i2c_mpu6050");
+    hw.motor_right_pwm.reset(new AtimPwm(MOTOR_RIGHT_PWM_PIN, 1, LS_ATIM_INVERSED, MOTOR_PWM_PERIOD, 0));
+    hw.motor_left_pwm.reset(new AtimPwm(MOTOR_LEFT_PWM_PIN, 2, LS_ATIM_INVERSED, MOTOR_PWM_PERIOD, 0));
+    hw.motor_right_dir.reset(new HWGpio(MOTOR_RIGHT_DIR_PIN, GPIO_Mode_Out));
+    hw.motor_left_dir.reset(new HWGpio(MOTOR_LEFT_DIR_PIN, GPIO_Mode_Out));
+    hw.motor_right_pwm->Enable();
+    hw.motor_left_pwm->Enable();
+    hw.motor_right_dir->SetGpioValue(0);
+    hw.motor_left_dir->SetGpioValue(1);
+    hw.motor_right_pwm->SetDutyCycle(0);
+    hw.motor_left_pwm->SetDutyCycle(0);
 
-    hw.enc_l.reset(new LS_PwmEncoder(0, 72));
-    hw.enc_r.reset(new LS_PwmEncoder(1, 73));
+    hw.esc_right_pwm.reset(new GtimPwm(ESC_RIGHT_PWM_PIN, 3, LS_GTIM_INVERSED, ESC_PWM_FREQ, ESC_MIN_PWM));
+    hw.esc_left_pwm.reset(new GtimPwm(ESC_LEFT_PWM_PIN, 4, LS_GTIM_INVERSED, ESC_PWM_FREQ, ESC_MIN_PWM, 0b01));
+    hw.esc_right_pwm->Enable();
+    hw.esc_left_pwm->Enable();
+    hw.esc_right_pwm->SetDutyCycle(ESC_MIN_PWM);
+    hw.esc_left_pwm->SetDutyCycle(ESC_MIN_PWM);
 
-    hw.motor_r_pwm.reset(new AtimPwm(81, 1, LS_ATIM_INVERSED, 17000, 0));
-    hw.motor_l_pwm.reset(new AtimPwm(82, 2, LS_ATIM_INVERSED, 17000, 0));
-    hw.motor_r_dir.reset(new HWGpio(21, GPIO_Mode_Out));
-    hw.motor_l_dir.reset(new HWGpio(22, GPIO_Mode_Out));
-    hw.motor_r_pwm->Enable();
-    hw.motor_l_pwm->Enable();
-    hw.motor_r_pwm->SetDutyCycle(0);
-    hw.motor_l_pwm->SetDutyCycle(0);
-
-    hw.esc_r_pwm.reset(new GtimPwm(89, 3, LS_GTIM_INVERSED, 50, ESC_MIN_PWM));
-    hw.esc_l_pwm.reset(new GtimPwm(77, 4, LS_GTIM_INVERSED, 50, ESC_MIN_PWM, 0b01));
-    hw.esc_r_pwm->Enable();
-    hw.esc_l_pwm->Enable();
-    hw.esc_r_pwm->SetDutyCycle(ESC_MIN_PWM);
-    hw.esc_l_pwm->SetDutyCycle(ESC_MIN_PWM);
-
-    hw.key_up.reset(new DebouncedKey("UP", KEY_UP_PIN, KeyEvent::Up));
-    hw.key_down.reset(new DebouncedKey("DOWN", KEY_DOWN_PIN, KeyEvent::Down));
-    hw.key_ok.reset(new DebouncedKey("OK", KEY_OK_PIN, KeyEvent::OK));
-    hw.key_cancel.reset(new DebouncedKey("CANCEL", KEY_CANCEL_PIN, KeyEvent::Cancel));
-    hw.key_back.reset(new DebouncedKey("BACK", KEY_BACK_PIN, KeyEvent::Back));
-}
-
-void safe_shutdown(Hardware& hw, AppState& state)
-{
-    motor_stop(hw, state);
-    esc_stop(hw, state);
-    buzzer_sys.off();
+    hw.key_up.reset(new DebouncedKey(KEY_UP_PIN, KeyEvent::Up));
+    hw.key_down.reset(new DebouncedKey(KEY_DOWN_PIN, KeyEvent::Down));
+    hw.key_ok.reset(new DebouncedKey(KEY_OK_PIN, KeyEvent::OK));
+    hw.key_cancel.reset(new DebouncedKey(KEY_CANCEL_PIN, KeyEvent::Cancel));
+    hw.key_back.reset(new DebouncedKey(KEY_BACK_PIN, KeyEvent::Back));
 }
 
 } // namespace
-
-BayWatcher_Buzzer buzzer_sys;
-BayWatcher_IMU imu_sys;
 
 int main()
 {
@@ -421,55 +456,32 @@ int main()
     Hardware hw;
     AppState state;
 
+    reset_output_state(state);
     init_hardware(hw);
+    stop_all(hw, state);
+    draw_screen(state);
 
-    auto last_draw = std::chrono::steady_clock::now() - std::chrono::milliseconds(200);
+    auto last_draw = std::chrono::steady_clock::now();
     while (g_running) {
-        buzzer_sys.Tick();
-
-        if (hw.enc_l && hw.enc_r) {
-            state.enc_l = hw.enc_l->Update();
-            state.enc_r = hw.enc_r->Update();
-        }
-
-        if (imu_sys.is_initialized) {
-            imu_sys.update();
-        }
-
         const KeyEvent event = scan_keys(hw);
-        const TestPage page_before_event = state.page;
-        if (state.page == TestPage::Buzzer || state.page == TestPage::Encoder ||
-            state.page == TestPage::MotorPwm || state.page == TestPage::EscPwm) {
+        if (event != KeyEvent::None) {
             handle_event(event, hw, state);
-        } else if (event == KeyEvent::Cancel || event == KeyEvent::Back) {
-            safe_shutdown(hw, state);
-        }
-
-        // 非 PWM 输出页：UP/DOWN 翻页。PWM 输出页：UP/DOWN 调输出。
-        if ((event == KeyEvent::Up || event == KeyEvent::Down) &&
-            page_before_event != TestPage::MotorPwm &&
-            page_before_event != TestPage::EscPwm) {
-            change_page(event, state);
-        }
-
-        // Motor/ESC 页用 BACK/CANCEL 停止输出，并切到下一项测试。
-        if ((event == KeyEvent::Cancel || event == KeyEvent::Back) &&
-            (page_before_event == TestPage::MotorPwm || page_before_event == TestPage::EscPwm)) {
-            change_page(KeyEvent::Down, state);
+            draw_screen(state);
+            last_draw = std::chrono::steady_clock::now();
         }
 
         const auto now = std::chrono::steady_clock::now();
-        if (now - last_draw > std::chrono::milliseconds(150) || event != KeyEvent::None) {
-            draw_screen(hw, state);
+        if (now - last_draw > std::chrono::milliseconds(500)) {
+            draw_screen(state);
             last_draw = now;
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    safe_shutdown(hw, state);
+    stop_all(hw, state);
     TFTSPI_dir_cls(u16BLACK);
-    draw_line(0, "tester stopped", u16YELLOW);
+    draw_line(0, "PWM test stopped", u16YELLOW);
     TFTSPI_dir_flush();
     return 0;
 }

@@ -27,25 +27,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(main
     Code/main.cpp
-    Code/User/src/Buzzer.cc
-    Code/User/src/IMU.cc
     LQ_Libraries_old/APP/Display/LQ_Font.cpp
     LQ_Libraries_old/APP/Display/LQ_TFT18_dri.cpp
     LQ_Libraries_old/Driver/LQ_ATIM_PWM.cpp
     LQ_Libraries_old/Driver/LQ_GTIM_PWM.cpp
     LQ_Libraries_old/Driver/LQ_HW_GPIO.cpp
     LQ_Libraries_old/Driver/LQ_MAP_ADDR.cpp
-    LQ_Libraries_old/Driver/LQ_PWM_ENCODER.cpp
-    LQ_Libraries_new/app/gyro/lq_i2c_mpu6050.cpp
-    LQ_Libraries_new/common/src/lq_i2c_dev.cpp
 )
 
 target_include_directories(main PRIVATE
-    ${PROJECT_SOURCE_DIR}/Code/User/inc
     ${PROJECT_SOURCE_DIR}/LQ_Libraries_old/APP/Display
-    ${PROJECT_SOURCE_DIR}/LQ_Libraries_new/app
-    ${PROJECT_SOURCE_DIR}/LQ_Libraries_new/app/gyro
-    ${PROJECT_SOURCE_DIR}/LQ_Libraries_new/common/inc
     ${PROJECT_SOURCE_DIR}/LQ_Libraries_old/Driver/inc
 )
 
