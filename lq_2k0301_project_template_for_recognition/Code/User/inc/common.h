@@ -118,6 +118,25 @@
 #define BW_RECOG_MARKER_ROI_TOP_EXPAND_PIXELS 16
 #endif
 
+// [开关] 远端 marker 只允许出现在所在行赛道宽度的中部，抑制弯道远端左右边缘误识别。
+#ifndef BW_RECOG_MARKER_FAR_LATERAL_GATE_ENABLE
+#define BW_RECOG_MARKER_FAR_LATERAL_GATE_ENABLE 1
+#endif
+
+// [先调] 候选底边不高于该 y 时启用远端横向门控。
+#ifndef BW_RECOG_MARKER_FAR_LATERAL_GATE_Y_MAX
+#define BW_RECOG_MARKER_FAR_LATERAL_GATE_Y_MAX 90
+#endif
+
+// [先调] 远端候选中心在当前行赛道宽度内允许的归一化横向范围。
+#ifndef BW_RECOG_MARKER_FAR_TRACK_U_MIN
+#define BW_RECOG_MARKER_FAR_TRACK_U_MIN 0.20f
+#endif
+
+#ifndef BW_RECOG_MARKER_FAR_TRACK_U_MAX
+#define BW_RECOG_MARKER_FAR_TRACK_U_MAX 0.80f
+#endif
+
 // [谨慎调] 仅用于提前发 u / 减速的前置红色检测带上边界。
 #ifndef BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN
 #define BW_RECOG_SLOWDOWN_TRIGGER_SEARCH_Y_MIN 40
@@ -537,7 +556,7 @@
 #endif
 
 #ifndef BW_RECOG_TRACK_MAZE_MAX_STEPS
-#define BW_RECOG_TRACK_MAZE_MAX_STEPS 300
+#define BW_RECOG_TRACK_MAZE_MAX_STEPS 200
 #endif
 
 // [一般别动] 识别板白带迷宫爬线按需缓存半窗口；2 表示每次只缓存 x-2..x+2。

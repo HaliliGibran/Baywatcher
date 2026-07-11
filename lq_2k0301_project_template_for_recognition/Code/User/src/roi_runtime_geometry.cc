@@ -37,6 +37,12 @@ constexpr int kTaskMarkerSearchYMin =
         ? kTaskMarkerExpandedYMin
         : kTaskTrackBoundaryYMin;
 constexpr int kTaskMarkerSearchYMax = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
+constexpr bool kTaskMarkerFarLateralGateEnable =
+    BW_RECOG_MARKER_FAR_LATERAL_GATE_ENABLE != 0;
+constexpr int kTaskMarkerFarLateralGateYMax =
+    BW_RECOG_MARKER_FAR_LATERAL_GATE_Y_MAX;
+constexpr float kTaskMarkerFarTrackUMin = BW_RECOG_MARKER_FAR_TRACK_U_MIN;
+constexpr float kTaskMarkerFarTrackUMax = BW_RECOG_MARKER_FAR_TRACK_U_MAX;
 constexpr int kTaskRedScoreThreshold = 140;
 constexpr int kTaskRedMinR = 90;
 constexpr int kTaskRedDomThreshold = 80;
@@ -59,6 +65,11 @@ constexpr int kTrackMazeMaxSteps = BW_RECOG_TRACK_MAZE_MAX_STEPS;
 constexpr int kTrackLazyMaskHalfWindow = BW_RECOG_TRACK_LAZY_MASK_HALF_WINDOW;
 constexpr unsigned char kTrackWhitePixel = 255;
 constexpr unsigned char kTrackNonWhitePixel = 0;
+
+static_assert(kTaskMarkerFarTrackUMin >= 0.0f &&
+                  kTaskMarkerFarTrackUMin < kTaskMarkerFarTrackUMax &&
+                  kTaskMarkerFarTrackUMax <= 1.0f,
+              "far marker track-u gate must stay inside [0, 1]");
 
 constexpr int kTrackDirectionFront[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
 constexpr int kTrackDirectionFrontLeft[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
@@ -1045,6 +1056,10 @@ static void TraceTaskWhiteBoundaryLeftMaze(TaskWhiteLazyMaskCache* white_cache,
 
         ++step;
         turn = 0;
+        if (h < kTaskTrackTraceTopY)
+        {
+            break;
+        }
         out_points->push_back(cv::Point(w, h));
 
         if (h <= kTaskTrackTraceTopY)
@@ -1109,6 +1124,10 @@ static void TraceTaskWhiteBoundaryRightMaze(TaskWhiteLazyMaskCache* white_cache,
 
         ++step;
         turn = 0;
+        if (h < kTaskTrackTraceTopY)
+        {
+            break;
+        }
         out_points->push_back(cv::Point(w, h));
 
         if (h <= kTaskTrackTraceTopY)
@@ -1149,6 +1168,78 @@ static bool FindTrackRegionBoundsAtRow(const TaskTrackBoundaryState& state,
     }
 
     return false;
+}
+
+static bool MarkerPassesFarTrackLateralGate(const TaskTrackBoundaryState& state,
+                                            const cv::Rect& candidate_box,
+                                            float* out_track_u,
+                                            int* out_left_x,
+                                            int* out_right_x,
+                                            int* out_row_y)
+{
+    if (out_track_u != nullptr)
+    {
+        *out_track_u = 0.5f;
+    }
+    if (out_left_x != nullptr)
+    {
+        *out_left_x = -1;
+    }
+    if (out_right_x != nullptr)
+    {
+        *out_right_x = -1;
+    }
+    if (out_row_y != nullptr)
+    {
+        *out_row_y = -1;
+    }
+
+    if (!kTaskMarkerFarLateralGateEnable)
+    {
+        return true;
+    }
+
+    const int candidate_bottom_y = candidate_box.y + candidate_box.height - 1;
+    if (candidate_bottom_y > kTaskMarkerFarLateralGateYMax)
+    {
+        return true;
+    }
+
+    const int candidate_center_y = candidate_box.y + candidate_box.height / 2;
+    int left_x = -1;
+    int right_x = -1;
+    int row_y = -1;
+    if (!FindTrackRegionBoundsAtRow(
+            state, candidate_center_y, &left_x, &right_x, &row_y) ||
+        right_x <= left_x)
+    {
+        return false;
+    }
+
+    const float candidate_center_x =
+        static_cast<float>(candidate_box.x) + 0.5f * static_cast<float>(candidate_box.width);
+    const float track_u =
+        (candidate_center_x - static_cast<float>(left_x)) /
+        static_cast<float>(right_x - left_x);
+
+    if (out_track_u != nullptr)
+    {
+        *out_track_u = track_u;
+    }
+    if (out_left_x != nullptr)
+    {
+        *out_left_x = left_x;
+    }
+    if (out_right_x != nullptr)
+    {
+        *out_right_x = right_x;
+    }
+    if (out_row_y != nullptr)
+    {
+        *out_row_y = row_y;
+    }
+    return track_u >= kTaskMarkerFarTrackUMin &&
+           track_u <= kTaskMarkerFarTrackUMax;
 }
 
 static bool BuildTaskTrackBoundaryState(const cv::Mat& frame_bgr,
@@ -1674,8 +1765,8 @@ static bool SelectUpperRawLongEdgeInFinal(const std::vector<cv::Point2f>& raw_qu
              SegmentLength(final_p1, final_p2)});
     }
 
-    const float pair0_avg = 0.5f * (edges[0].raw_length + edges[2].raw_length);
-    const float pair1_avg = 0.5f * (edges[1].raw_length + edges[3].raw_length);
+    const float pair0_avg = 0.5f * (edges[0].final_length + edges[2].final_length);
+    const float pair1_avg = 0.5f * (edges[1].final_length + edges[3].final_length);
     Edge chosen = (pair0_avg >= pair1_avg)
         ? ((edges[0].midpoint_final.y <= edges[2].midpoint_final.y) ? edges[0] : edges[2])
         : ((edges[1].midpoint_final.y <= edges[3].midpoint_final.y) ? edges[1] : edges[3]);
@@ -2705,6 +2796,46 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
 
     FillCandidateFields(&result, candidate_box, candidate_area);
     result.target_type = "marker";
+
+    float candidate_track_u = 0.5f;
+    int candidate_track_left_x = -1;
+    int candidate_track_right_x = -1;
+    int candidate_track_row_y = -1;
+    if (!MarkerPassesFarTrackLateralGate(
+            track_state,
+            candidate_box,
+            &candidate_track_u,
+            &candidate_track_left_x,
+            &candidate_track_right_x,
+            &candidate_track_row_y))
+    {
+        result.has_track_classify_point = true;
+        result.track_classify_point = cv::Point(
+            candidate_box.x + candidate_box.width / 2,
+            candidate_box.y + candidate_box.height / 2);
+        if (candidate_track_left_x >= 0 && candidate_track_right_x >= candidate_track_left_x)
+        {
+            result.has_track_classify_bounds = true;
+            result.track_classify_left_x = candidate_track_left_x;
+            result.track_classify_right_x = candidate_track_right_x;
+            result.track_classify_row_y = candidate_track_row_y;
+        }
+        if (candidate_track_left_x < 0 ||
+            candidate_track_right_x <= candidate_track_left_x)
+        {
+            result.ipm_reason = "far_track_bounds_missing";
+        }
+        else if (candidate_track_u < kTaskMarkerFarTrackUMin)
+        {
+            result.ipm_reason = "far_track_u_left_of_gate";
+        }
+        else
+        {
+            result.ipm_reason = "far_track_u_right_of_gate";
+        }
+        result.status = "marker_far_lateral_rejected";
+        return result;
+    }
 
     const auto roi_build_warp_begin = steady_clock_t::now();
     result.blob_quad = RotatedBoxPointsFromContour(candidate_contour);
