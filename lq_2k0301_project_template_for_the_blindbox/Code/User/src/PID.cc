@@ -115,7 +115,7 @@ float cfg_straight_accel_curve_min_th = 5.5f; // 适应取最大曲率算法，�
 float cfg_straight_accel_yaw_min_th = 3.65f;    // 直道 yaw 控制在 -5 到 5，满分阈值设为 3.5
 
 // 3. 最大阈值：超过此值视为入弯，一票否决，加速清零
-float cfg_straight_accel_curve_max_th = 7.5f; // 相应拉高最高阈值
+float cfg_straight_accel_curve_max_th = 7.2f; // 相应拉高最高阈值
 float cfg_straight_accel_yaw_max_th = 6.8f;    // 超过 7 度绝对不是直道
 
 // 4. 剧烈程度 (保持 0.4 激进模式)
@@ -1418,13 +1418,22 @@ void BayWatcher_Control_Init(void) {
     // PID_Speed_R.Kp = 138.00f; PID_Speed_R.Ki = 35.55f; PID_Speed_R.Kd = 0.00f;
     // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
-    // 有负压 22 7.9
+    // // 有负压 22 7.9 7.11
+    // // 左轮速度环PID
+    // PID_Speed_L.Kp = 138.32f; PID_Speed_L.Ki = 37.50f; PID_Speed_L.Kd = 0.00f;
+    // PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
+
+    // // 右轮速度环PID
+    // PID_Speed_R.Kp = 138.00f; PID_Speed_R.Ki = 37.55f; PID_Speed_R.Kd = 0.00f;
+    // PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
+
+    // 有负压 22 7.9 7.11
     // 左轮速度环PID
-    PID_Speed_L.Kp = 140.32f; PID_Speed_L.Ki = 37.50f; PID_Speed_L.Kd = 0.00f;
+    PID_Speed_L.Kp = 163.32f; PID_Speed_L.Ki = 45.50f; PID_Speed_L.Kd = 0.00f;
     PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
     // 右轮速度环PID
-    PID_Speed_R.Kp = 140.00f; PID_Speed_R.Ki = 37.55f; PID_Speed_R.Kd = 0.00f;
+    PID_Speed_R.Kp = 163.00f; PID_Speed_R.Ki = 45.55f; PID_Speed_R.Kd = 0.00f;
     PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
 
@@ -1519,8 +1528,14 @@ void BayWatcher_Control_Init(void) {
     // // 有负压 21 0.40 70% 7.5
     // PID_Cube.Kp_a = 6.705f ;  PID_Cube.Kp_b = 0.5289f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 314.10f ; PID_Cube.Kd_b = 0.00100f;
 
-    // 有负压 21 0.40 70% 7.5
-    PID_Cube.Kp_a = 6.725f ;  PID_Cube.Kp_b = 0.5379f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 314.10f ; PID_Cube.Kd_b = 0.00100f;
+    // // 有负压 21 0.40 70% 7.5
+    // PID_Cube.Kp_a = 6.725f ;  PID_Cube.Kp_b = 0.5379f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 314.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // // 有负压 22 0.40 70% 7.12
+    // PID_Cube.Kp_a = 6.865f ;  PID_Cube.Kp_b = 0.5399f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 314.10f ; PID_Cube.Kd_b = 0.00100f;
+
+    // 有负压 22 0.40 70% 7.12
+    PID_Cube.Kp_a = 6.875f ;  PID_Cube.Kp_b = 0.5499f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 310.10f ; PID_Cube.Kd_b = 0.00100f;
 
 
     PID_Cube.output_limit = STEER_LIMIT; PID_Cube.integral_limit = 100;
