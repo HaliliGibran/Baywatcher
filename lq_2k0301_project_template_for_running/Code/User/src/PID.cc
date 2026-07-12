@@ -29,6 +29,7 @@ const float REMOTE_RECOG_SPEED_RATIO_NO_BLOCK_EPS = 1e-4f;
 
 static float circle_base_speed_ratio(CircleState state)
 {
+#if BW_CIRCLE_BASE_SPEED_SLOWDOWN_ENABLE
     switch (state)
     {
     case CircleState::CIRCLE_IN:
@@ -40,6 +41,10 @@ static float circle_base_speed_ratio(CircleState state)
     default:
         return 1.0f;
     }
+#else
+    (void)state;
+    return 1.0f;
+#endif
 }
 
 static const char* circle_base_speed_state_text(CircleState state)

@@ -382,6 +382,10 @@
 // 作用顺序：base_target_speed 先乘当前环岛阶段倍率，后续 u 减速、
 // 速度上限和绕行平均速度倍率继续作用在这个已降低的基础速度上。
 // BEGIN/END/NONE 不施加本组倍率。
+#ifndef BW_CIRCLE_BASE_SPEED_SLOWDOWN_ENABLE
+#define BW_CIRCLE_BASE_SPEED_SLOWDOWN_ENABLE 1
+#endif
+
 #ifndef BW_CIRCLE_IN_BASE_SPEED_RATIO
 #define BW_CIRCLE_IN_BASE_SPEED_RATIO 0.7f
 #endif
