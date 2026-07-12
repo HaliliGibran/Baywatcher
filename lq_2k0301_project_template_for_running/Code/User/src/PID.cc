@@ -106,7 +106,7 @@ float cfg_straight_accel_curve_min_th = 5.5f; // 适应取最大曲率算法，�
 float cfg_straight_accel_yaw_min_th = 3.65f;    // 直道 yaw 控制在 -5 到 5，满分阈值设为 3.5
 
 // 3. 最大阈值：超过此值视为入弯，一票否决，加速清零
-float cfg_straight_accel_curve_max_th = 7.5f; // 相应拉高最高阈值
+float cfg_straight_accel_curve_max_th = 7.3f; // 相应拉高最高阈值
 float cfg_straight_accel_yaw_max_th = 6.8f;    // 超过 7 度绝对不是直道
 
 // 4. 剧烈程度 (保持 0.4 激进模式)
