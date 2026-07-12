@@ -70,6 +70,7 @@ constexpr int kTrackForwardTangentHalfWindow = 6;
 constexpr float kTrackForwardMinSegmentLength = 4.0f;
 constexpr float kTrackForwardMinBoundaryAgreement = 0.35f;
 constexpr float kTrackForwardMinNormalAlignment = 0.35f;
+constexpr float kTrackForwardProjectionLength = 24.0f;
 constexpr unsigned char kTrackWhitePixel = 255;
 constexpr unsigned char kTrackNonWhitePixel = 0;
 
@@ -166,6 +167,17 @@ struct TrackForwardDirection
     cv::Point2f origin_raw;
     cv::Point2f raw_unit;
     cv::Point2f final_unit;
+    bool has_cross_section = false;
+    cv::Point2f left_nearest_raw;
+    cv::Point2f right_nearest_raw;
+};
+
+struct BoundaryNearestDirection
+{
+    bool valid = false;
+    cv::Point2f nearest_raw;
+    cv::Point2f nearest_final;
+    cv::Point2f tangent_final;
 };
 
 struct TaskTrackBoundaryState
@@ -298,6 +310,11 @@ static BuildRoiQuadResult BuildRoiQuadFromBlobQuad(const std::vector<cv::Point2f
                                                     int image_height,
                                                     RoiMethod roi_method,
                                                     const TrackForwardDirection* track_forward);
+static bool FinalToRaw(float xf,
+                       float yf,
+                       int image_width,
+                       int image_height,
+                       cv::Point2f* out_point);
 static bool ClampRectToImage(const cv::Rect& rect,
                              int image_width,
                              int image_height,
@@ -1824,25 +1841,35 @@ static float SegmentNormalAlignment(const cv::Point2f& p1,
     return std::fabs(Dot2d(edge_normal, forward_unit));
 }
 
-static bool EstimateBoundaryForwardDirection(
+static bool EstimateBoundaryNearestDirection(
     const std::vector<cv::Point>& boundary,
-    const cv::Point2f& candidate_center,
+    const cv::Point2f& candidate_center_final,
     int image_width,
     int image_height,
-    cv::Point2f* out_raw_unit,
-    cv::Point2f* out_final_unit)
+    BoundaryNearestDirection* out_direction)
 {
-    if (boundary.size() < 2 || out_raw_unit == nullptr || out_final_unit == nullptr)
+    if (boundary.size() < 2 || out_direction == nullptr)
     {
         return false;
     }
+    *out_direction = BoundaryNearestDirection();
 
+    std::vector<cv::Point2f> boundary_final(boundary.size());
     size_t nearest_index = 0;
     float nearest_distance_sq = std::numeric_limits<float>::max();
     for (size_t i = 0; i < boundary.size(); ++i)
     {
-        const float dx = static_cast<float>(boundary[i].x) - candidate_center.x;
-        const float dy = static_cast<float>(boundary[i].y) - candidate_center.y;
+        if (!RawPointToFinalPoint(
+                static_cast<float>(boundary[i].x),
+                static_cast<float>(boundary[i].y),
+                image_width,
+                image_height,
+                &boundary_final[i]))
+        {
+            return false;
+        }
+        const float dx = boundary_final[i].x - candidate_center_final.x;
+        const float dy = boundary_final[i].y - candidate_center_final.y;
         const float distance_sq = dx * dx + dy * dy;
         if (distance_sq < nearest_distance_sq)
         {
@@ -1861,29 +1888,22 @@ static bool EstimateBoundaryForwardDirection(
         return false;
     }
 
-    const cv::Point2f raw_begin(
-        static_cast<float>(boundary[begin_index].x),
-        static_cast<float>(boundary[begin_index].y));
-    const cv::Point2f raw_end(
-        static_cast<float>(boundary[end_index].x),
-        static_cast<float>(boundary[end_index].y));
-    const cv::Point2f raw_vector = raw_end - raw_begin;
-    if (SegmentLength(raw_begin, raw_end) < kTrackForwardMinSegmentLength ||
-        !NormalizeVector2d(raw_vector, out_raw_unit))
+    cv::Point2f tangent_final;
+    if (SegmentLength(boundary_final[begin_index], boundary_final[end_index]) <
+            kTrackForwardMinSegmentLength ||
+        !NormalizeVector2d(
+            boundary_final[end_index] - boundary_final[begin_index],
+            &tangent_final))
     {
         return false;
     }
 
-    cv::Point2f final_begin;
-    cv::Point2f final_end;
-    if (!RawPointToFinalPoint(
-            raw_begin.x, raw_begin.y, image_width, image_height, &final_begin) ||
-        !RawPointToFinalPoint(
-            raw_end.x, raw_end.y, image_width, image_height, &final_end) ||
-        !NormalizeVector2d(final_end - final_begin, out_final_unit))
-    {
-        return false;
-    }
+    out_direction->valid = true;
+    out_direction->nearest_raw = cv::Point2f(
+        static_cast<float>(boundary[nearest_index].x),
+        static_cast<float>(boundary[nearest_index].y));
+    out_direction->nearest_final = boundary_final[nearest_index];
+    out_direction->tangent_final = tangent_final;
     return true;
 }
 
@@ -1975,64 +1995,128 @@ static bool EstimateTrackForwardDirection(
     }
     *out_direction = TrackForwardDirection();
 
-    cv::Point2f left_raw;
-    cv::Point2f left_final;
-    cv::Point2f right_raw;
-    cv::Point2f right_final;
-    const bool has_left = EstimateBoundaryForwardDirection(
-        state.effective_left_boundary,
-        candidate_center,
-        image_width,
-        image_height,
-        &left_raw,
-        &left_final);
-    const bool has_right = EstimateBoundaryForwardDirection(
-        state.effective_right_boundary,
-        candidate_center,
-        image_width,
-        image_height,
-        &right_raw,
-        &right_final);
-    if (!has_left && !has_right)
+    cv::Point2f candidate_center_final;
+    if (RawPointToFinalPoint(
+            candidate_center.x,
+            candidate_center.y,
+            image_width,
+            image_height,
+            &candidate_center_final))
     {
-        cv::Point2f raw_unit;
-        cv::Point2f final_unit;
-        if (!EstimateRasterizedTrackForwardDirection(
-                state,
-                candidate_center,
-                image_width,
-                image_height,
-                &raw_unit,
-                &final_unit))
+        BoundaryNearestDirection left_direction;
+        BoundaryNearestDirection right_direction;
+        const bool has_left = EstimateBoundaryNearestDirection(
+            state.effective_left_boundary,
+            candidate_center_final,
+            image_width,
+            image_height,
+            &left_direction);
+        const bool has_right = EstimateBoundaryNearestDirection(
+            state.effective_right_boundary,
+            candidate_center_final,
+            image_width,
+            image_height,
+            &right_direction);
+        if (has_left && has_right)
         {
-            return false;
+            cv::Point2f left_tangent = left_direction.tangent_final;
+            cv::Point2f right_tangent = right_direction.tangent_final;
+            float tangent_dot = Dot2d(left_tangent, right_tangent);
+            if (tangent_dot < 0.0f)
+            {
+                right_tangent = -right_tangent;
+                tangent_dot = -tangent_dot;
+            }
+
+            cv::Point2f local_track_direction;
+            if (tangent_dot >= kTrackForwardMinBoundaryAgreement)
+            {
+                if (!NormalizeVector2d(
+                        left_tangent + right_tangent,
+                        &local_track_direction))
+                {
+                    local_track_direction = left_tangent;
+                }
+            }
+            else
+            {
+                const float left_distance_sq =
+                    Dot2d(
+                        left_direction.nearest_final - candidate_center_final,
+                        left_direction.nearest_final - candidate_center_final);
+                const float right_distance_sq =
+                    Dot2d(
+                        right_direction.nearest_final - candidate_center_final,
+                        right_direction.nearest_final - candidate_center_final);
+                local_track_direction =
+                    (left_distance_sq <= right_distance_sq)
+                        ? left_tangent
+                        : right_tangent;
+            }
+
+            cv::Point2f cross_section_unit;
+            if (!NormalizeVector2d(
+                    right_direction.nearest_final - left_direction.nearest_final,
+                    &cross_section_unit))
+            {
+                cross_section_unit = cv::Point2f(
+                    local_track_direction.y,
+                    -local_track_direction.x);
+            }
+
+            cv::Point2f final_unit(-cross_section_unit.y, cross_section_unit.x);
+            if (Dot2d(final_unit, local_track_direction) < 0.0f)
+            {
+                final_unit = -final_unit;
+            }
+
+            cv::Point2f raw_projection_start;
+            cv::Point2f raw_projection_end;
+            if (FinalToRaw(
+                    candidate_center_final.x,
+                    candidate_center_final.y,
+                    image_width,
+                    image_height,
+                    &raw_projection_start) &&
+                FinalToRaw(
+                    candidate_center_final.x +
+                        final_unit.x * kTrackForwardProjectionLength,
+                    candidate_center_final.y +
+                        final_unit.y * kTrackForwardProjectionLength,
+                    image_width,
+                    image_height,
+                    &raw_projection_end))
+            {
+                cv::Point2f raw_unit;
+                if (NormalizeVector2d(
+                        raw_projection_end - raw_projection_start,
+                        &raw_unit))
+                {
+                    out_direction->valid = true;
+                    out_direction->origin_raw = candidate_center;
+                    out_direction->raw_unit = raw_unit;
+                    out_direction->final_unit = final_unit;
+                    out_direction->has_cross_section = true;
+                    out_direction->left_nearest_raw = left_direction.nearest_raw;
+                    out_direction->right_nearest_raw = right_direction.nearest_raw;
+                    return true;
+                }
+            }
         }
-        out_direction->valid = true;
-        out_direction->origin_raw = candidate_center;
-        out_direction->raw_unit = raw_unit;
-        out_direction->final_unit = final_unit;
-        return true;
     }
 
     cv::Point2f raw_unit;
     cv::Point2f final_unit;
-    float boundary_agreement = 1.0f;
-    if (has_left && has_right)
+    if (!EstimateRasterizedTrackForwardDirection(
+            state,
+            candidate_center,
+            image_width,
+            image_height,
+            &raw_unit,
+            &final_unit))
     {
-        boundary_agreement = Dot2d(left_final, right_final);
-        if (boundary_agreement < kTrackForwardMinBoundaryAgreement ||
-            !NormalizeVector2d(left_raw + right_raw, &raw_unit) ||
-            !NormalizeVector2d(left_final + right_final, &final_unit))
-        {
-            return false;
-        }
+        return false;
     }
-    else
-    {
-        raw_unit = has_left ? left_raw : right_raw;
-        final_unit = has_left ? left_final : right_final;
-    }
-
     out_direction->valid = true;
     out_direction->origin_raw = candidate_center;
     out_direction->raw_unit = raw_unit;
@@ -3656,6 +3740,9 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
         result.has_track_forward_direction = true;
         result.track_forward_origin = track_forward.origin_raw;
         result.track_forward_vector = track_forward.raw_unit;
+        result.has_track_forward_cross_section = track_forward.has_cross_section;
+        result.track_forward_left_nearest = track_forward.left_nearest_raw;
+        result.track_forward_right_nearest = track_forward.right_nearest_raw;
     }
 
     const auto roi_build_warp_begin = steady_clock_t::now();
@@ -3780,6 +3867,36 @@ void DrawRoiDebugOverlay(cv::Mat& image_bgr, const RoiExtractionResult& result)
             result.track_classify_point,
             4,
             (result.target_type == "roadblock") ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0),
+            -1,
+            cv::LINE_AA);
+    }
+    if (result.has_track_forward_cross_section)
+    {
+        const cv::Point left_nearest(
+            static_cast<int>(std::lround(result.track_forward_left_nearest.x)),
+            static_cast<int>(std::lround(result.track_forward_left_nearest.y)));
+        const cv::Point right_nearest(
+            static_cast<int>(std::lround(result.track_forward_right_nearest.x)),
+            static_cast<int>(std::lround(result.track_forward_right_nearest.y)));
+        cv::line(
+            image_bgr,
+            left_nearest,
+            right_nearest,
+            cv::Scalar(255, 255, 255),
+            1,
+            cv::LINE_AA);
+        cv::circle(
+            image_bgr,
+            left_nearest,
+            2,
+            cv::Scalar(255, 255, 255),
+            -1,
+            cv::LINE_AA);
+        cv::circle(
+            image_bgr,
+            right_nearest,
+            2,
+            cv::Scalar(255, 255, 255),
             -1,
             cv::LINE_AA);
     }

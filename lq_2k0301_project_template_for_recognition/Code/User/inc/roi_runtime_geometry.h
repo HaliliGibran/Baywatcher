@@ -77,6 +77,9 @@ struct RoiExtractionResult
     bool roi_used_track_forward_direction = false;
     cv::Point2f track_forward_origin;
     cv::Point2f track_forward_vector;
+    bool has_track_forward_cross_section = false;
+    cv::Point2f track_forward_left_nearest;
+    cv::Point2f track_forward_right_nearest;
 
     bool has_track_classify_point = false;
     cv::Point track_classify_point;
