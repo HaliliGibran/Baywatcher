@@ -169,7 +169,7 @@
 
 // [先调] 环岛内 marker 红块底边至少到达该 y，才允许累计稳定帧。
 #ifndef BW_RECOG_CIRCLE_TRIGGER_BOTTOM_Y_MIN
-#define BW_RECOG_CIRCLE_TRIGGER_BOTTOM_Y_MIN 75
+#define BW_RECOG_CIRCLE_TRIGGER_BOTTOM_Y_MIN 80
 #endif
 
 // [先调] 环岛内 marker 红块底边到达该 y 后，不再等待第二个稳定帧。
