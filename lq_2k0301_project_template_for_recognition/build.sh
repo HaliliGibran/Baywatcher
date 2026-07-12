@@ -71,21 +71,21 @@ if [ -f main ]; then
     if ! scp main root@192.168.1.201:/home/root/workspace; then
         echo "[警告] main 上传失败，已保留本地构建产物。"
     fi
-    if [ -d "$model_dir_name" ]; then
-        if ! ssh root@192.168.1.201 "mkdir -p /home/root/workspace/$model_dir_name"; then
-            echo "[警告] 远端模型目录创建失败，已保留本地构建产物。"
-        fi
-        if ! scp "$model_dir_name/cls.onnx" root@192.168.1.201:"/home/root/workspace/$model_dir_name/cls.onnx"; then
-            echo "[警告] cls.onnx 上传失败，已保留本地构建产物。"
-        fi
-        if ! scp "$model_dir_name/class_names.json" root@192.168.1.201:"/home/root/workspace/$model_dir_name/class_names.json"; then
-            echo "[警告] class_names.json 上传失败，已保留本地构建产物。"
-        fi
-        if [ -f "$model_dir_name/deploy_calibration.json" ]; then
-            if ! scp "$model_dir_name/deploy_calibration.json" root@192.168.1.201:"/home/root/workspace/$model_dir_name/deploy_calibration.json"; then
-                echo "[警告] deploy_calibration.json 上传失败，已保留本地构建产物。"
-            fi
-        fi
-    fi
+    # if [ -d "$model_dir_name" ]; then
+    #     if ! ssh root@192.168.1.201 "mkdir -p /home/root/workspace/$model_dir_name"; then
+    #         echo "[警告] 远端模型目录创建失败，已保留本地构建产物。"
+    #     fi
+    #     if ! scp "$model_dir_name/cls.onnx" root@192.168.1.201:"/home/root/workspace/$model_dir_name/cls.onnx"; then
+    #         echo "[警告] cls.onnx 上传失败，已保留本地构建产物。"
+    #     fi
+    #     if ! scp "$model_dir_name/class_names.json" root@192.168.1.201:"/home/root/workspace/$model_dir_name/class_names.json"; then
+    #         echo "[警告] class_names.json 上传失败，已保留本地构建产物。"
+    #     fi
+    #     if [ -f "$model_dir_name/deploy_calibration.json" ]; then
+    #         if ! scp "$model_dir_name/deploy_calibration.json" root@192.168.1.201:"/home/root/workspace/$model_dir_name/deploy_calibration.json"; then
+    #             echo "[警告] deploy_calibration.json 上传失败，已保留本地构建产物。"
+    #         fi
+    #     fi
+    # fi
 fi
 popd

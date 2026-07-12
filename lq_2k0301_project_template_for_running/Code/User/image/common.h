@@ -349,7 +349,7 @@
 // 环岛内绕时，锁定边线向外推的赛道宽比例。
 // 初值与普通内绕一致，调参时只修改本宏，不影响普通弯道内绕。
 #ifndef BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO 0.10f
+#define BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO 0.05f
 #endif
 
 // 环岛内绕时左右轮目标平均速度倍率，只缩放平均速度，不改变差速量。
@@ -365,7 +365,7 @@
 // 环岛外绕时，锁定边线向外推的赛道宽比例。
 // 初值与普通外绕一致，调参时只修改本宏，不影响普通路段外绕。
 #ifndef BW_REMOTE_FOLLOW_CIRCLE_OUTER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_CIRCLE_OUTER_OFFSET_RATIO 0.08f
+#define BW_REMOTE_FOLLOW_CIRCLE_OUTER_OFFSET_RATIO 0.03f
 #endif
 
 // 环岛外绕时左右轮目标平均速度倍率，只缩放平均速度，不改变差速量。
@@ -387,7 +387,7 @@
 #endif
 
 #ifndef BW_CIRCLE_IN_BASE_SPEED_RATIO
-#define BW_CIRCLE_IN_BASE_SPEED_RATIO 0.7f
+#define BW_CIRCLE_IN_BASE_SPEED_RATIO 0.9f
 #endif
 
 #ifndef BW_CIRCLE_RUNNING_BASE_SPEED_RATIO
@@ -395,7 +395,7 @@
 #endif
 
 #ifndef BW_CIRCLE_OUT_BASE_SPEED_RATIO
-#define BW_CIRCLE_OUT_BASE_SPEED_RATIO 0.7f
+#define BW_CIRCLE_OUT_BASE_SPEED_RATIO 0.9f
 #endif
 
 // ===== 远端状态保持与减速参数 =====

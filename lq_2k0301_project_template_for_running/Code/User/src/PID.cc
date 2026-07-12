@@ -162,7 +162,7 @@ float cfg_straight_accel_curve_min_th = 5.5f; // 适应取最大曲率算法，�
 float cfg_straight_accel_yaw_min_th = 3.65f;    // 直道 yaw 控制在 -5 到 5，满分阈值设为 3.5
 
 // 3. 最大阈值：超过此值视为入弯，一票否决，加速清零
-float cfg_straight_accel_curve_max_th = 7.5f; // 相应拉高最高阈值
+float cfg_straight_accel_curve_max_th = 7.3f; // 相应拉高最高阈值
 float cfg_straight_accel_yaw_max_th = 6.8f;    // 超过 7 度绝对不是直道
 
 // 4. 剧烈程度 (保持 0.4 激进模式)
@@ -1198,7 +1198,7 @@ static CrossingState last_crossing_pid_state = CrossingState::CROSSING_NONE;
 // static const Cube_PID_Param_t crossing_running_pid = {7.945f, 0.5398f, 0.0f, 314.00f, 0.00100f, STEER_LIMIT, 100.0f};
 
 // 23+8
-static const Cube_PID_Param_t crossing_between_pid = {6.735f, 0.5358f, 0.0f, 316.10f, 0.00100f, STEER_LIMIT, 100.0f};
+static const Cube_PID_Param_t crossing_between_pid = {6.775f, 0.5358f, 0.0f, 316.10f, 0.00100f, STEER_LIMIT, 100.0f};
 
 static const Cube_PID_Param_t crossing_in_pid      = {6.945f, 0.5398f, 0.0f, 310.10f, 0.00100f, STEER_LIMIT, 100.0f};
 static const Cube_PID_Param_t crossing_running_pid = {7.945f, 0.5398f, 0.0f, 316.00f, 0.00100f, STEER_LIMIT, 100.0f};
