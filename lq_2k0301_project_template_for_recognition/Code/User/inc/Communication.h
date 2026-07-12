@@ -36,6 +36,7 @@ enum class BoardVisionCode : uint8_t {
 enum class BoardRecognitionGate : uint8_t {
     INVALID = 0,
     ALLOW = 'A',
+    ALLOW_CIRCLE_RUNNING = 'C',
     BLOCK = 'X',
 };
 

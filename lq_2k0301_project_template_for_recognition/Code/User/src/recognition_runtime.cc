@@ -27,6 +27,7 @@ constexpr bool kRecognitionTriggerFrameEarlyUSend =
 struct RecognitionGateRuntime
 {
     bool blocked = false;
+    bool circle_running = false;
     uint64_t last_rx_ms = 0;
     uint8_t last_seq = 0;
 };
@@ -49,6 +50,8 @@ static bool PollRecognitionGate(RecognitionGateRuntime* gate,
     while (comm.try_receive_recognition_gate(&rx_gate, &rx_seq))
     {
         gate->blocked = (rx_gate == BoardRecognitionGate::BLOCK);
+        gate->circle_running =
+            (rx_gate == BoardRecognitionGate::ALLOW_CIRCLE_RUNNING);
         gate->last_rx_ms = t_ms;
         gate->last_seq = rx_seq;
     }
@@ -59,6 +62,7 @@ static bool PollRecognitionGate(RecognitionGateRuntime* gate,
         t_ms >= gate->last_rx_ms + static_cast<uint64_t>(BW_RECOG_CIRCLE_GATE_STALE_MS))
     {
         gate->blocked = false;
+        gate->circle_running = false;
         if (stale_fail_open != nullptr)
         {
             *stale_fail_open = true;
@@ -909,12 +913,15 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
     {
         const uint64_t gate_poll_ms = recognition_runtime::now_ms();
         const bool gate_blocked_before = recognition_gate.blocked;
+        const bool gate_circle_before = recognition_gate.circle_running;
         bool gate_stale_fail_open = false;
         const bool gate_blocked = PollRecognitionGate(
             &recognition_gate,
             gate_poll_ms,
             &gate_stale_fail_open);
-        if (gate_blocked != gate_blocked_before)
+        recognition.SetCircleRunningMode(recognition_gate.circle_running);
+        if (gate_blocked != gate_blocked_before ||
+            recognition_gate.circle_running != gate_circle_before)
         {
             if (gate_blocked)
             {
@@ -926,8 +933,13 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                 manual_cycle_finished = false;
                 view.release();
             }
+            const char* gate_text = gate_blocked
+                ? "BLOCK，识别链已清空"
+                : (recognition_gate.circle_running
+                       ? "ALLOW_CIRCLE，启用环岛质量门控"
+                       : "ALLOW，使用普通识别条件");
             std::cout << "[环岛识别门控] "
-                      << (gate_blocked ? "BLOCK，识别链已清空" : "ALLOW，识别链重新待机")
+                      << gate_text
                       << ", seq=" << static_cast<int>(recognition_gate.last_seq)
                       << (gate_stale_fail_open ? ", 原因=门控心跳超时自动放行" : "")
                       << std::endl;

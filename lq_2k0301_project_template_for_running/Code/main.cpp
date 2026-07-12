@@ -225,6 +225,17 @@ void task_target_handler(void* arg){
     }
 }
 
+static const char* board_recognition_gate_text(BoardRecognitionGate gate)
+{
+    switch (gate)
+    {
+    case BoardRecognitionGate::ALLOW: return "ALLOW";
+    case BoardRecognitionGate::ALLOW_CIRCLE_RUNNING: return "ALLOW_CIRCLE";
+    case BoardRecognitionGate::BLOCK: return "BLOCK";
+    default: return "INVALID";
+    }
+}
+
 void task_board_comm_rx(void* arg)
 {
     static bool g_board_comm_link_logged = false;
@@ -238,7 +249,10 @@ void task_board_comm_rx(void* arg)
     const BoardRecognitionGate current_gate =
         image_circle_recognition_gate_is_blocked()
             ? BoardRecognitionGate::BLOCK
-            : BoardRecognitionGate::ALLOW;
+            : (BW_CIRCLE_RECOGNITION_GATE_ENABLE != 0 &&
+                       circle_state == CircleState::CIRCLE_RUNNING
+                   ? BoardRecognitionGate::ALLOW_CIRCLE_RUNNING
+                   : BoardRecognitionGate::ALLOW);
     const bool gate_changed = current_gate != last_gate_sent;
     const bool gate_heartbeat_due =
         last_gate_send_ms == 0 ||
@@ -267,7 +281,7 @@ void task_board_comm_rx(void* arg)
         if (gate_changed && send_ok)
         {
             printf("[BoardComm] recognition gate tx=%s, seq=%u, ok=%s\n",
-                   current_gate == BoardRecognitionGate::BLOCK ? "BLOCK" : "ALLOW",
+                   board_recognition_gate_text(current_gate),
                    static_cast<unsigned int>(send_seq),
                    "yes");
         }
@@ -277,7 +291,7 @@ void task_board_comm_rx(void* arg)
         {
             last_gate_failure_log_ms = now_ms;
             printf("[BoardComm] recognition gate tx=%s failed\n",
-                   current_gate == BoardRecognitionGate::BLOCK ? "BLOCK" : "ALLOW");
+                   board_recognition_gate_text(current_gate));
         }
     }
 
