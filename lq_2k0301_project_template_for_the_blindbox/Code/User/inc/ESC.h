@@ -1,7 +1,8 @@
 #ifndef _BAYWATCHER_ESC_H_
 #define _BAYWATCHER_ESC_H_
 
-#include "main.hpp"
+#include "LQ_GTIM_PWM.hpp"
+#include <stdint.h>
 
 extern GtimPwm TIM2CH3;
 extern GtimPwm TIM2CH4;
