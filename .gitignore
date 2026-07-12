@@ -52,7 +52,8 @@ __pycache__/
 *.pyo
 
 # Local model backup snapshots
-**/model_backup_*/
+**/model*_backup_*/
+**/*.backup_*
 
 # Recognition-board local runtime calibration/config
 **/recognition_startup_lighting.cfg

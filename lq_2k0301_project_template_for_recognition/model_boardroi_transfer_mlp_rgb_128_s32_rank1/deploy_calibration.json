@@ -1,7 +1,16 @@
 {
-  "temperature": 1.0,
-  "logit_bias": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-  "decision_top1_threshold": 0.30,
+  "temperature": 0.7896584472651295,
+  "logit_bias": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "decision_top1_threshold": 0.3,
   "decision_margin_threshold": 0.01,
-  "source": "neutral defaults for boardroi_transfer_balanced_n300_mlp_rgb_128_s32_rank1"
+  "source": "validation three-major-class NLL calibration"
 }

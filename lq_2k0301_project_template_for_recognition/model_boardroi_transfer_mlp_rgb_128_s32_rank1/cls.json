@@ -1,11 +1,10 @@
 {
-  "arch": "mlp_rgb_128_s32_trainval_mild_seed42",
+  "arch": "rgb32_mlp_3072_128_8_grouped_png_v1",
   "feature_mode": "rgb",
   "input_channels": 3,
   "hidden_dims": [
     128
   ],
-  "cnn_channels": null,
   "class_names": [
     "急救包",
     "急救包（空白）",
@@ -18,14 +17,21 @@
   ],
   "image_size": 32,
   "mean": [
-    0.485,
-    0.456,
-    0.406
+    0.48500001430511475,
+    0.4560000002384186,
+    0.4059999883174896
   ],
   "std": [
-    0.229,
-    0.224,
-    0.225
+    0.2290000021457672,
+    0.2240000069141388,
+    0.22499999403953552
   ],
-  "onnx_path": "D:\\aaa走马观碑代码\\yolo\\project_root\\out_torch_boardroi_transfer_balanced_n300\\mlp_rgb_128_s32_trainval_mild_seed42\\cls_torch.onnx"
+  "input_layout": "RGB_NCHW",
+  "input_shape": [
+    1,
+    3,
+    32,
+    32
+  ],
+  "onnx_path": "D:\\aaa走马观碑代码\\yolo\\project_root\\export_deploy\\boardroi_png_grouped_mlp128_v1_rank1\\cls.onnx"
 }

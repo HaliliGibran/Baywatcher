@@ -16,6 +16,7 @@ set -e
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 build_dir="$script_dir/output"
+model_dir_name="model_boardroi_transfer_mlp_rgb_128_s32_rank1"
 cache_file="$build_dir/CMakeCache.txt"
 expected_cc="/opt/loongson-gnu-toolchain-8.3-x86_64-loongarch64-linux-gnu-rc1.3-1/bin/loongarch64-linux-gnu-gcc"
 expected_cxx="/opt/loongson-gnu-toolchain-8.3-x86_64-loongarch64-linux-gnu-rc1.3-1/bin/loongarch64-linux-gnu-g++"
@@ -67,95 +68,22 @@ make -j"${JOBS}"
 
 if [ -f main ]; then
     echo -e "\n===== 编译成功 ====="
-    mkdir -p model
-    cp -f ../model/cls.onnx model/cls.onnx
-    cp -f ../model/class_names.json model/class_names.json
-    cp -f ../model/deploy_calibration.json model/deploy_calibration.json
-    if [ -d ../model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1 ]; then
-        mkdir -p model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1
-        cp -f ../model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/cls.onnx model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/cls.onnx
-        cp -f ../model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/class_names.json model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/class_names.json
-        cp -f ../model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/deploy_calibration.json model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/deploy_calibration.json
-    fi
-    if [ -d ../model_subclass320_mlp_gray_256_rank1 ]; then
-        mkdir -p model_subclass320_mlp_gray_256_rank1
-        cp -f ../model_subclass320_mlp_gray_256_rank1/cls.onnx model_subclass320_mlp_gray_256_rank1/cls.onnx
-        cp -f ../model_subclass320_mlp_gray_256_rank1/class_names.json model_subclass320_mlp_gray_256_rank1/class_names.json
-        if [ -f ../model_subclass320_mlp_gray_256_rank1/deploy_calibration.json ]; then
-            cp -f ../model_subclass320_mlp_gray_256_rank1/deploy_calibration.json model_subclass320_mlp_gray_256_rank1/deploy_calibration.json
-        fi
-    fi
-    if [ -d ../model_boardroi_transfer_mlp_rgb_128_s32_rank1 ]; then
-        mkdir -p model_boardroi_transfer_mlp_rgb_128_s32_rank1
-        cp -f ../model_boardroi_transfer_mlp_rgb_128_s32_rank1/cls.onnx model_boardroi_transfer_mlp_rgb_128_s32_rank1/cls.onnx
-        cp -f ../model_boardroi_transfer_mlp_rgb_128_s32_rank1/class_names.json model_boardroi_transfer_mlp_rgb_128_s32_rank1/class_names.json
-        if [ -f ../model_boardroi_transfer_mlp_rgb_128_s32_rank1/deploy_calibration.json ]; then
-            cp -f ../model_boardroi_transfer_mlp_rgb_128_s32_rank1/deploy_calibration.json model_boardroi_transfer_mlp_rgb_128_s32_rank1/deploy_calibration.json
-        fi
-    fi
-    #这里可以改成scp传输到我们的板卡上
-    # scp main root@172.20.10.9:/home/root/workspace
-    # ssh root@172.20.10.9 "mkdir -p /home/root/workspace/model"
-    # scp model/cls.onnx root@172.20.10.9:/home/root/workspace/model/cls.onnx
-    # scp model/class_names.json root@172.20.10.9:/home/root/workspace/model/class_names.json
     if ! scp main root@192.168.1.201:/home/root/workspace; then
         echo "[警告] main 上传失败，已保留本地构建产物。"
     fi
-    # if ! ssh root@192.168.1.201 "mkdir -p /home/root/workspace/model"; then
-    #     echo "[警告] 远端 model 目录创建失败，已保留本地构建产物。"
-    # fi
-    # if ! scp model/cls.onnx root@192.168.1.201:/home/root/workspace/model/cls.onnx; then
-    #     echo "[警告] cls.onnx 上传失败，已保留本地构建产物。"
-    # fi
-    # if ! scp model/class_names.json root@192.168.1.201:/home/root/workspace/model/class_names.json; then
-    #     echo "[警告] class_names.json 上传失败，已保留本地构建产物。"
-    # fi
-    # if ! scp model/deploy_calibration.json root@192.168.1.201:/home/root/workspace/model/deploy_calibration.json; then
-    #     echo "[警告] deploy_calibration.json 上传失败，已保留本地构建产物。"
-    # fi
-    # if [ -d model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1 ]; then
-    #     if ! ssh root@192.168.1.201 "mkdir -p /home/root/workspace/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1"; then
-    #         echo "[警告] 远端 grayred32 模型目录创建失败，已保留本地构建产物。"
-    #     fi
-    #     if ! scp model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/cls.onnx root@192.168.1.201:/home/root/workspace/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/cls.onnx; then
-    #         echo "[警告] grayred32 cls.onnx 上传失败，已保留本地构建产物。"
-    #     fi
-    #     if ! scp model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/class_names.json root@192.168.1.201:/home/root/workspace/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/class_names.json; then
-    #         echo "[警告] grayred32 class_names.json 上传失败，已保留本地构建产物。"
-    #     fi
-    #     if ! scp model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/deploy_calibration.json root@192.168.1.201:/home/root/workspace/model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1/deploy_calibration.json; then
-    #         echo "[警告] grayred32 deploy_calibration.json 上传失败，已保留本地构建产物。"
-    #     fi
-    # fi
-    # if [ -d model_subclass320_mlp_gray_256_rank1 ]; then
-    #     if ! ssh root@192.168.1.201 "mkdir -p /home/root/workspace/model_subclass320_mlp_gray_256_rank1"; then
-    #         echo "[警告] 远端 gray32 subclass 模型目录创建失败，已保留本地构建产物。"
-    #     fi
-    #     if ! scp model_subclass320_mlp_gray_256_rank1/cls.onnx root@192.168.1.201:/home/root/workspace/model_subclass320_mlp_gray_256_rank1/cls.onnx; then
-    #         echo "[警告] gray32 subclass cls.onnx 上传失败，已保留本地构建产物。"
-    #     fi
-    #     if ! scp model_subclass320_mlp_gray_256_rank1/class_names.json root@192.168.1.201:/home/root/workspace/model_subclass320_mlp_gray_256_rank1/class_names.json; then
-    #         echo "[警告] gray32 subclass class_names.json 上传失败，已保留本地构建产物。"
-    #     fi
-    #     if [ -f model_subclass320_mlp_gray_256_rank1/deploy_calibration.json ]; then
-    #         if ! scp model_subclass320_mlp_gray_256_rank1/deploy_calibration.json root@192.168.1.201:/home/root/workspace/model_subclass320_mlp_gray_256_rank1/deploy_calibration.json; then
-    #             echo "[警告] gray32 subclass deploy_calibration.json 上传失败，已保留本地构建产物。"
-    #         fi
-    #     fi
-    # fi
-    if [ -d model_boardroi_transfer_mlp_rgb_128_s32_rank1 ]; then
-        if ! ssh root@192.168.1.201 "mkdir -p /home/root/workspace/model_boardroi_transfer_mlp_rgb_128_s32_rank1"; then
-            echo "[警告] 远端 rgb32 subclass 模型目录创建失败，已保留本地构建产物。"
+    if [ -d "$model_dir_name" ]; then
+        if ! ssh root@192.168.1.201 "mkdir -p /home/root/workspace/$model_dir_name"; then
+            echo "[警告] 远端模型目录创建失败，已保留本地构建产物。"
         fi
-        if ! scp model_boardroi_transfer_mlp_rgb_128_s32_rank1/cls.onnx root@192.168.1.201:/home/root/workspace/model_boardroi_transfer_mlp_rgb_128_s32_rank1/cls.onnx; then
-            echo "[警告] rgb32 subclass cls.onnx 上传失败，已保留本地构建产物。"
+        if ! scp "$model_dir_name/cls.onnx" root@192.168.1.201:"/home/root/workspace/$model_dir_name/cls.onnx"; then
+            echo "[警告] cls.onnx 上传失败，已保留本地构建产物。"
         fi
-        if ! scp model_boardroi_transfer_mlp_rgb_128_s32_rank1/class_names.json root@192.168.1.201:/home/root/workspace/model_boardroi_transfer_mlp_rgb_128_s32_rank1/class_names.json; then
-            echo "[警告] rgb32 subclass class_names.json 上传失败，已保留本地构建产物。"
+        if ! scp "$model_dir_name/class_names.json" root@192.168.1.201:"/home/root/workspace/$model_dir_name/class_names.json"; then
+            echo "[警告] class_names.json 上传失败，已保留本地构建产物。"
         fi
-        if [ -f model_boardroi_transfer_mlp_rgb_128_s32_rank1/deploy_calibration.json ]; then
-            if ! scp model_boardroi_transfer_mlp_rgb_128_s32_rank1/deploy_calibration.json root@192.168.1.201:/home/root/workspace/model_boardroi_transfer_mlp_rgb_128_s32_rank1/deploy_calibration.json; then
-                echo "[警告] rgb32 subclass deploy_calibration.json 上传失败，已保留本地构建产物。"
+        if [ -f "$model_dir_name/deploy_calibration.json" ]; then
+            if ! scp "$model_dir_name/deploy_calibration.json" root@192.168.1.201:"/home/root/workspace/$model_dir_name/deploy_calibration.json"; then
+                echo "[警告] deploy_calibration.json 上传失败，已保留本地构建产物。"
             fi
         fi
     fi

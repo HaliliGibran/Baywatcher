@@ -35,19 +35,10 @@
   - 解决了旧触发几何参数残留，导致搜索区域与目标区域错位的问题。
   - 缓解了识别板长期满速空转和图传 JPEG 压力过大的问题。
 
-- 仍未完全解决
-  - 当前 ONNX 单帧推理时间仍在 `300~400ms` 量级时，识别态图传依然不会非常流畅。
-  - 这时主瓶颈已经不是 MJPEG 推流，而是板端 DNN 推理本身。
-  - 如果后面实测 CPU 仍长期 100%，下一步优先级应是：
-    - 继续降低模型复杂度
-    - 缩短投票帧数
-    - 或把识别态推理频率再单独限速
-
-- 本轮没有做的事
-  - 没有改 ONNX 模型本身
-  - 没有改类别语义映射
-  - 没有做本地交叉编译验证
-  - 没有做实机双板联调验证
+- 当前模型状态
+  - 正式推理固定为 `RGB 32x32 -> 128 -> 8` 手写 MLP，实测目标约 `5ms`。
+  - ONNX 只在 `BW_RECOG_MANUAL_MLP_COMPARE_ONNX=1` 时加载并参与对拍。
+  - 八小类概率先合并为 `weapon/supply/vehicle`，再执行自适应一帧/两帧判定。
 
 ### 2026-04-08 红框搜索带回退到 80~280
 
@@ -237,7 +228,7 @@
 
 - `enabled_`
   - 当前识别链是否真的启用
-  - 受命令行开关和模型文件是否存在共同影响
+  - 受命令行开关、类别表和校准文件是否有效共同影响
 - `mode_`
   - `NORMAL`
   - `RECOGNITION`
@@ -266,7 +257,7 @@
 - `current_blob_area_`
   - 当前红色观测面积
 - `last_perf_sample_`
-  - 当前帧 ROI / ONNX / 总链路耗时
+  - 当前帧 ROI / 手写 MLP / 总链路耗时
 
 ## 6. 通信协议与双板协同
 
@@ -321,10 +312,11 @@
 
 识别链初始化在 `RecognitionChain::Initialize(...)` 中。
 
-默认查找路径：
+唯一模型包路径：
 
-- `./model/cls.onnx`
-- `./model/class_names.json`
+- `./model_boardroi_transfer_mlp_rgb_128_s32_rank1/class_names.json`
+- `./model_boardroi_transfer_mlp_rgb_128_s32_rank1/deploy_calibration.json`
+- `./model_boardroi_transfer_mlp_rgb_128_s32_rank1/cls.onnx`（仅 ONNX 对拍需要）
 
 运行时路径解析顺序：
 
@@ -332,18 +324,13 @@
 2. 再尝试可执行文件目录
 3. 再尝试当前工作目录
 
-如果模型文件不存在：
+如果类别表或校准文件不存在、内容不合法或类别顺序不匹配：
 
 - `enabled_ = false`
 - 识别链不上线
 - 板端仍可继续图传和空闲运行
 
-如果类别文件打开失败：
-
-- 会回退到内置类别名
-  - `supply`
-  - `vehicle`
-  - `weapon`
+- 不再回退到旧模型或内置三分类类别表
 
 ## 9. 普通态触发链
 
@@ -377,7 +364,7 @@
 8. 逆透视后必须近似横向长方形，宽高比阈值 `1.15`
 9. `direct_red_quad` 直接用上长边向上推出正方形
 10. `ipm_square_from_top_edge` 先在逆透视坐标系里推正方形，再回投到原图
-11. ROI 统一透视到 `64x64`
+11. ROI 统一透视到 `32x32`
 12. 轻微条带误选会被 `strip_reject`
 13. ROI 低信息过滤链已删除，低纹理不再作为独立 reject 条件
 
@@ -390,40 +377,32 @@
 - `mode_ = RECOGNITION`
 - `current_vision_code_ = NO_RESULT`
 
-之后由下一次 `ProcessRecognitionFrame(...)` 做一次单帧判定。
+触发帧可直接复用 ROI 推理；低置信时再等待同一目标的第二个有效 ROI。
 
-识别态单帧逻辑：
+识别态推理逻辑：
 
 1. 重新执行一遍 ROI 提取
 2. 若不是 `rotated_roi`，按 ROI 结果回退输出 `b/u/n` 并退出识别态
-3. 把 `64x64` ROI 送入 ONNX
-4. 六小类模型按部署映射聚合成 `weapon/supply/vehicle`
-5. 用本帧 Top-1 概率和 Top-1/Top-2 margin 做阈值判定
-6. 通过则输出 `w/s/v`，不通过则输出 `u`
+3. 把 `32x32` RGB ROI 送入手写 MLP
+4. 八小类概率按固定索引表聚合成 `weapon/supply/vehicle`
+5. 三大类 `top1>=0.90` 且 `margin>=0.70` 时单帧立即输出
+6. 否则输出 `u` 并等待第二个有效 ROI，两帧三大类概率平均后强制输出 top1
 7. 在 `view` 上叠加 ROI 状态、预测类别、推理耗时、本帧概率和最终结果
 8. 判定完成后立即 `mode_ = NORMAL`
 
-## 11. 单帧判定与类别映射
+## 11. 自适应一帧/两帧判定与类别映射
 
 单帧判定逻辑也在 `ProcessRecognitionFrame(...)` 中。
 
-当前策略：
+当前固定映射：
 
-1. 取本帧聚合概率里的 Top-1 / Top-2
-2. 检查 Top-1 概率是否达到 `decision_top1_threshold_`
-3. 检查 Top-1 与 Top-2 的间隔是否达到 `decision_margin_threshold_`
-4. 通过后把类别文本映射成工程内目标类别
+- `weapon = 手枪 + 步枪 + 炸药包`
+- `supply = 急救包 + 急救包（空白） + 望远镜`
+- `vehicle = 急救车 + 装甲车`
 
-文本到目标类别的映射规则：
-
-- 名字里包含 `weapon`
-  - 映射成 `WEAPON`
-- 名字里包含 `supply`
-  - 映射成 `SUPPLY`
-- 名字里包含 `vehicle`
-  - 映射成 `VEHICLE`
-- 其他
-  - `NONE`
+`deploy_calibration.json`中的 `decision_top1_threshold=0.30`和
+`decision_margin_threshold=0.01`用于正常合法性门槛；单帧高置信门槛仍由
+`common.h`中的 `0.90/0.70`控制。第二个有效推理帧不再因低置信拒绝，按两帧平均 top1 强制输出。
 
 一旦得到合法事件：
 

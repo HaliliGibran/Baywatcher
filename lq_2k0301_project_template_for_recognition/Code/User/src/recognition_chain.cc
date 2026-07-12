@@ -6,7 +6,6 @@
 #include "recognition_white_reference.h"
 #include "roi_runtime_geometry.h"
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -40,8 +39,6 @@ constexpr float kRecognitionSingleFrameHighConfMarginThreshold =
 constexpr int kRecognitionAdaptiveTwoFrameMaxBadFrames =
     BW_RECOG_ADAPTIVE_TWO_FRAME_MAX_BAD_FRAMES;
 constexpr int kRecognitionOnnxWarmupRuns = BW_RECOG_ONNX_WARMUP_RUNS;
-constexpr bool kRecognitionManualMlpInferEnable =
-    (BW_RECOG_MANUAL_MLP_INFER_ENABLE != 0);
 constexpr bool kRecognitionManualMlpCompareOnnx =
     (BW_RECOG_MANUAL_MLP_COMPARE_ONNX != 0);
 constexpr bool kRecognitionLightweightRedPrefilterEnable =
@@ -50,31 +47,11 @@ constexpr bool kRecognitionEarlySlowdownEnable =
     (BW_RECOG_EARLY_SLOWDOWN_ENABLE != 0);
 constexpr bool kRecognitionTriggerFrameInferEnable =
     (BW_RECOG_TRIGGER_FRAME_INFER_ENABLE != 0);
-constexpr int kRecognitionModelVariant = BW_RECOG_MODEL_VARIANT;
-constexpr bool kRecognitionUseGrayRed32Model =
-    (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_GRAYRED32);
-constexpr bool kRecognitionUseRgb32SubclassModel =
-    (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_RGB32_SUBCLASS);
-constexpr bool kRecognitionUseGray32SubclassModel =
-    (kRecognitionModelVariant == BW_RECOG_MODEL_VARIANT_GRAY32_SUBCLASS);
-constexpr bool kRecognitionUseSubclassModel =
-    kRecognitionUseGray32SubclassModel || kRecognitionUseRgb32SubclassModel;
-constexpr int kRecognitionModelInputSize =
-    (kRecognitionUseGrayRed32Model || kRecognitionUseSubclassModel) ? 32 : 64;
+constexpr int kRecognitionModelInputSize = 32;
 constexpr const char* kRecognitionModelRootDir =
-    kRecognitionUseGray32SubclassModel
-        ? "./model_subclass320_mlp_gray_256_rank1"
-        :
-    kRecognitionUseRgb32SubclassModel
-        ? "./model_boardroi_transfer_mlp_rgb_128_s32_rank1"
-        :
-    kRecognitionUseGrayRed32Model
-        ? "./model_mlp_wider_grayred_taskroi320_realcal_synsel_ls005_v1"
-        : "./model";
-constexpr const char* kRecognitionModelVariantName =
-    kRecognitionUseGray32SubclassModel ? "gray32_subclass_mlp_256" :
-    (kRecognitionUseRgb32SubclassModel ? "rgb32_boardroi8_mlp_128" :
-     (kRecognitionUseGrayRed32Model ? "grayred32_mlp_wider" : "rgb64_classic"));
+    "./model_boardroi_transfer_mlp_rgb_128_s32_rank1";
+constexpr const char* kRecognitionModelName = "rgb32_boardroi8_manual_mlp_128";
+constexpr int kRecognitionModelClassToGrouped[8] = {1, 1, 2, 0, 1, 0, 0, 2};
 constexpr size_t kRecognitionMaxClasses = RecognitionChain::kMaxModelClasses;
 
 static_assert(recognition_mlp_weights::kInputSize == 32,
@@ -761,11 +738,7 @@ static std::vector<std::string> load_class_names_from_json(const std::string& pa
 
 static std::vector<std::string> expected_class_names()
 {
-    if (kRecognitionUseSubclassModel)
-    {
-        return {"急救包", "急救包（空白）", "急救车", "手枪", "望远镜", "步枪", "炸药包", "装甲车"};
-    }
-    return {"weapon", "supply", "vehicle"};
+    return {"急救包", "急救包（空白）", "急救车", "手枪", "望远镜", "步枪", "炸药包", "装甲车"};
 }
 
 static std::string describe_class_name_mismatch(const std::vector<std::string>& actual,
@@ -796,53 +769,10 @@ static std::string describe_class_name_mismatch(const std::vector<std::string>& 
     return {};
 }
 
-// [Recognition Chain] 模型标签到车体策略标签的映射。
-// 作用：把模型输出的文本类别统一映射到工程内的控制枚举。
-static uint8_t parse_target_class_code(const std::string& name)
-{
-    std::string s;
-    s.resize(name.size());
-    std::transform(name.begin(), name.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (name.find("枪支") != std::string::npos ||
-        name.find("手枪") != std::string::npos ||
-        name.find("步枪") != std::string::npos ||
-        name.find("炸药包") != std::string::npos)
-    {
-        return 1;
-    }
-    if (name.find("急救包") != std::string::npos || name.find("望远镜") != std::string::npos)
-    {
-        return 2;
-    }
-    if (name.find("急救车") != std::string::npos ||
-        name.find("救护车") != std::string::npos ||
-        name.find("装甲车") != std::string::npos)
-    {
-        return 3;
-    }
-    if (s.find("weapon") != std::string::npos)
-    {
-        return 1;
-    }
-    if (s.find("supply") != std::string::npos)
-    {
-        return 2;
-    }
-    if (s.find("vehicle") != std::string::npos)
-    {
-        return 3;
-    }
-    return 0;
-}
-
 static size_t recognition_accum_class_count(size_t model_class_count)
 {
-    if (kRecognitionUseSubclassModel)
-    {
-        return 3;
-    }
-    return std::min(model_class_count, kRecognitionMaxClasses);
+    (void)model_class_count;
+    return 3;
 }
 
 static const char* grouped_class_name(int grouped_index)
@@ -867,68 +797,33 @@ static uint8_t grouped_target_code(int grouped_index)
     }
 }
 
-static int grouped_index_from_target_code(uint8_t target_code)
-{
-    switch (target_code)
-    {
-    case 1: return 0;
-    case 2: return 1;
-    case 3: return 2;
-    default: return -1;
-    }
-}
-
 static void accumulate_probabilities_for_runtime_decision(
     const RoiClassificationResult& cls,
     const std::vector<std::string>& class_names,
     std::array<float, kRecognitionMaxClasses>& prob_sum)
 {
-    if (!kRecognitionUseSubclassModel)
+    const size_t active_class_count = std::min(
+        class_names.size(),
+        static_cast<size_t>(recognition_mlp_weights::kClassCount));
+    for (size_t i = 0; i < active_class_count; ++i)
     {
-        const size_t active_class_count = std::min(class_names.size(), kRecognitionMaxClasses);
-        for (size_t i = 0; i < active_class_count; ++i)
-        {
-            prob_sum[i] += cls.probabilities[i];
-        }
-        return;
-    }
-
-    for (size_t i = 0; i < class_names.size() && i < kRecognitionMaxClasses; ++i)
-    {
-        const int grouped_index = grouped_index_from_target_code(parse_target_class_code(class_names[i]));
-        if (grouped_index >= 0 && grouped_index < 3)
-        {
-            prob_sum[static_cast<size_t>(grouped_index)] += cls.probabilities[i];
-        }
+        const int grouped_index = kRecognitionModelClassToGrouped[i];
+        prob_sum[static_cast<size_t>(grouped_index)] += cls.probabilities[i];
     }
 }
 
 static std::string runtime_decision_label(int decision_index,
                                           const std::vector<std::string>& class_names)
 {
-    if (kRecognitionUseSubclassModel)
-    {
-        return grouped_class_name(decision_index);
-    }
-    if (decision_index >= 0 && decision_index < static_cast<int>(class_names.size()))
-    {
-        return class_names[static_cast<size_t>(decision_index)];
-    }
-    return "unknown";
+    (void)class_names;
+    return grouped_class_name(decision_index);
 }
 
 static uint8_t runtime_decision_target_code(int decision_index,
                                             const std::vector<std::string>& class_names)
 {
-    if (kRecognitionUseSubclassModel)
-    {
-        return grouped_target_code(decision_index);
-    }
-    if (decision_index >= 0 && decision_index < static_cast<int>(class_names.size()))
-    {
-        return parse_target_class_code(class_names[static_cast<size_t>(decision_index)]);
-    }
-    return 0;
+    (void)class_names;
+    return grouped_target_code(decision_index);
 }
 
 static ProbabilityDecisionSummary summarize_classification_result(const RoiClassificationResult& cls,
@@ -1070,8 +965,7 @@ static RoiClassificationResult classify_roi_index_manual_rgb32(
     return result;
 }
 
-// [Recognition Chain] 单个 ROI 的 Top-1 分类推理。
-// 作用：按当前模型模式把 ROI 预处理成对应 blob，再送入 ONNX，输出当前帧的类别索引。
+// [Recognition Chain] 当前 RGB32 MLP 的 ONNX 对拍推理。
 static RoiClassificationResult classify_roi_index_onnx(cv::dnn::Net& net,
                                                        const cv::Mat& roi_bgr,
                                                        float calibration_temperature,
@@ -1080,120 +974,14 @@ static RoiClassificationResult classify_roi_index_onnx(cv::dnn::Net& net,
                                                        std::array<float, kRecognitionMaxClasses>* out_logits = nullptr)
 {
     const auto preprocess_begin = std::chrono::steady_clock::now();
-    cv::Mat blob;
-
-    if (kRecognitionUseGray32SubclassModel)
-    {
-        cv::Mat resized;
-        cv::resize(roi_bgr, resized, cv::Size(32, 32), 0, 0, cv::INTER_AREA);
-
-        cv::Mat gray_u8;
-        cv::cvtColor(resized, gray_u8, cv::COLOR_BGR2GRAY);
-        cv::Mat gray_f32;
-        gray_u8.convertTo(gray_f32, CV_32F, 1.0 / 255.0);
-
-        const int sizes[4] = {1, 1, 32, 32};
-        blob = cv::Mat(4, sizes, CV_32F, cv::Scalar(0));
-        float* gray_channel = blob.ptr<float>(0, 0);
-
-        for (int y = 0; y < 32; ++y)
-        {
-            for (int x = 0; x < 32; ++x)
-            {
-                const int idx = y * 32 + x;
-                const float gray = gray_f32.at<float>(y, x);
-                gray_channel[idx] = (gray - 0.449f) / 0.226f;
-            }
-        }
-    }
-    else if (kRecognitionUseRgb32SubclassModel)
-    {
-        static const float kInputMean[3] = {0.485f, 0.456f, 0.406f};
-        static const float kInputStd[3] = {0.229f, 0.224f, 0.225f};
-        cv::Mat resized;
-        cv::resize(roi_bgr, resized, cv::Size(32, 32), 0, 0, cv::INTER_AREA);
-
-        cv::Mat resized_f32;
-        resized.convertTo(resized_f32, CV_32FC3, 1.0 / 255.0);
-
-        const int sizes[4] = {1, 3, 32, 32};
-        blob = cv::Mat(4, sizes, CV_32F, cv::Scalar(0));
-        float* r_channel = blob.ptr<float>(0, 0);
-        float* g_channel = blob.ptr<float>(0, 1);
-        float* b_channel = blob.ptr<float>(0, 2);
-
-        for (int y = 0; y < 32; ++y)
-        {
-            for (int x = 0; x < 32; ++x)
-            {
-                const cv::Vec3f bgr = resized_f32.at<cv::Vec3f>(y, x);
-                const float b = bgr[0];
-                const float g = bgr[1];
-                const float r = bgr[2];
-                const int idx = y * 32 + x;
-                r_channel[idx] = (r - kInputMean[0]) / kInputStd[0];
-                g_channel[idx] = (g - kInputMean[1]) / kInputStd[1];
-                b_channel[idx] = (b - kInputMean[2]) / kInputStd[2];
-            }
-        }
-    }
-    else if (kRecognitionUseGrayRed32Model)
-    {
-        cv::Mat resized;
-        cv::resize(roi_bgr, resized, cv::Size(32, 32), 0, 0, cv::INTER_AREA);
-
-        cv::Mat resized_f32;
-        resized.convertTo(resized_f32, CV_32FC3, 1.0 / 255.0);
-
-        const int sizes[4] = {1, 2, 32, 32};
-        blob = cv::Mat(4, sizes, CV_32F, cv::Scalar(0));
-        float* gray_channel = blob.ptr<float>(0, 0);
-        float* red_dom_channel = blob.ptr<float>(0, 1);
-
-        for (int y = 0; y < 32; ++y)
-        {
-            for (int x = 0; x < 32; ++x)
-            {
-                const cv::Vec3f bgr = resized_f32.at<cv::Vec3f>(y, x);
-                const float b = bgr[0];
-                const float g = bgr[1];
-                const float r = bgr[2];
-                const float gray = 0.299f * r + 0.587f * g + 0.114f * b;
-                const float red_dom = std::max(r - std::max(g, b), 0.0f);
-                const int idx = y * 32 + x;
-                gray_channel[idx] = (gray - 0.449f) / 0.226f;
-                red_dom_channel[idx] = (red_dom - 0.0f) / 1.0f;
-            }
-        }
-    }
-    else
-    {
-        static const float kInputMean[3] = {0.485f, 0.456f, 0.406f};
-        static const float kInputStd[3] = {0.229f, 0.224f, 0.225f};
-        cv::Mat resized;
-        cv::resize(roi_bgr, resized, cv::Size(64, 64), 0, 0, cv::INTER_AREA);
-        blob = cv::dnn::blobFromImage(
-            resized,
-            1.0 / 255.0,
-            cv::Size(64, 64),
-            cv::Scalar(),
-            true,
-            false
-        );
-        const int plane = 64 * 64;
-        for (int c = 0; c < 3; ++c)
-        {
-            float* ptr = blob.ptr<float>(0, c);
-            if (ptr == nullptr)
-            {
-                continue;
-            }
-            for (int i = 0; i < plane; ++i)
-            {
-                ptr[i] = (ptr[i] - kInputMean[c]) / kInputStd[c];
-            }
-        }
-    }
+    std::array<float, recognition_mlp_weights::kInputElements> input = {};
+    build_rgb32_subclass_input(roi_bgr, input);
+    const int sizes[4] = {
+        1,
+        recognition_mlp_weights::kChannels,
+        recognition_mlp_weights::kInputSize,
+        recognition_mlp_weights::kInputSize};
+    cv::Mat blob(4, sizes, CV_32F, input.data());
 
     const auto preprocess_end = std::chrono::steady_clock::now();
     const auto set_input_begin = preprocess_end;
@@ -1303,14 +1091,6 @@ static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
                                                   const std::array<float, kRecognitionMaxClasses>& logit_bias,
                                                   RoiClassificationTiming* timing = nullptr)
 {
-    const bool can_use_manual =
-        kRecognitionUseRgb32SubclassModel &&
-        (kRecognitionManualMlpInferEnable || kRecognitionManualMlpCompareOnnx);
-    if (!can_use_manual)
-    {
-        return classify_roi_index_onnx(net, roi_bgr, calibration_temperature, logit_bias, timing);
-    }
-
     RoiClassificationTiming manual_timing;
     std::array<float, kRecognitionMaxClasses> manual_logits = {};
     const RoiClassificationResult manual_result = classify_roi_index_manual_rgb32(
@@ -1329,22 +1109,21 @@ static RoiClassificationResult classify_roi_index(cv::dnn::Net& net,
         return manual_result;
     }
 
-    RoiClassificationTiming onnx_timing;
     std::array<float, kRecognitionMaxClasses> onnx_logits = {};
     const RoiClassificationResult onnx_result = classify_roi_index_onnx(
         net,
         roi_bgr,
         calibration_temperature,
         logit_bias,
-        &onnx_timing,
+        nullptr,
         &onnx_logits);
     maybe_log_manual_mlp_compare(manual_result, onnx_result, manual_logits, onnx_logits);
 
     if (timing != nullptr)
     {
-        *timing = kRecognitionManualMlpInferEnable ? manual_timing : onnx_timing;
+        *timing = manual_timing;
     }
-    return kRecognitionManualMlpInferEnable ? manual_result : onnx_result;
+    return manual_result;
 }
 
 static void warmup_recognition_net(cv::dnn::Net& net,
@@ -1730,24 +1509,24 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
         return false;
     }
 
-    if (!file_exists(model_path))
+    if (!file_exists(class_path) || !file_exists(calibration_path) ||
+        (kRecognitionManualMlpCompareOnnx && !file_exists(model_path)))
     {
         enabled_ = false;
-        std::cerr << "[ONNX] model missing: configured=" << configured_model_path
-                  << ", resolved=" << model_path << std::endl;
-        std::cerr << "[ONNX] cwd=" << get_current_working_directory()
+        std::cerr << "[MLP] deployment files missing: classes=" << class_path
+                  << ", calibration=" << calibration_path;
+        if (kRecognitionManualMlpCompareOnnx)
+        {
+            std::cerr << ", compare_model=" << model_path;
+        }
+        std::cerr << std::endl;
+        std::cerr << "[MLP] cwd=" << get_current_working_directory()
                   << ", exe_dir=" << get_executable_directory() << std::endl;
-        std::cerr << "[ONNX] disabled, waiting for valid model/class files." << std::endl;
         return false;
     }
 
     try
     {
-        // [Recognition Chain Step 1] 加载 ONNX 模型与类别表。
-        // 作用：完成后 enabled_ 才允许进入红色触发和识别态。
-        net_ = cv::dnn::readNetFromONNX(model_path);
-        net_.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
-        net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
         class_names_ = load_class_names_from_json(class_path);
         const std::vector<std::string> expected_names = expected_class_names();
         const std::string class_mismatch =
@@ -1759,39 +1538,50 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
                 ", path=" + class_path);
         }
         const DeployCalibration calibration = load_deploy_calibration_json(calibration_path);
+        if (!calibration.loaded)
+        {
+            throw std::runtime_error("invalid deploy_calibration.json: " + calibration_path);
+        }
         calibration_temperature_ = calibration.temperature;
         logit_bias_ = calibration.logit_bias;
         decision_top1_threshold_ = calibration.decision_top1_threshold;
         decision_margin_threshold_ = calibration.decision_margin_threshold;
-        enabled_ = !net_.empty();
-        if (enabled_)
+
+        if (kRecognitionManualMlpCompareOnnx)
         {
+            net_ = cv::dnn::readNetFromONNX(model_path);
+            net_.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+            net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+            if (net_.empty())
+            {
+                throw std::runtime_error("failed to load ONNX compare model: " + model_path);
+            }
             warmup_recognition_net(net_, calibration_temperature_, logit_bias_);
         }
+        enabled_ = true;
     }
     catch (const std::exception& e)
     {
         enabled_ = false;
-        std::cerr << "[ONNX] disabled: " << e.what() << std::endl;
+        std::cerr << "[MLP] disabled: " << e.what() << std::endl;
     }
 
     if (enabled_)
     {
         if (kRecognitionTextLog)
         {
-            std::cout << "[ONNX] variant=" << kRecognitionModelVariantName
-                      << ", input=" << kRecognitionModelInputSize << "x" << kRecognitionModelInputSize
-                      << (kRecognitionUseGray32SubclassModel
-                              ? ", channels=1(gray)"
-                              : (kRecognitionUseRgb32SubclassModel
-                                     ? ", channels=3(rgb)"
-                                     : (kRecognitionUseGrayRed32Model ? ", channels=2(gray+red_dom)" : ", channels=3(rgb)")))
-                      << std::endl;
-            std::cout << "[ONNX] enabled, model=" << model_path << std::endl;
-            std::cout << "[ONNX] classes=" << class_path << std::endl;
-            std::cout << "[MLP] manual_infer=" << (kRecognitionManualMlpInferEnable ? "on" : "off")
-                      << ", compare_onnx=" << (kRecognitionManualMlpCompareOnnx ? "on" : "off")
-                      << std::endl;
+            std::cout << "[MLP] model=" << kRecognitionModelName
+                       << ", input=" << kRecognitionModelInputSize << "x" << kRecognitionModelInputSize
+                       << ", channels=3(rgb)"
+                       << std::endl;
+            std::cout << "[MLP] manual_infer=on"
+                       << ", compare_onnx=" << (kRecognitionManualMlpCompareOnnx ? "on" : "off");
+            if (kRecognitionManualMlpCompareOnnx)
+            {
+                std::cout << ", compare_model=" << model_path;
+            }
+            std::cout << std::endl;
+            std::cout << "[MLP] classes=" << class_path << std::endl;
             std::cout << "[RECOG] roi_method=" << RoiMethodName(DefaultRoiMethod()) << std::endl;
             std::cout << "[RECOG] decision=adaptive_1_or_2_frame"
                       << ", top1_threshold=" << decision_top1_threshold_
@@ -1809,7 +1599,7 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
     {
         if (kRecognitionTextLog)
         {
-            std::cout << "[ONNX] disabled, waiting for valid model/class files." << std::endl;
+            std::cout << "[MLP] disabled, waiting for valid deployment files." << std::endl;
         }
     }
     return enabled_;
