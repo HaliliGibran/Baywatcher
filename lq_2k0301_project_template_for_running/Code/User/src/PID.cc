@@ -27,6 +27,57 @@ const float FACTOR_LIMIT = 1.23f;        // 差速比例输出限幅
 // const float FACTOR_LIMIT = 1.2f;        // 差速比例输出限幅
 const float REMOTE_RECOG_SPEED_RATIO_NO_BLOCK_EPS = 1e-4f;
 
+static float circle_base_speed_ratio(CircleState state)
+{
+    switch (state)
+    {
+    case CircleState::CIRCLE_IN:
+        return clampf_pid(BW_CIRCLE_IN_BASE_SPEED_RATIO, 0.0f, 1.0f);
+    case CircleState::CIRCLE_RUNNING:
+        return clampf_pid(BW_CIRCLE_RUNNING_BASE_SPEED_RATIO, 0.0f, 1.0f);
+    case CircleState::CIRCLE_OUT:
+        return clampf_pid(BW_CIRCLE_OUT_BASE_SPEED_RATIO, 0.0f, 1.0f);
+    default:
+        return 1.0f;
+    }
+}
+
+static const char* circle_base_speed_state_text(CircleState state)
+{
+    switch (state)
+    {
+    case CircleState::CIRCLE_IN: return "IN";
+    case CircleState::CIRCLE_RUNNING: return "RUNNING";
+    case CircleState::CIRCLE_OUT: return "OUT";
+    default: return "NORMAL";
+    }
+}
+
+static float apply_circle_base_speed_ratio(float base_speed)
+{
+    const float ratio = circle_base_speed_ratio(circle_state);
+    static CircleState last_state = CircleState::CIRCLE_NONE;
+    static float last_ratio = 1.0f;
+    if (circle_state != last_state || std::fabs(ratio - last_ratio) >= 0.001f)
+    {
+        if (ratio < 1.0f)
+        {
+            std::printf("[环岛基础速度] %s倍率=%.2f, base=%.2f, 生效base=%.2f\n",
+                        circle_base_speed_state_text(circle_state),
+                        ratio,
+                        base_speed,
+                        base_speed * ratio);
+        }
+        else if (last_ratio < 1.0f)
+        {
+            std::printf("[环岛基础速度] 解除, base=%.2f\n", base_speed);
+        }
+        last_state = circle_state;
+        last_ratio = ratio;
+    }
+    return base_speed * ratio;
+}
+
 static inline bool remote_bypass_active()
 {
     FollowLine forced_mode = FollowLine::MIXED;
@@ -141,6 +192,8 @@ static float update_straight_acceleration(float pure_angle, float preview_curve)
     // 完美实现环岛和十字路口内部不进行任何直道加速
     if (!cfg_straight_accel_enable ||
         element_type != ElementType::NORMAL ||
+        circle_state != CircleState::CIRCLE_NONE ||
+        crossing_state != CrossingState::CROSSING_NONE ||
         std::fabs(PID.base_target_speed) <= 1e-4f ||
         remote_recognition_straight_accel_block_active()) {
         reset_straight_acceleration_state();
@@ -256,27 +309,6 @@ static float update_straight_acceleration(float pure_angle, float preview_curve)
 #define BW_ENABLE_CURVE_SLOWDOWN 1
 #endif
 
-// 环岛减速开关：
-// 使用位置：PID.cc / curve_slowdown_roundabout_target_speed。
-// 作用：控制“环岛阶段是否启用固定减速”。
-// 1：进入环岛后不再使用 preview_curve_angle_deg，直接切到固定减速速度。
-// 0：进入环岛后不减速，yaw_control_base_speed 立即回到手动基准速度。
-// 推荐：如果环岛内曲率波动较大、连续减速会导致速度抖动，保持开启更稳。
-#ifndef BW_ENABLE_ROUNDABOUT_CURVE_SLOWDOWN
-#define BW_ENABLE_ROUNDABOUT_CURVE_SLOWDOWN 1
-// #define BW_ENABLE_ROUNDABOUT_CURVE_SLOWDOWN 0
-#endif
-
-// 环岛固定减速比例：
-// 使用位置：PID.cc / curve_slowdown_roundabout_target_speed。
-// 作用：当环岛减速开关开启时，环岛内实际生效速度 = 手动基准速度 * 该比例。
-// 调小：环岛更慢、更稳。
-// 调大：环岛更快、更接近普通巡线速度。
-// 默认值 0.92 约等于当前转角减速链在较小转角区间内的典型减速强度。
-#ifndef BW_ROUNDABOUT_FIXED_SLOWDOWN_RATIO
-#define BW_ROUNDABOUT_FIXED_SLOWDOWN_RATIO 0.92f
-#endif
-
 // 转角减速下限：preview_curve_angle_deg 低于该值时，不触发减速。
 // 调大：更晚开始减速；调小：更早开始减速。
 #ifndef BW_CURVE_SLOWDOWN_CURV_LOW
@@ -343,19 +375,6 @@ static bool curve_slowdown_roundabout_active()
            (circle_state != CircleState::CIRCLE_NONE);
 }
 
-// 环岛阶段的固定减速目标：
-// - 开关开启：直接切到固定比例速度
-// - 开关关闭：不减速，回到手动基准速度
-static float curve_slowdown_roundabout_target_speed(float manual_base_speed)
-{
-#if BW_ENABLE_ROUNDABOUT_CURVE_SLOWDOWN
-    const float ratio = clampf_pid(BW_ROUNDABOUT_FIXED_SLOWDOWN_RATIO, 0.0f, 1.0f);
-    return manual_base_speed * ratio;
-#else
-    return manual_base_speed;
-#endif
-}
-
 static void reset_curve_slowdown_state(float base_speed)
 {
     g_curve_slowdown.initialized = false;
@@ -379,7 +398,7 @@ static float curve_slowdown_target_speed(float manual_base_speed)
 
     if (curve_slowdown_roundabout_active())
     {
-        return curve_slowdown_roundabout_target_speed(manual_base_speed);
+        return manual_base_speed;
     }
 
     const float curve_low = BW_CURVE_SLOWDOWN_CURV_LOW;
@@ -431,7 +450,7 @@ static float update_curve_slowdown_base_speed(float manual_base_speed)
     if (curve_slowdown_roundabout_active())
     {
         g_curve_slowdown.initialized = true;
-        PID.yaw_control_base_speed = curve_slowdown_roundabout_target_speed(manual_base_speed);
+        PID.yaw_control_base_speed = manual_base_speed;
         return PID.yaw_control_base_speed;
     }
 
@@ -1642,9 +1661,11 @@ void BayWatcher_Inner_Loop(void* arg){
     float remote_speed_cap = 0.0f;
     const bool remote_speed_cap_active =
         image_remote_recognition_get_speed_cap_override(&remote_speed_cap);
+    const float circle_base_speed =
+        apply_circle_base_speed_ratio(PID.base_target_speed);
     const float local_base_speed = remote_speed_cap_active
-        ? PID.base_target_speed
-        : update_curve_slowdown_base_speed(PID.base_target_speed);
+        ? circle_base_speed
+        : update_curve_slowdown_base_speed(circle_base_speed);
     const float effective_base_speed = apply_remote_speed_cap(
         local_base_speed * remote_speed_scale);
     int32_t pid_out_L = (int32_t)Calc_Pos_PID(&PID_Speed_F_L, effective_base_speed, v_avg);
@@ -1809,15 +1830,16 @@ void BayWatcher_Control_Loop(void* arg) {
     if(vR>=-0.01 && vR<=0.01) vR =0.0f;
 
 
-    // 考虑到前方可能是弯道，动态应用弯道减速
-    // const float effective_base_speed = update_curve_slowdown_base_speed(PID.base_target_speed);
+    // 环岛倍率先作用于手动基础速度，后续远端减速和斑马线倍率继续叠加。
     const float remote_speed_scale = zebra_rush_active
         ? 1.0f
         : clampf_pid(image_remote_recognition_get_speed_ratio_override(), 0.0f, 1.0f);
     const float zebra_speed_scale =
         clampf_pid(zebra_speed_ratio_override, 0.0f, BW_ZEBRA_RUSH_SPEED_RATIO);
+    const float circle_base_speed =
+        apply_circle_base_speed_ratio(PID.base_target_speed);
     const float effective_base_speed =
-        PID.base_target_speed * remote_speed_scale * zebra_speed_scale;
+        circle_base_speed * remote_speed_scale * zebra_speed_scale;
 
     // if (PID.speed_adjust > 0) {
     //     PID.target_speed_L = effective_base_speed + (PID.speed_adjust * 0.3f);
