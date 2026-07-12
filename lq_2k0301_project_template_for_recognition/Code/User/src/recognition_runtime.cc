@@ -183,6 +183,18 @@ struct ClothStartDetectionResult
     float green_ratio = 0.0f;
 };
 
+struct ClothDetectionScratch
+{
+    cv::Mat gain_bgr;
+    cv::Mat hsv;
+};
+
+static ClothDetectionScratch& GetClothDetectionScratch()
+{
+    static ClothDetectionScratch scratch;
+    return scratch;
+}
+
 static bool IsBlindBoxGreenClothStartEnabled()
 {
     return BW_SOFTWARE_BLIND_BOX_TASK == BW_SOFTWARE_BLIND_BOX_TASK_COLOR_CLOTH_START &&
@@ -234,7 +246,69 @@ static bool IsGreenClothPixel(const cv::Vec3b& bgr, const cv::Vec3b& hsv)
            (g - std::max(r, b)) >= BW_RECOG_CLOTH_GREEN_DOM_MIN;
 }
 
+static bool GreenClothPixelCountPasses(int green_pixels, int total_pixels)
+{
+    const float green_ratio =
+        static_cast<float>(green_pixels) / static_cast<float>(std::max(1, total_pixels));
+    return green_pixels >= BW_RECOG_CLOTH_GREEN_MIN_PIXELS &&
+           green_ratio >= BW_RECOG_CLOTH_GREEN_MIN_RATIO;
+}
+
+static void BuildGainAppliedClothRoi(const cv::Mat& source_roi, cv::Mat* out_gain_bgr)
+{
+    if (out_gain_bgr == nullptr || source_roi.empty())
+    {
+        return;
+    }
+
+    out_gain_bgr->create(source_roi.size(), source_roi.type());
+    RecognitionWhiteReferenceGains gains;
+    if (!recognition_white_reference::GetCurrentGains(&gains) || !gains.initialized)
+    {
+        source_roi.copyTo(*out_gain_bgr);
+        return;
+    }
+
+    const cv::Matx33f gain_matrix(
+        gains.gain_b, 0.0f, 0.0f,
+        0.0f, gains.gain_g, 0.0f,
+        0.0f, 0.0f, gains.gain_r);
+    cv::transform(source_roi, *out_gain_bgr, gain_matrix);
+}
+
+static bool HasEnoughGreenDominanceCandidates(const cv::Mat& gain_bgr,
+                                              int total_pixels)
+{
+    if (gain_bgr.empty())
+    {
+        return false;
+    }
+
+    int candidate_pixels = 0;
+    for (int y = 0; y < gain_bgr.rows; ++y)
+    {
+        const cv::Vec3b* row = gain_bgr.ptr<cv::Vec3b>(y);
+        for (int x = 0; x < gain_bgr.cols; ++x)
+        {
+            const int b = static_cast<int>(row[x][0]);
+            const int g = static_cast<int>(row[x][1]);
+            const int r = static_cast<int>(row[x][2]);
+            if ((g - std::max(r, b)) < BW_RECOG_CLOTH_GREEN_DOM_MIN)
+            {
+                continue;
+            }
+            ++candidate_pixels;
+            if (GreenClothPixelCountPasses(candidate_pixels, total_pixels))
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static bool DetectBlindBoxGreenClothStart(const cv::Mat& frame_bgr,
+                                          bool collect_full_stats,
                                           ClothStartDetectionResult* out_result)
 {
     if (out_result != nullptr)
@@ -252,30 +326,47 @@ static bool DetectBlindBoxGreenClothStart(const cv::Mat& frame_bgr,
         return false;
     }
 
-    cv::Mat roi_bgr = frame_bgr(search_rect).clone();
-    recognition_white_reference::ApplyGainsToMat(&roi_bgr);
-    cv::Mat roi_hsv;
-    cv::cvtColor(roi_bgr, roi_hsv, cv::COLOR_BGR2HSV);
+    const int total_pixels = std::max(1, search_rect.area());
+    ClothDetectionScratch& scratch = GetClothDetectionScratch();
+    BuildGainAppliedClothRoi(frame_bgr(search_rect), &scratch.gain_bgr);
+    // Every exact HSV green pixel also passes this dominance test.
+    if (!HasEnoughGreenDominanceCandidates(scratch.gain_bgr, total_pixels))
+    {
+        return false;
+    }
+
+    scratch.hsv.create(scratch.gain_bgr.size(), CV_8UC3);
+    cv::cvtColor(scratch.gain_bgr, scratch.hsv, cv::COLOR_BGR2HSV);
 
     int green_pixels = 0;
-    for (int y = 0; y < roi_bgr.rows; ++y)
+    for (int y = 0; y < scratch.gain_bgr.rows; ++y)
     {
-        const cv::Vec3b* bgr_row = roi_bgr.ptr<cv::Vec3b>(y);
-        const cv::Vec3b* hsv_row = roi_hsv.ptr<cv::Vec3b>(y);
-        for (int x = 0; x < roi_bgr.cols; ++x)
+        const cv::Vec3b* bgr_row = scratch.gain_bgr.ptr<cv::Vec3b>(y);
+        const cv::Vec3b* hsv_row = scratch.hsv.ptr<cv::Vec3b>(y);
+        for (int x = 0; x < scratch.gain_bgr.cols; ++x)
         {
             if (IsGreenClothPixel(bgr_row[x], hsv_row[x]))
             {
                 ++green_pixels;
+                if (!collect_full_stats &&
+                    GreenClothPixelCountPasses(green_pixels, total_pixels))
+                {
+                    if (out_result != nullptr)
+                    {
+                        out_result->active = true;
+                        out_result->search_rect = search_rect;
+                        out_result->green_pixels = green_pixels;
+                        out_result->green_ratio =
+                            static_cast<float>(green_pixels) / static_cast<float>(total_pixels);
+                    }
+                    return true;
+                }
             }
         }
     }
 
-    const int total_pixels = std::max(1, search_rect.area());
     const float green_ratio = static_cast<float>(green_pixels) / static_cast<float>(total_pixels);
-    const bool active =
-        green_pixels >= BW_RECOG_CLOTH_GREEN_MIN_PIXELS &&
-        green_ratio >= BW_RECOG_CLOTH_GREEN_MIN_RATIO;
+    const bool active = GreenClothPixelCountPasses(green_pixels, total_pixels);
 
     if (out_result != nullptr)
     {
@@ -352,6 +443,7 @@ struct RuntimeFrameTimingSample
     double capture_ms = 0.0;
     double frame_age_ms = 0.0;
     double prepare_ms = 0.0;
+    double cloth_detection_ms = 0.0;
     double chain_ms = 0.0;
     double overlay_ms = 0.0;
     double send_state_ms = 0.0;
@@ -426,6 +518,7 @@ static void PrintTimingFrameLine(const char* label,
               << ", 读帧_ms=" << sample.capture_ms
               << ", 帧龄_ms=" << sample.frame_age_ms
               << ", 预处理_ms=" << sample.prepare_ms
+              << ", 绿布检测_ms=" << sample.cloth_detection_ms
               << ", 链路处理_ms=" << sample.chain_ms
               << ", 叠字_ms=" << sample.overlay_ms
               << ", 提前u发包_ms=" << (sample.early_u_send_attempted ? sample.early_u_send_ms : 0.0)
@@ -990,6 +1083,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         double capture_ms = 0.0;
         double frame_age_ms = 0.0;
         double prepare_ms = 0.0;
+        double cloth_detection_ms = 0.0;
         double chain_ms = 0.0;
         double overlay_ms = 0.0;
         double send_state_ms = 0.0;
@@ -1079,7 +1173,12 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         prepare_ms = elapsed_ms_between(prepare_begin, prepare_end);
 
         ClothStartDetectionResult cloth_detection;
-        const bool cloth_stop_active = DetectBlindBoxGreenClothStart(img, &cloth_detection);
+        const steady_time_point_t cloth_detection_begin = steady_clock_t::now();
+        const bool cloth_stop_active =
+            DetectBlindBoxGreenClothStart(img, render_debug, &cloth_detection);
+        const steady_time_point_t cloth_detection_end = steady_clock_t::now();
+        cloth_detection_ms =
+            elapsed_ms_between(cloth_detection_begin, cloth_detection_end);
 
         RuntimeFrameStage frame_stage = RuntimeFrameStage::TRY_ENTER;
         bool entered_recognition_this_frame = false;
@@ -1277,6 +1376,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         timing_sample.capture_ms = capture_ms;
         timing_sample.frame_age_ms = frame_age_ms;
         timing_sample.prepare_ms = prepare_ms;
+        timing_sample.cloth_detection_ms = cloth_detection_ms;
         timing_sample.chain_ms = chain_ms;
         timing_sample.overlay_ms = overlay_ms;
         timing_sample.send_state_ms = send_state_ms;
