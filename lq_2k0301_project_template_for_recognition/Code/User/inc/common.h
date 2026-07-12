@@ -162,6 +162,52 @@
 #define BW_RECOG_BRICK_SEARCH_Y_MIN BW_RECOG_TRIGGER_SEARCH_Y_MIN
 #endif
 
+// [开关] CIRCLE_RUNNING 内启用更严格的 marker 触发质量门控。
+#ifndef BW_RECOG_CIRCLE_MARKER_QUALITY_GATE_ENABLE
+#define BW_RECOG_CIRCLE_MARKER_QUALITY_GATE_ENABLE 1
+#endif
+
+// [先调] 环岛内 marker 红块底边至少到达该 y，才允许累计稳定帧。
+#ifndef BW_RECOG_CIRCLE_TRIGGER_BOTTOM_Y_MIN
+#define BW_RECOG_CIRCLE_TRIGGER_BOTTOM_Y_MIN 75
+#endif
+
+// [先调] 环岛内 marker 红块底边到达该 y 后，不再等待第二个稳定帧。
+#ifndef BW_RECOG_CIRCLE_TRIGGER_IMMEDIATE_BOTTOM_Y
+#define BW_RECOG_CIRCLE_TRIGGER_IMMEDIATE_BOTTOM_Y 95
+#endif
+
+// [先调] 未达到立即触发 y 时，连续满足位置条件的帧数。
+#ifndef BW_RECOG_CIRCLE_TRIGGER_STABLE_FRAMES
+#define BW_RECOG_CIRCLE_TRIGGER_STABLE_FRAMES 2
+#endif
+
+// [一般别动] 环岛横向门控从远端到近端的线性插值 y 范围。
+#ifndef BW_RECOG_CIRCLE_X_GATE_FAR_Y
+#define BW_RECOG_CIRCLE_X_GATE_FAR_Y 75
+#endif
+
+#ifndef BW_RECOG_CIRCLE_X_GATE_NEAR_Y
+#define BW_RECOG_CIRCLE_X_GATE_NEAR_Y 110
+#endif
+
+// [先调] 环岛远端只允许画面中央 30%~70%，近端恢复普通 20%~80%。
+#ifndef BW_RECOG_CIRCLE_X_GATE_FAR_MIN_RATIO
+#define BW_RECOG_CIRCLE_X_GATE_FAR_MIN_RATIO 0.30f
+#endif
+
+#ifndef BW_RECOG_CIRCLE_X_GATE_FAR_MAX_RATIO
+#define BW_RECOG_CIRCLE_X_GATE_FAR_MAX_RATIO 0.70f
+#endif
+
+#ifndef BW_RECOG_CIRCLE_X_GATE_NEAR_MIN_RATIO
+#define BW_RECOG_CIRCLE_X_GATE_NEAR_MIN_RATIO 0.20f
+#endif
+
+#ifndef BW_RECOG_CIRCLE_X_GATE_NEAR_MAX_RATIO
+#define BW_RECOG_CIRCLE_X_GATE_NEAR_MAX_RATIO 0.80f
+#endif
+
 #pragma endregion
 
 #pragma region F. 现场常调：模型置信度阈值

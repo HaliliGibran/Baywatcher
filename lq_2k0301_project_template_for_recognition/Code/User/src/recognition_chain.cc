@@ -47,12 +47,109 @@ constexpr bool kRecognitionEarlySlowdownEnable =
     (BW_RECOG_EARLY_SLOWDOWN_ENABLE != 0);
 constexpr bool kRecognitionTriggerFrameInferEnable =
     (BW_RECOG_TRIGGER_FRAME_INFER_ENABLE != 0);
+constexpr bool kRecognitionCircleMarkerQualityGateEnable =
+    (BW_RECOG_CIRCLE_MARKER_QUALITY_GATE_ENABLE != 0);
 constexpr int kRecognitionModelInputSize = 32;
 constexpr const char* kRecognitionModelRootDir =
     "./model_boardroi_transfer_mlp_rgb_128_s32_rank1";
 constexpr const char* kRecognitionModelName = "rgb32_boardroi8_manual_mlp_128";
 constexpr int kRecognitionModelClassToGrouped[8] = {1, 1, 2, 0, 1, 0, 0, 2};
 constexpr size_t kRecognitionMaxClasses = RecognitionChain::kMaxModelClasses;
+
+struct CircleMarkerQualityObservation
+{
+    bool geometry_available = false;
+    bool position_passed = false;
+    bool immediate = false;
+    int bottom_y = -1;
+    float center_x = -1.0f;
+    float center_x_ratio = -1.0f;
+    float min_x_ratio = BW_RECOG_CIRCLE_X_GATE_FAR_MIN_RATIO;
+    float max_x_ratio = BW_RECOG_CIRCLE_X_GATE_FAR_MAX_RATIO;
+    int width = 0;
+    int height = 0;
+    double area = 0.0;
+    const char* reason = "missing_geometry";
+};
+
+static CircleMarkerQualityObservation evaluate_circle_marker_quality(
+    const RoiExtractionResult& roi_result,
+    int frame_width)
+{
+    CircleMarkerQualityObservation observation;
+    if (roi_result.has_candidate_area)
+    {
+        observation.area = roi_result.candidate_area;
+    }
+    else if (roi_result.has_blob_area)
+    {
+        observation.area = roi_result.blob_area;
+    }
+    if (frame_width <= 0 ||
+        !roi_result.has_candidate_center ||
+        (!roi_result.has_blob_box && !roi_result.has_candidate_size))
+    {
+        return observation;
+    }
+
+    observation.geometry_available = true;
+    observation.center_x = roi_result.candidate_center_x;
+    observation.center_x_ratio =
+        observation.center_x / static_cast<float>(frame_width);
+    if (roi_result.has_blob_box)
+    {
+        observation.bottom_y =
+            roi_result.blob_box.y + roi_result.blob_box.height - 1;
+        observation.width = roi_result.blob_box.width;
+        observation.height = roi_result.blob_box.height;
+    }
+    else
+    {
+        observation.bottom_y = static_cast<int>(
+            std::lround(roi_result.candidate_center_y +
+                        roi_result.candidate_height * 0.5f - 1.0f));
+        observation.width = roi_result.candidate_width;
+        observation.height = roi_result.candidate_height;
+    }
+
+    const float y_span = static_cast<float>(
+        std::max(1, BW_RECOG_CIRCLE_X_GATE_NEAR_Y - BW_RECOG_CIRCLE_X_GATE_FAR_Y));
+    const float y_alpha = std::max(
+        0.0f,
+        std::min(
+            1.0f,
+            (static_cast<float>(observation.bottom_y) -
+             static_cast<float>(BW_RECOG_CIRCLE_X_GATE_FAR_Y)) /
+                y_span));
+    observation.min_x_ratio =
+        BW_RECOG_CIRCLE_X_GATE_FAR_MIN_RATIO +
+        y_alpha * (BW_RECOG_CIRCLE_X_GATE_NEAR_MIN_RATIO -
+                   BW_RECOG_CIRCLE_X_GATE_FAR_MIN_RATIO);
+    observation.max_x_ratio =
+        BW_RECOG_CIRCLE_X_GATE_FAR_MAX_RATIO +
+        y_alpha * (BW_RECOG_CIRCLE_X_GATE_NEAR_MAX_RATIO -
+                   BW_RECOG_CIRCLE_X_GATE_FAR_MAX_RATIO);
+
+    if (observation.bottom_y < BW_RECOG_CIRCLE_TRIGGER_BOTTOM_Y_MIN)
+    {
+        observation.reason = "bottom_y_too_far";
+        return observation;
+    }
+    if (observation.center_x_ratio < observation.min_x_ratio ||
+        observation.center_x_ratio > observation.max_x_ratio)
+    {
+        observation.reason = "center_x_outside_gate";
+        return observation;
+    }
+
+    observation.position_passed = true;
+    observation.immediate =
+        observation.bottom_y >= BW_RECOG_CIRCLE_TRIGGER_IMMEDIATE_BOTTOM_Y;
+    observation.reason = observation.immediate
+        ? "immediate_distance"
+        : "stable_frame_required";
+    return observation;
+}
 
 static_assert(recognition_mlp_weights::kInputSize == 32,
               "recognition_mlp_weights input size mismatch");
@@ -1483,6 +1580,9 @@ RecognitionChain::RecognitionChain()
       adaptive_prob_sum_(),
       adaptive_valid_frame_count_(0),
       adaptive_bad_frame_count_(0),
+      circle_running_mode_(false),
+      circle_marker_quality_pass_frames_(0),
+      circle_marker_quality_last_log_ms_(0),
       pending_trigger_roi_valid_(false),
       pending_trigger_roi_(),
       pending_trigger_perf_(),
@@ -1614,11 +1714,24 @@ void RecognitionChain::Reset()
     latched_release_pending_ = false;
     current_blob_area_ = 0.0;
     recent_red_candidate_until_ms_ = 0;
+    circle_marker_quality_pass_frames_ = 0;
+    circle_marker_quality_last_log_ms_ = 0;
     pending_trigger_roi_valid_ = false;
     pending_trigger_roi_ = RoiExtractionResult();
     pending_trigger_perf_ = PerfSample();
     ClearAdaptiveDecision();
     last_perf_sample_ = PerfSample();
+}
+
+void RecognitionChain::SetCircleRunningMode(bool active)
+{
+    if (circle_running_mode_ == active)
+    {
+        return;
+    }
+    circle_running_mode_ = active;
+    circle_marker_quality_pass_frames_ = 0;
+    circle_marker_quality_last_log_ms_ = 0;
 }
 
 void RecognitionChain::ClearAdaptiveDecision()
@@ -1748,6 +1861,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
 
         if (!has_lightweight_recognition_red)
         {
+            circle_marker_quality_pass_frames_ = 0;
             const bool hold_recent_u =
                 lightweight_track_prefilter.has_track_boundaries &&
                 t_ms < recent_red_candidate_until_ms_;
@@ -1865,6 +1979,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     }
     if (trigger_roi.target_type == "roadblock" || trigger_roi.status == "roadblock")
     {
+        circle_marker_quality_pass_frames_ = 0;
         current_vision_code_ = brick_code_from_roi_result(trigger_roi, frame_bgr.cols);
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
@@ -1885,6 +2000,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     }
     if (is_success_symbol_code(latched_symbol_code_))
     {
+        circle_marker_quality_pass_frames_ = 0;
         current_vision_code_ = latched_symbol_code_;
         if (holdable_sign_red_visible)
         {
@@ -1963,6 +2079,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
 
     if (trigger_roi.status == "miss")
     {
+        circle_marker_quality_pass_frames_ = 0;
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
         latched_release_deadline_ms_ = 0;
@@ -2024,6 +2141,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
 
     if (trigger_roi.status != "rotated_roi")
     {
+        circle_marker_quality_pass_frames_ = 0;
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
         latched_release_deadline_ms_ = 0;
@@ -2090,6 +2208,112 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         last_perf_sample_.try_total_ms =
             std::chrono::duration<double, std::milli>(steady_clock_t::now() - try_begin).count();
         return false;
+    }
+
+    if (kRecognitionCircleMarkerQualityGateEnable && circle_running_mode_)
+    {
+        const CircleMarkerQualityObservation circle_quality =
+            evaluate_circle_marker_quality(trigger_roi, frame_bgr.cols);
+        const int stable_frames_required =
+            std::max(1, BW_RECOG_CIRCLE_TRIGGER_STABLE_FRAMES);
+        bool quality_passed = false;
+        if (!circle_quality.position_passed)
+        {
+            circle_marker_quality_pass_frames_ = 0;
+        }
+        else if (circle_quality.immediate)
+        {
+            quality_passed = true;
+        }
+        else
+        {
+            ++circle_marker_quality_pass_frames_;
+            quality_passed =
+                circle_marker_quality_pass_frames_ >= stable_frames_required;
+        }
+
+        if (!quality_passed)
+        {
+            current_vision_code_ = BoardVisionCode::NO_RESULT;
+            latched_symbol_code_ = BoardVisionCode::INVALID;
+            latched_release_pending_ = false;
+            latched_release_deadline_ms_ = 0;
+            pending_trigger_roi_valid_ = false;
+            pending_trigger_roi_ = RoiExtractionResult();
+            pending_trigger_perf_ = PerfSample();
+            ClearAdaptiveDecision();
+
+            const bool should_log =
+                kRecognitionResultLog &&
+                (circle_marker_quality_last_log_ms_ == 0 ||
+                 t_ms >= circle_marker_quality_last_log_ms_ +
+                             kRecognitionTriggerRejectLogIntervalMs);
+            if (should_log)
+            {
+                circle_marker_quality_last_log_ms_ = t_ms;
+                std::cout << "[环岛识别质量] 保持u"
+                          << ", 原因=" << circle_quality.reason
+                          << ", bottom_y=" << circle_quality.bottom_y
+                          << ", center_x=" << std::fixed << std::setprecision(1)
+                          << circle_quality.center_x
+                          << ", x_ratio=" << std::setprecision(3)
+                          << circle_quality.center_x_ratio
+                          << ", 允许范围=[" << circle_quality.min_x_ratio
+                          << "," << circle_quality.max_x_ratio << "]"
+                          << ", area=" << std::setprecision(1)
+                          << circle_quality.area
+                          << ", box=" << circle_quality.width
+                          << "x" << circle_quality.height
+                          << ", 连续帧=" << circle_marker_quality_pass_frames_
+                          << "/" << stable_frames_required
+                          << std::endl;
+            }
+            if (render_debug)
+            {
+                cv::putText(view, "CIRCLE QUALITY HOLD -> u", cv::Point(16, 84),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.62,
+                            cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+                std::ostringstream quality_text;
+                quality_text << "bottom=" << circle_quality.bottom_y
+                             << " x=" << std::fixed << std::setprecision(2)
+                             << circle_quality.center_x_ratio
+                             << " gate=[" << circle_quality.min_x_ratio
+                             << "," << circle_quality.max_x_ratio << "]"
+                             << " stable=" << circle_marker_quality_pass_frames_
+                             << "/" << stable_frames_required;
+                cv::putText(view, quality_text.str(), cv::Point(16, 168),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.48,
+                            cv::Scalar(0, 255, 255), 1, cv::LINE_AA);
+            }
+            last_perf_sample_.try_total_ms =
+                std::chrono::duration<double, std::milli>(
+                    steady_clock_t::now() - try_begin).count();
+            return false;
+        }
+
+        if (kRecognitionResultLog)
+        {
+            std::cout << "[环岛识别质量] 通过"
+                      << ", 模式=" << (circle_quality.immediate ? "近端立即" : "连续稳定")
+                      << ", bottom_y=" << circle_quality.bottom_y
+                      << ", center_x=" << std::fixed << std::setprecision(1)
+                      << circle_quality.center_x
+                      << ", x_ratio=" << std::setprecision(3)
+                      << circle_quality.center_x_ratio
+                      << ", 允许范围=[" << circle_quality.min_x_ratio
+                      << "," << circle_quality.max_x_ratio << "]"
+                      << ", area=" << std::setprecision(1)
+                      << circle_quality.area
+                      << ", box=" << circle_quality.width
+                      << "x" << circle_quality.height
+                      << std::endl;
+        }
+        circle_marker_quality_pass_frames_ = 0;
+        circle_marker_quality_last_log_ms_ = 0;
+    }
+    else
+    {
+        circle_marker_quality_pass_frames_ = 0;
     }
 
     // [Recognition Chain Step 3] 进入识别态。

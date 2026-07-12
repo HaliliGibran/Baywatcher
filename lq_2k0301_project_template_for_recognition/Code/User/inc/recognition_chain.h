@@ -57,6 +57,8 @@ public:
     // [Recognition Chain Interface] 清空整条识别链内部状态。
     // 作用：用于手动复位或外部强制回到干净初始态。
     void Reset();
+    // 运行板处于 CIRCLE_RUNNING 时启用环岛专用 marker 质量门控。
+    void SetCircleRunningMode(bool active);
 
     bool IsEnabled() const;
     bool IsInRecognitionMode() const;
@@ -109,6 +111,9 @@ private:
     std::array<float, kMaxModelClasses> adaptive_prob_sum_;
     int adaptive_valid_frame_count_;
     int adaptive_bad_frame_count_;
+    bool circle_running_mode_;
+    int circle_marker_quality_pass_frames_;
+    uint64_t circle_marker_quality_last_log_ms_;
     bool pending_trigger_roi_valid_;
     RoiExtractionResult pending_trigger_roi_;
     PerfSample pending_trigger_perf_;
