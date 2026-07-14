@@ -308,7 +308,7 @@
 // 这条线会同时同步到 midline.mid（供预瞄/显示）和 midline.path（供控制）。
 // 调大：绕行更贴外侧，避让更激进；调小：更接近原边线，动作更保守。
 #ifndef BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.08f
+#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.15f
 #endif
 
 // 内绕判定阈值（度）：左弯 + 锁左边线、右弯 + 锁右边线，且弯向角绝对值超过本阈值时视为内绕。
@@ -325,13 +325,13 @@
 // 外绕时左右轮目标平均速度的倍率。
 // 只缩放两轮目标速度的平均值，左右轮差速量保持不变；1.0 表示不减速。
 #ifndef BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO
-#define BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO 1.0f
+#define BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO 0.5f
 #endif
 
 // 内绕时左右轮目标平均速度的倍率。
 // 只缩放两轮目标速度的平均值，左右轮差速量保持不变。
 #ifndef BW_REMOTE_FOLLOW_INNER_AVERAGE_SPEED_RATIO
-#define BW_REMOTE_FOLLOW_INNER_AVERAGE_SPEED_RATIO 0.8f
+#define BW_REMOTE_FOLLOW_INNER_AVERAGE_SPEED_RATIO 0.46f
 #endif
 
 // 内外绕共用的小角解除减速阈值（度）。
@@ -349,12 +349,12 @@
 // 环岛内绕时，锁定边线向外推的赛道宽比例。
 // 初值与普通内绕一致，调参时只修改本宏，不影响普通弯道内绕。
 #ifndef BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO 0.05f
+#define BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO 0.15f
 #endif
 
 // 环岛内绕时左右轮目标平均速度倍率，只缩放平均速度，不改变差速量。
 #ifndef BW_REMOTE_FOLLOW_CIRCLE_INNER_AVERAGE_SPEED_RATIO
-#define BW_REMOTE_FOLLOW_CIRCLE_INNER_AVERAGE_SPEED_RATIO 0.8f
+#define BW_REMOTE_FOLLOW_CIRCLE_INNER_AVERAGE_SPEED_RATIO 0.75f
 #endif
 
 // 环岛内绕的小角解除减速阈值（度）。
@@ -370,7 +370,7 @@
 
 // 环岛外绕时左右轮目标平均速度倍率，只缩放平均速度，不改变差速量。
 #ifndef BW_REMOTE_FOLLOW_CIRCLE_OUTER_AVERAGE_SPEED_RATIO
-#define BW_REMOTE_FOLLOW_CIRCLE_OUTER_AVERAGE_SPEED_RATIO 1.0f
+#define BW_REMOTE_FOLLOW_CIRCLE_OUTER_AVERAGE_SPEED_RATIO 0.95f
 #endif
 
 // 环岛外绕的小角解除减速阈值（度）。
@@ -387,15 +387,15 @@
 #endif
 
 #ifndef BW_CIRCLE_IN_BASE_SPEED_RATIO
-#define BW_CIRCLE_IN_BASE_SPEED_RATIO 0.9f
+#define BW_CIRCLE_IN_BASE_SPEED_RATIO 0.87f
 #endif
 
 #ifndef BW_CIRCLE_RUNNING_BASE_SPEED_RATIO
-#define BW_CIRCLE_RUNNING_BASE_SPEED_RATIO 0.7f
+#define BW_CIRCLE_RUNNING_BASE_SPEED_RATIO 0.85f
 #endif
 
 #ifndef BW_CIRCLE_OUT_BASE_SPEED_RATIO
-#define BW_CIRCLE_OUT_BASE_SPEED_RATIO 0.9f
+#define BW_CIRCLE_OUT_BASE_SPEED_RATIO 0.87f
 #endif
 
 // ===== 远端状态保持与减速参数 =====
@@ -404,7 +404,7 @@
 // 开启后，运行板在环岛候选、BEGIN、IN、OUT、END 阶段阻断识别板；
 // 普通赛道和 CIRCLE_RUNNING 阶段允许识别。
 #ifndef BW_CIRCLE_RECOGNITION_GATE_ENABLE
-#define BW_CIRCLE_RECOGNITION_GATE_ENABLE 1
+#define BW_CIRCLE_RECOGNITION_GATE_ENABLE 0
 #endif
 
 // 环岛候选消失或环岛退出后的门控保持时间（毫秒），用于抑制边界抖动。
