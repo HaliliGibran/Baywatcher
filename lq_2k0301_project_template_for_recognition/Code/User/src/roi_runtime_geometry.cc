@@ -2760,13 +2760,23 @@ static void DrawQuadIfValid(cv::Mat& image, const std::vector<cv::Point2f>& quad
 namespace {
 
 static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_bgr,
-                                                          const TaskTrackBoundaryState& state,
-                                                          const cv::Rect& rect,
-                                                          int y_min,
-                                                          int y_max,
-                                                          const TaskStrictRedThresholds& red_thresholds,
-                                                          cv::Rect* out_image_rect)
+                                                           const TaskTrackBoundaryState& state,
+                                                           const cv::Rect& rect,
+                                                           int y_min,
+                                                           int y_max,
+                                                           const TaskStrictRedThresholds& red_thresholds,
+                                                           cv::Mat* out_brick_red_mask,
+                                                           cv::Mat* out_outer_brick_red_mask,
+                                                           cv::Rect* out_image_rect)
 {
+    if (out_brick_red_mask != nullptr)
+    {
+        *out_brick_red_mask = cv::Mat();
+    }
+    if (out_outer_brick_red_mask != nullptr)
+    {
+        *out_outer_brick_red_mask = cv::Mat();
+    }
     if (out_image_rect != nullptr)
     {
         *out_image_rect = cv::Rect();
@@ -2784,6 +2794,16 @@ static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_b
     }
 
     cv::Mat local_mask = cv::Mat::zeros(clamped.height, clamped.width, CV_8UC1);
+    cv::Mat local_brick_mask;
+    if (out_brick_red_mask != nullptr)
+    {
+        local_brick_mask = cv::Mat::zeros(clamped.height, clamped.width, CV_8UC1);
+    }
+    cv::Mat local_outer_brick_mask;
+    if (out_outer_brick_red_mask != nullptr)
+    {
+        local_outer_brick_mask = cv::Mat::zeros(clamped.height, clamped.width, CV_8UC1);
+    }
     const int y0 = std::max(clamped.y, std::max(0, std::min(y_min, frame_bgr.rows)));
     const int y1 = std::min(
         clamped.y + clamped.height,
@@ -2800,29 +2820,147 @@ static cv::Mat BuildTaskMarkerRedMaskLocalInTrackInterior(const cv::Mat& frame_b
 
         const TaskTrackRowSearchBands bands =
             BuildTaskTrackRowSearchBands(left_x, right_x, frame_bgr.cols, y);
-        if (!bands.has_marker)
-        {
-            continue;
-        }
-
-        const int x0 = std::max(clamped.x, bands.marker_x0);
-        const int x1 = std::min(clamped.x + clamped.width - 1, bands.marker_x1);
-        if (x1 < x0)
-        {
-            continue;
-        }
-
         const cv::Vec3b* row_ptr = frame_bgr.ptr<cv::Vec3b>(y);
-        unsigned char* mask_ptr = local_mask.ptr<unsigned char>(y - clamped.y);
-        for (int x = x0; x <= x1; ++x)
+        if (bands.has_marker)
         {
-            if (IsTaskStrictRedPixel(row_ptr[x], red_thresholds))
+            const int x0 = std::max(clamped.x, bands.marker_x0);
+            const int x1 = std::min(clamped.x + clamped.width - 1, bands.marker_x1);
+            if (x1 >= x0)
             {
-                mask_ptr[x - clamped.x] = 255;
+                unsigned char* mask_ptr = local_mask.ptr<unsigned char>(y - clamped.y);
+                for (int x = x0; x <= x1; ++x)
+                {
+                    if (IsTaskStrictRedPixel(row_ptr[x], red_thresholds))
+                    {
+                        mask_ptr[x - clamped.x] = 255;
+                    }
+                }
+            }
+        }
+
+        if (!local_brick_mask.empty())
+        {
+            unsigned char* brick_mask_ptr = local_brick_mask.ptr<unsigned char>(y - clamped.y);
+            const auto add_brick_red_range = [&](int brick_x0, int brick_x1) {
+                brick_x0 = std::max(clamped.x, brick_x0);
+                brick_x1 = std::min(clamped.x + clamped.width - 1, brick_x1);
+                for (int x = brick_x0; x <= brick_x1; ++x)
+                {
+                    if (IsTaskStrictRedPixel(row_ptr[x], red_thresholds))
+                    {
+                        brick_mask_ptr[x - clamped.x] = 255;
+                    }
+                }
+            };
+            if (bands.has_left_brick)
+            {
+                add_brick_red_range(bands.left_brick_x0, bands.left_brick_x1);
+            }
+            if (bands.has_right_brick)
+            {
+                add_brick_red_range(bands.right_brick_x0, bands.right_brick_x1);
+            }
+        }
+
+        if (!local_outer_brick_mask.empty())
+        {
+            unsigned char* outer_brick_mask_ptr =
+                local_outer_brick_mask.ptr<unsigned char>(y - clamped.y);
+            const auto add_outer_brick_red_range = [&](int outer_x0, int outer_x1) {
+                outer_x0 = std::max(clamped.x, outer_x0);
+                outer_x1 = std::min(clamped.x + clamped.width - 1, outer_x1);
+                for (int x = outer_x0; x <= outer_x1; ++x)
+                {
+                    if (IsTaskStrictRedPixel(row_ptr[x], red_thresholds))
+                    {
+                        outer_brick_mask_ptr[x - clamped.x] = 255;
+                    }
+                }
+            };
+            add_outer_brick_red_range(
+                left_x - kTrackBrickOuterExpandPixels,
+                left_x - 1);
+            add_outer_brick_red_range(
+                right_x + 1,
+                right_x + kTrackBrickOuterExpandPixels);
+        }
+    }
+    if (out_brick_red_mask != nullptr)
+    {
+        *out_brick_red_mask = local_brick_mask;
+    }
+    if (out_outer_brick_red_mask != nullptr)
+    {
+        *out_outer_brick_red_mask = local_outer_brick_mask;
+    }
+    return local_mask;
+}
+
+// The inner brick band only reconnects the candidate to the physical outer
+// band. Reject the ROI path only when that same component has outer red support.
+static bool MarkerCandidateConnectsToOuterBrickRed(
+    const cv::Mat& marker_red_mask,
+    const cv::Mat& brick_red_mask,
+    const cv::Mat& outer_brick_red_mask,
+    const std::vector<cv::Point>& candidate_contour)
+{
+    if (marker_red_mask.empty() || brick_red_mask.empty() || outer_brick_red_mask.empty() ||
+        marker_red_mask.size() != brick_red_mask.size() ||
+        marker_red_mask.size() != outer_brick_red_mask.size() ||
+        candidate_contour.empty())
+    {
+        return false;
+    }
+
+    cv::Mat combined_mask;
+    cv::bitwise_or(marker_red_mask, brick_red_mask, combined_mask);
+    cv::Mat labels;
+    if (cv::connectedComponents(combined_mask, labels, 8, CV_32S) <= 1)
+    {
+        return false;
+    }
+
+    int candidate_label = 0;
+    for (size_t i = 0; i < candidate_contour.size(); ++i)
+    {
+        const cv::Point& point = candidate_contour[i];
+        if (point.x < 0 || point.x >= labels.cols || point.y < 0 || point.y >= labels.rows)
+        {
+            continue;
+        }
+        candidate_label = labels.at<int>(point.y, point.x);
+        if (candidate_label > 0)
+        {
+            break;
+        }
+    }
+    if (candidate_label <= 0)
+    {
+        return false;
+    }
+
+    for (int y = 0; y < labels.rows; ++y)
+    {
+        const int* label_row = labels.ptr<int>(y);
+        const unsigned char* outer_brick_row = outer_brick_red_mask.ptr<unsigned char>(y);
+        int outer_run = 0;
+        for (int x = 0; x < labels.cols; ++x)
+        {
+            if (label_row[x] == candidate_label && outer_brick_row[x] != 0)
+            {
+                ++outer_run;
+                if (outer_run >= kTrackBrickMinHorizontalRunPixels)
+                {
+                    return true;
+                }
+            }
+            else
+            {
+                outer_run = 0;
             }
         }
     }
-    return local_mask;
+    return false;
 }
 
 static void TaskTouchedSides(const cv::Mat& mask,
@@ -3581,6 +3719,8 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
 
     const auto red_mask_begin = steady_clock_t::now();
     cv::Mat marker_red_mask;
+    cv::Mat marker_brick_red_mask;
+    cv::Mat marker_outer_brick_red_mask;
     cv::Rect marker_mask_image_rect;
     const auto rebuild_marker_red_mask = [&]() {
         marker_red_mask = BuildTaskMarkerRedMaskLocalInTrackInterior(
@@ -3590,6 +3730,8 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
             kTaskMarkerSearchYMin,
             kTaskMarkerSearchYMax,
             red_thresholds,
+            &marker_brick_red_mask,
+            &marker_outer_brick_red_mask,
             &marker_mask_image_rect);
     };
     rebuild_marker_red_mask();
@@ -3654,6 +3796,27 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
             return result;
         }
         result.status = "miss";
+        return result;
+    }
+    if (MarkerCandidateConnectsToOuterBrickRed(
+            marker_red_mask,
+            marker_brick_red_mask,
+            marker_outer_brick_red_mask,
+            candidate_contour))
+    {
+        result.timing_red_band_ms += elapsed_ms(red_band_begin, steady_clock_t::now());
+        if (TryDetectTrackBrickFallback(
+                frame_bgr,
+                red_thresholds,
+                track_state,
+                image_width,
+                image_height,
+                &result))
+        {
+            return result;
+        }
+        result.max_red_reject_stage = "marker_connected_to_brick";
+        result.status = "marker_connected_to_brick";
         return result;
     }
     const cv::Point marker_mask_offset = marker_mask_image_rect.tl();
