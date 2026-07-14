@@ -31,6 +31,50 @@ int pts_right_corner_id = -1;
 static int g_lost_line_counter = 0;
 static int g_found_line_counter = 0;
 static CrossingState g_last_state = CrossingState::CROSSING_NONE;
+static int g_far_line_miss_counter = 0;
+static bool g_far_line_cache_valid = false;
+static pts_well_processed g_far_line_cache_left = {};
+static pts_well_processed g_far_line_cache_right = {};
+
+static void crossing_reset_far_line_hold()
+{
+    g_far_line_miss_counter = 0;
+    g_far_line_cache_valid = false;
+}
+
+static void crossing_finalize_far_line_search()
+{
+    if (if_find_far_line)
+    {
+        g_far_line_cache_left = pts_far_left;
+        g_far_line_cache_right = pts_far_right;
+        g_far_line_cache_valid = true;
+        g_far_line_miss_counter = 0;
+        return;
+    }
+
+    if (g_far_line_cache_valid &&
+        FRAME_THRESHOLD_crossing_far_line_miss_hold_counter > 0 &&
+        g_far_line_miss_counter < FRAME_THRESHOLD_crossing_far_line_miss_hold_counter)
+    {
+        pts_far_left = g_far_line_cache_left;
+        pts_far_right = g_far_line_cache_right;
+        if_find_far_line = true;
+        ++g_far_line_miss_counter;
+        return;
+    }
+
+    crossing_reset_far_line_hold();
+    image_reset_far_line_state();
+}
+
+struct crossing_far_line_search_scope_t
+{
+    ~crossing_far_line_search_scope_t()
+    {
+        crossing_finalize_far_line_search();
+    }
+};
 
 static inline int crossing_clamp_far_line_maxlen(int maxlen)
 {
@@ -123,6 +167,7 @@ void crossing_reset()
     crossing_state = CrossingState::CROSSING_NONE;
     pts_left_corner_id = -1;
     pts_right_corner_id = -1;
+    crossing_reset_far_line_hold();
     image_reset_far_line_state();
 }
 
@@ -137,6 +182,10 @@ void crossing_update()
     {
         g_lost_line_counter = 0;
         g_found_line_counter = 0;
+        if (crossing_state == CrossingState::CROSSING_IN)
+        {
+            crossing_reset_far_line_hold();
+        }
         g_last_state = crossing_state;
     }
 
@@ -176,6 +225,7 @@ void crossing_update()
             {
                 crossing_state = CrossingState::CROSSING_NONE;
                 g_found_line_counter = 0;
+                crossing_reset_far_line_hold();
                 image_reset_far_line_state();
             }
             break;
@@ -202,6 +252,7 @@ void crossing_update()
 void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 {
     image_reset_far_line_state();
+    crossing_far_line_search_scope_t finalize_search;
 
 
     if(pts_left.corner_found && pts_right.corner_found && pts_left.corner_id >=9 && pts_right.corner_id >=9)
