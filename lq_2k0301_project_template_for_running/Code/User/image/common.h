@@ -336,6 +336,10 @@
 
 // 内外绕共用的小角解除减速阈值（度）。
 // abs(pure_angle) 小于等于本值时，平均速度倍率临时恢复为 1.0，差速仍按普通方向链计算。
+#ifndef BW_REMOTE_FOLLOW_SPEED_RELEASE_ENABLE
+#define BW_REMOTE_FOLLOW_SPEED_RELEASE_ENABLE 0
+#endif
+
 #ifndef BW_REMOTE_FOLLOW_SPEED_RELEASE_ANGLE_DEG
 #define BW_REMOTE_FOLLOW_SPEED_RELEASE_ANGLE_DEG 3.0f
 #endif
@@ -525,6 +529,8 @@
 #define FRAME_THRESHOLD_crossing_lost_line_counter (2) // 十字入内阶段允许的连续丢线帧
 // 十字 RUNNING 退出找线确认帧数
 #define FRAME_THRESHOLD_crossing_running_to_none_found_line_counter (2) // RUNNING->NONE 找线确认帧
+// 十字远线单帧搜索失败时保持上一帧有效远线，避免退出阶段近线/远线来回切换
+#define FRAME_THRESHOLD_crossing_far_line_miss_hold_counter (1) // 远线丢失保持帧
 // 环岛入环丢线阈值
 #define FRAME_THRESHOLD_roundabout_begin_to_in_lost_line_counter (2) // BEGIN->IN 丢线阈值
 // 环岛入环重新找线阈值
