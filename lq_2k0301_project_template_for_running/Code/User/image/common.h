@@ -308,7 +308,7 @@
 // 这条线会同时同步到 midline.mid（供预瞄/显示）和 midline.path（供控制）。
 // 调大：绕行更贴外侧，避让更激进；调小：更接近原边线，动作更保守。
 #ifndef BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.10f
+#define BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 0.20f
 #endif
 
 // 内绕判定阈值（度）：左弯 + 锁左边线、右弯 + 锁右边线，且弯向角绝对值超过本阈值时视为内绕。
@@ -325,7 +325,7 @@
 // 外绕时左右轮目标平均速度的倍率。
 // 只缩放两轮目标速度的平均值，左右轮差速量保持不变；1.0 表示不减速。
 #ifndef BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO
-#define BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO 0.5f
+#define BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO 0.50f
 #endif
 
 // 内绕时左右轮目标平均速度的倍率。
@@ -353,7 +353,7 @@
 // 环岛内绕时，锁定边线向外推的赛道宽比例。
 // 初值与普通内绕一致，调参时只修改本宏，不影响普通弯道内绕。
 #ifndef BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO 0.20f
+#define BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO 0.08f
 #endif
 
 // 环岛内绕时左右轮目标平均速度倍率，只缩放平均速度，不改变差速量。
