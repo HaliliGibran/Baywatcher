@@ -28,6 +28,7 @@ struct RecognitionGateRuntime
 {
     bool blocked = false;
     bool circle_running = false;
+    bool crossing = false;
     uint64_t last_rx_ms = 0;
     uint8_t last_seq = 0;
 };
@@ -40,7 +41,9 @@ static bool PollRecognitionGate(RecognitionGateRuntime* gate,
     {
         *stale_fail_open = false;
     }
-    if (gate == nullptr || BW_RECOG_CIRCLE_GATE_ENABLE == 0)
+    if (gate == nullptr ||
+        (BW_RECOG_CIRCLE_GATE_ENABLE == 0 &&
+         BW_RECOG_CROSSING_NO_LINE_ENABLE == 0))
     {
         return false;
     }
@@ -52,6 +55,8 @@ static bool PollRecognitionGate(RecognitionGateRuntime* gate,
         gate->blocked = (rx_gate == BoardRecognitionGate::BLOCK);
         gate->circle_running =
             (rx_gate == BoardRecognitionGate::ALLOW_CIRCLE_RUNNING);
+        gate->crossing =
+            (rx_gate == BoardRecognitionGate::ALLOW_CROSSING);
         gate->last_rx_ms = t_ms;
         gate->last_seq = rx_seq;
     }
@@ -63,6 +68,7 @@ static bool PollRecognitionGate(RecognitionGateRuntime* gate,
     {
         gate->blocked = false;
         gate->circle_running = false;
+        gate->crossing = false;
         if (stale_fail_open != nullptr)
         {
             *stale_fail_open = true;
@@ -966,6 +972,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
     uint64_t runtime_frame_seq = 0;
     BoardVisionCode brick_hold_code = BoardVisionCode::INVALID;
     int brick_hold_remaining_frames = 0;
+    BoardVisionCode crossing_held_result = BoardVisionCode::INVALID;
     UToResultTimingState u_to_result_timing;
     RecognitionGateRuntime recognition_gate;
     const bool render_debug = stream_enabled;
@@ -1007,20 +1014,28 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         const uint64_t gate_poll_ms = recognition_runtime::now_ms();
         const bool gate_blocked_before = recognition_gate.blocked;
         const bool gate_circle_before = recognition_gate.circle_running;
+        const bool gate_crossing_before = recognition_gate.crossing;
         bool gate_stale_fail_open = false;
         const bool gate_blocked = PollRecognitionGate(
             &recognition_gate,
             gate_poll_ms,
             &gate_stale_fail_open);
         recognition.SetCircleRunningMode(recognition_gate.circle_running);
+        const bool crossing_early_mode =
+            BW_RECOG_CROSSING_NO_LINE_ENABLE != 0 && recognition_gate.crossing;
+        recognition.SetCrossingRunningMode(crossing_early_mode);
         if (gate_blocked != gate_blocked_before ||
-            recognition_gate.circle_running != gate_circle_before)
+            recognition_gate.circle_running != gate_circle_before ||
+            recognition_gate.crossing != gate_crossing_before)
         {
-            if (gate_blocked)
+            const bool entering_crossing =
+                crossing_early_mode && !gate_crossing_before;
+            if (gate_blocked || entering_crossing)
             {
                 recognition.Reset();
                 brick_hold_code = BoardVisionCode::INVALID;
                 brick_hold_remaining_frames = 0;
+                crossing_held_result = BoardVisionCode::INVALID;
                 u_to_result_timing = UToResultTimingState();
                 prev_in_recognition = false;
                 manual_cycle_finished = false;
@@ -1028,10 +1043,12 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
             }
             const char* gate_text = gate_blocked
                 ? "BLOCK，识别链已清空"
-                : (recognition_gate.circle_running
-                       ? "ALLOW_CIRCLE，启用环岛质量门控"
-                       : "ALLOW，使用普通识别条件");
-            std::cout << "[环岛识别门控] "
+                : (crossing_early_mode
+                       ? "ALLOW_CROSSING，启用十字无边线提前识别"
+                       : (recognition_gate.circle_running
+                              ? "ALLOW_CIRCLE，启用环岛质量门控"
+                              : "ALLOW，使用普通识别条件"));
+            std::cout << "[识别门控] "
                       << gate_text
                       << ", seq=" << static_cast<int>(recognition_gate.last_seq)
                       << (gate_stale_fail_open ? ", 原因=门控心跳超时自动放行" : "")
@@ -1301,7 +1318,23 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         }
 
         // 6. 状态流模式下，状态变化立即发包；未变化时按心跳周期补发。
-        const BoardVisionCode code = code_after_chain;
+        const bool hold_crossing_result =
+            crossing_early_mode && IsRecognitionSuccessCode(code_after_chain);
+        if (hold_crossing_result && crossing_held_result != code_after_chain)
+        {
+            crossing_held_result = code_after_chain;
+            if (kRecognitionResultLog)
+            {
+                std::cout << "[十字提前识别] 已锁存结果="
+                          << VisionCodeText(crossing_held_result)
+                          << "，十字退出后发送" << std::endl;
+            }
+        }
+        const bool release_crossing_result =
+            !crossing_early_mode && IsRecognitionSuccessCode(crossing_held_result);
+        const BoardVisionCode code = hold_crossing_result
+            ? BoardVisionCode::NO_RESULT
+            : (release_crossing_result ? crossing_held_result : code_after_chain);
         bool should_send_state = false;
         const bool state_changed = code != last_sent_code;
         uint8_t proposed_tx_seq = tx_seq;
@@ -1336,6 +1369,15 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                     last_sent_code = code;
                 }
                 last_send_ms = t_ms;
+                if (release_crossing_result)
+                {
+                    if (kRecognitionResultLog)
+                    {
+                        std::cout << "[十字提前识别] 十字已退出，锁存结果发送成功="
+                                  << VisionCodeText(crossing_held_result) << std::endl;
+                    }
+                    crossing_held_result = BoardVisionCode::INVALID;
+                }
             }
             if (kRecognitionResultLog && state_changed && IsBrickCode(code))
             {

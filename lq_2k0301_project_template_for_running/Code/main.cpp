@@ -231,6 +231,7 @@ static const char* board_recognition_gate_text(BoardRecognitionGate gate)
     {
     case BoardRecognitionGate::ALLOW: return "ALLOW";
     case BoardRecognitionGate::ALLOW_CIRCLE_RUNNING: return "ALLOW_CIRCLE";
+    case BoardRecognitionGate::ALLOW_CROSSING: return "ALLOW_CROSSING";
     case BoardRecognitionGate::BLOCK: return "BLOCK";
     default: return "INVALID";
     }
@@ -249,10 +250,13 @@ void task_board_comm_rx(void* arg)
     const BoardRecognitionGate current_gate =
         image_circle_recognition_gate_is_blocked()
             ? BoardRecognitionGate::BLOCK
-            : (BW_CIRCLE_RECOGNITION_GATE_ENABLE != 0 &&
-                       circle_state == CircleState::CIRCLE_RUNNING
-                   ? BoardRecognitionGate::ALLOW_CIRCLE_RUNNING
-                   : BoardRecognitionGate::ALLOW);
+            : (BW_CROSSING_RECOGNITION_EARLY_ENABLE != 0 &&
+                       crossing_state != CrossingState::CROSSING_NONE
+                   ? BoardRecognitionGate::ALLOW_CROSSING
+                   : (BW_CIRCLE_RECOGNITION_GATE_ENABLE != 0 &&
+                              circle_state == CircleState::CIRCLE_RUNNING
+                          ? BoardRecognitionGate::ALLOW_CIRCLE_RUNNING
+                          : BoardRecognitionGate::ALLOW));
     const bool gate_changed = current_gate != last_gate_sent;
     const bool gate_heartbeat_due =
         last_gate_send_ms == 0 ||

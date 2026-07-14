@@ -59,6 +59,8 @@ public:
     void Reset();
     // 运行板处于 CIRCLE_RUNNING 时启用环岛专用 marker 质量门控。
     void SetCircleRunningMode(bool active);
+    // 运行板处于十字 IN/RUNNING 时启用无边线提前识别，并锁存结果到十字退出。
+    void SetCrossingRunningMode(bool active);
 
     bool IsEnabled() const;
     bool IsInRecognitionMode() const;
@@ -112,6 +114,7 @@ private:
     int adaptive_valid_frame_count_;
     int adaptive_bad_frame_count_;
     bool circle_running_mode_;
+    bool crossing_running_mode_;
     int circle_marker_quality_pass_frames_;
     uint64_t circle_marker_quality_last_log_ms_;
     bool pending_trigger_roi_valid_;

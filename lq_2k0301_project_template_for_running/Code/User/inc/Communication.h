@@ -38,6 +38,7 @@ enum class BoardRecognitionGate : uint8_t {
     INVALID = 0,
     ALLOW = 'A',
     ALLOW_CIRCLE_RUNNING = 'C',
+    ALLOW_CROSSING = 'T',
     BLOCK = 'X',
 };
 

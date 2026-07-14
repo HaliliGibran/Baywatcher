@@ -190,6 +190,7 @@ bool BoardComm::try_receive_recognition_gate(BoardRecognitionGate* out_gate, uin
         while (try_parse_cached_packet(&raw_code, &seq)) {
             if (raw_code != static_cast<uint8_t>(BoardRecognitionGate::ALLOW) &&
                 raw_code != static_cast<uint8_t>(BoardRecognitionGate::ALLOW_CIRCLE_RUNNING) &&
+                raw_code != static_cast<uint8_t>(BoardRecognitionGate::ALLOW_CROSSING) &&
                 raw_code != static_cast<uint8_t>(BoardRecognitionGate::BLOCK)) {
                 continue;
             }

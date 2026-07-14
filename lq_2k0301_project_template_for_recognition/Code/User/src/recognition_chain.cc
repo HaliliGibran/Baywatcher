@@ -49,6 +49,8 @@ constexpr bool kRecognitionTriggerFrameInferEnable =
     (BW_RECOG_TRIGGER_FRAME_INFER_ENABLE != 0);
 constexpr bool kRecognitionCircleMarkerQualityGateEnable =
     (BW_RECOG_CIRCLE_MARKER_QUALITY_GATE_ENABLE != 0);
+constexpr bool kRecognitionCrossingNoLineEnable =
+    (BW_RECOG_CROSSING_NO_LINE_ENABLE != 0);
 constexpr int kRecognitionModelInputSize = 32;
 constexpr const char* kRecognitionModelRootDir =
     "./model_boardroi_transfer_mlp_rgb_128_s32_rank1";
@@ -1581,6 +1583,7 @@ RecognitionChain::RecognitionChain()
       adaptive_valid_frame_count_(0),
       adaptive_bad_frame_count_(0),
       circle_running_mode_(false),
+      crossing_running_mode_(false),
       circle_marker_quality_pass_frames_(0),
       circle_marker_quality_last_log_ms_(0),
       pending_trigger_roi_valid_(false),
@@ -1734,6 +1737,11 @@ void RecognitionChain::SetCircleRunningMode(bool active)
     circle_marker_quality_last_log_ms_ = 0;
 }
 
+void RecognitionChain::SetCrossingRunningMode(bool active)
+{
+    crossing_running_mode_ = active;
+}
+
 void RecognitionChain::ClearAdaptiveDecision()
 {
     adaptive_decision_pending_ = false;
@@ -1826,8 +1834,11 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         view.release();
     }
 
+    const bool use_crossing_no_line =
+        kRecognitionCrossingNoLineEnable && crossing_running_mode_;
     RoiTrackRedPrefilterResult lightweight_track_prefilter;
     if (kRecognitionLightweightRedPrefilterEnable &&
+        !use_crossing_no_line &&
         !is_success_symbol_code(latched_symbol_code_))
     {
         const auto prefilter_begin = steady_clock_t::now();
@@ -1932,15 +1943,20 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
 
     const RoiMethod roi_method = DefaultRoiMethod();
     const auto extract_begin = steady_clock_t::now();
-    RoiExtractionResult trigger_roi =
-        ExtractRotatedRoi(
-            frame_bgr,
-            kRecognitionModelInputSize,
-            roi_method,
-            render_debug,
-            lightweight_track_prefilter.has_track_boundaries
-                ? &lightweight_track_prefilter
-                : nullptr);
+    RoiExtractionResult trigger_roi = use_crossing_no_line
+        ? ExtractCrossingNoLineRoi(
+              frame_bgr,
+              kRecognitionModelInputSize,
+              roi_method,
+              render_debug)
+        : ExtractRotatedRoi(
+              frame_bgr,
+              kRecognitionModelInputSize,
+              roi_method,
+              render_debug,
+              lightweight_track_prefilter.has_track_boundaries
+                  ? &lightweight_track_prefilter
+                  : nullptr);
     const auto extract_end = steady_clock_t::now();
     last_perf_sample_.extract_roi_ms =
         std::chrono::duration<double, std::milli>(extract_end - extract_begin).count();
@@ -2002,6 +2018,20 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     {
         circle_marker_quality_pass_frames_ = 0;
         current_vision_code_ = latched_symbol_code_;
+        if (use_crossing_no_line)
+        {
+            latched_release_pending_ = false;
+            latched_release_deadline_ms_ = 0;
+            if (render_debug)
+            {
+                cv::putText(view, "CROSSING RESULT LATCHED -> u",
+                            cv::Point(16, 112), cv::FONT_HERSHEY_SIMPLEX,
+                            0.60, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+            }
+            last_perf_sample_.try_total_ms =
+                std::chrono::duration<double, std::milli>(steady_clock_t::now() - try_begin).count();
+            return false;
+        }
         if (holdable_sign_red_visible)
         {
             if (latched_release_pending_)
@@ -2411,7 +2441,11 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     else
     {
         const auto extract_begin = steady_clock_t::now();
-        roi_result = ExtractRotatedRoi(frame_bgr, kRecognitionModelInputSize, roi_method, render_debug);
+        roi_result = kRecognitionCrossingNoLineEnable && crossing_running_mode_
+            ? ExtractCrossingNoLineRoi(
+                  frame_bgr, kRecognitionModelInputSize, roi_method, render_debug)
+            : ExtractRotatedRoi(
+                  frame_bgr, kRecognitionModelInputSize, roi_method, render_debug);
         const auto extract_end = steady_clock_t::now();
         last_perf_sample_.extract_roi_ms =
             std::chrono::duration<double, std::milli>(extract_end - extract_begin).count();

@@ -173,4 +173,9 @@ RoiExtractionResult ExtractRotatedRoi(const cv::Mat& frame_bgr,
                                       bool render_debug,
                                       const RoiTrackRedPrefilterResult* track_prefilter = nullptr);
 
+RoiExtractionResult ExtractCrossingNoLineRoi(const cv::Mat& frame_bgr,
+                                             int output_size,
+                                             RoiMethod roi_method,
+                                             bool render_debug);
+
 void DrawRoiDebugOverlay(cv::Mat& image_bgr, const RoiExtractionResult& result);

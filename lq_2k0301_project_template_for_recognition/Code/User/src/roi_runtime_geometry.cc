@@ -3216,7 +3216,9 @@ static bool ChooseLowestTaskRedBand(const cv::Mat& mask,
                                     const cv::Rect& rect,
                                     std::vector<cv::Point>* out_contour,
                                     cv::Rect* out_box,
-                                    double* out_area)
+                                    double* out_area,
+                                    int center_x_min = -1,
+                                    int center_x_max = -1)
 {
     if (out_contour == nullptr || out_box == nullptr || out_area == nullptr || mask.empty() || rect.width <= 0 || rect.height <= 0)
     {
@@ -3257,6 +3259,15 @@ static bool ChooseLowestTaskRedBand(const cv::Mat& mask,
         }
 
         const cv::Rect box(rect.x + left, rect.y + top, width, height);
+        const int center_x = box.x + box.width / 2;
+        if (center_x_min >= 0 && center_x < center_x_min)
+        {
+            continue;
+        }
+        if (center_x_max >= 0 && center_x > center_x_max)
+        {
+            continue;
+        }
         const int bottom_y = box.y + box.height;
         if (!found || bottom_y > best_bottom_y || (bottom_y == best_bottom_y && area > best_area))
         {
@@ -3618,6 +3629,170 @@ static bool TryDetectTrackBrickFallback(const cv::Mat& frame_bgr,
         result->has_search_rect = true;
     }
     return true;
+}
+
+RoiExtractionResult ExtractCrossingNoLineRoi(const cv::Mat& frame_bgr,
+                                             int output_size,
+                                             RoiMethod roi_method,
+                                             bool render_debug)
+{
+    (void)render_debug;
+    using steady_clock_t = std::chrono::steady_clock;
+
+    RoiExtractionResult result;
+    result.roi_method = roi_method;
+    if (frame_bgr.empty() || output_size <= 0)
+    {
+        return result;
+    }
+
+    const int image_width = frame_bgr.cols;
+    const int image_height = frame_bgr.rows;
+    const auto search_rect_begin = steady_clock_t::now();
+    int gate_left_x = -1;
+    int gate_right_x = -1;
+    if (!BuildImageXGateRange(image_width, &gate_left_x, &gate_right_x))
+    {
+        result.max_red_reject_stage = "crossing_image_x_gate";
+        result.ipm_reason = "red_image_x_gate_invalid";
+        result.timing_search_rect_ms = elapsed_ms(search_rect_begin, steady_clock_t::now());
+        return result;
+    }
+
+    const int search_y0 = std::max(0, std::min(kTaskMarkerSearchYMin, image_height));
+    const int search_y1 = std::max(search_y0, std::min(kTaskMarkerSearchYMax, image_height));
+    result.search_rect = cv::Rect(0, search_y0, image_width, search_y1 - search_y0);
+    result.has_search_rect = result.search_rect.width > 0 && result.search_rect.height > 0;
+    result.has_reference_x_range = true;
+    result.reference_x_min = gate_left_x;
+    result.reference_x_max = gate_right_x;
+    result.reference_range_source = "crossing_image_center";
+    result.timing_search_rect_ms = elapsed_ms(search_rect_begin, steady_clock_t::now());
+    if (!result.has_search_rect)
+    {
+        return result;
+    }
+
+    TaskWhiteReferenceStats white_ref_stats;
+    GetTaskWhiteReferenceStats(frame_bgr, &white_ref_stats);
+    const TaskStrictRedThresholds red_thresholds =
+        BuildTaskStrictRedThresholds(white_ref_stats);
+
+    const auto red_mask_begin = steady_clock_t::now();
+    cv::Mat marker_red_mask = cv::Mat::zeros(result.search_rect.size(), CV_8UC1);
+    for (int y = result.search_rect.y;
+         y < result.search_rect.y + result.search_rect.height;
+         ++y)
+    {
+        const cv::Vec3b* frame_row = frame_bgr.ptr<cv::Vec3b>(y);
+        uint8_t* mask_row = marker_red_mask.ptr<uint8_t>(y - result.search_rect.y);
+        for (int x = 0; x < image_width; ++x)
+        {
+            if (IsTaskStrictRedPixel(frame_row[x], red_thresholds))
+            {
+                mask_row[x] = 255;
+            }
+        }
+    }
+    result.timing_red_mask_ms = elapsed_ms(red_mask_begin, steady_clock_t::now());
+
+    std::vector<cv::Point> candidate_contour;
+    cv::Rect candidate_box;
+    double candidate_area = 0.0;
+    const auto red_band_begin = steady_clock_t::now();
+    const bool has_candidate = ChooseLowestTaskRedBand(
+        marker_red_mask,
+        cv::Rect(0, 0, marker_red_mask.cols, marker_red_mask.rows),
+        &candidate_contour,
+        &candidate_box,
+        &candidate_area,
+        gate_left_x,
+        gate_right_x);
+    if (!has_candidate)
+    {
+        result.timing_red_band_ms = elapsed_ms(red_band_begin, steady_clock_t::now());
+        result.max_red_reject_stage = "crossing_no_line_red_band";
+        return result;
+    }
+
+    const cv::Point mask_offset = result.search_rect.tl();
+    for (cv::Point& point : candidate_contour)
+    {
+        point += mask_offset;
+    }
+    candidate_box.x += mask_offset.x;
+    candidate_box.y += mask_offset.y;
+    result.timing_red_band_ms = elapsed_ms(red_band_begin, steady_clock_t::now());
+
+    const int candidate_bottom_y = candidate_box.y + candidate_box.height - 1;
+    if (candidate_bottom_y < kTaskMarkerTriggerYMin)
+    {
+        result.status = "marker_above_trigger_y";
+        result.max_red_reject_stage = "crossing_trigger_y";
+        return result;
+    }
+
+    const cv::Point candidate_center(
+        candidate_box.x + candidate_box.width / 2,
+        candidate_box.y + candidate_box.height / 2);
+    float candidate_image_x_ratio = 0.5f;
+    if (!CandidatePassesImageXGate(
+            image_width,
+            candidate_center,
+            &candidate_image_x_ratio,
+            &gate_left_x,
+            &gate_right_x))
+    {
+        result.max_red_reject_stage = "crossing_image_x_gate";
+        result.ipm_reason = candidate_image_x_ratio < kTaskRedImageXMinRatio
+            ? "red_image_x_left_of_gate"
+            : "red_image_x_right_of_gate";
+        return result;
+    }
+
+    result.has_track_classify_point = true;
+    result.track_classify_point = candidate_center;
+    result.has_track_classify_bounds = true;
+    result.track_classify_left_x = gate_left_x;
+    result.track_classify_right_x = gate_right_x;
+    result.track_classify_row_y = candidate_center.y;
+    FillCandidateFields(&result, candidate_box, candidate_area);
+    result.target_type = "marker";
+
+    const auto roi_build_warp_begin = steady_clock_t::now();
+    result.blob_quad = RotatedBoxPointsFromContour(candidate_contour);
+    const BuildRoiQuadResult build_result = BuildRoiQuadFromBlobQuad(
+        result.blob_quad, image_width, image_height, roi_method, nullptr);
+    result.blob_quad_final = build_result.blob_quad_final;
+    result.roi_quad_final = build_result.roi_quad_final;
+    result.roi_used_track_forward_direction = false;
+    if (build_result.has_raw_height_ratio)
+    {
+        result.has_ipm_backproject_height_ratio = true;
+        result.ipm_backproject_height_ratio = build_result.raw_height_ratio;
+    }
+    result.ipm_reason = build_result.ipm_reason;
+    if (!build_result.valid)
+    {
+        result.timing_roi_build_warp_ms =
+            elapsed_ms(roi_build_warp_begin, steady_clock_t::now());
+        result.status = build_result.status;
+        return result;
+    }
+
+    result.roi_quad = build_result.roi_quad;
+    result.roi_bgr = WarpRoiFromQuad(frame_bgr, result.roi_quad, output_size);
+    if (result.roi_bgr.empty())
+    {
+        result.timing_roi_build_warp_ms =
+            elapsed_ms(roi_build_warp_begin, steady_clock_t::now());
+        result.status = "ipm_backproject_invalid";
+        return result;
+    }
+    result.timing_roi_build_warp_ms =
+        elapsed_ms(roi_build_warp_begin, steady_clock_t::now());
+    result.status = "rotated_roi";
+    return result;
 }
 
 
