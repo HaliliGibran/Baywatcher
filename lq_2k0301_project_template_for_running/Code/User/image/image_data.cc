@@ -581,6 +581,7 @@ bool image_remote_recognition_get_follow_average_speed_ratio(float* out_ratio)
             ? BW_REMOTE_FOLLOW_CIRCLE_OUTER_SPEED_RELEASE_ANGLE_DEG
             : BW_REMOTE_FOLLOW_SPEED_RELEASE_ANGLE_DEG);
     const bool small_angle_released =
+        BW_REMOTE_FOLLOW_SPEED_RELEASE_ENABLE != 0 &&
         std::fabs(pure_angle) <= release_angle;
     if (small_angle_released)
     {

@@ -336,6 +336,10 @@
 
 // 内外绕共用的小角解除减速阈值（度）。
 // abs(pure_angle) 小于等于本值时，平均速度倍率临时恢复为 1.0，差速仍按普通方向链计算。
+#ifndef BW_REMOTE_FOLLOW_SPEED_RELEASE_ENABLE
+#define BW_REMOTE_FOLLOW_SPEED_RELEASE_ENABLE 0
+#endif
+
 #ifndef BW_REMOTE_FOLLOW_SPEED_RELEASE_ANGLE_DEG
 #define BW_REMOTE_FOLLOW_SPEED_RELEASE_ANGLE_DEG 3.0f
 #endif
