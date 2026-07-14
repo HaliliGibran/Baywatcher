@@ -1125,7 +1125,7 @@ static const Inner_PID_Param_t recog_inner_pid_param = {
 // 识别模式外部 Cube 环 PID。
 // 默认沿用当前 23+8 普通巡线外环初值；需要识别模式单独调外环时只改这里。
 static const Cube_PID_Param_t recog_cube_pid_param = {
-    6.865f, 0.5269f, 0.0f, 320.10f, 0.00100f, STEER_LIMIT, 100.0f
+    6.725f, 0.5269f, 0.0f, 320.10f, 0.00100f, STEER_LIMIT, 100.0f
 };
 
 static void Save_Normal_Inner_PID_Param()
@@ -1455,11 +1455,11 @@ void BayWatcher_Control_Init(void) {
 
     //  23 7.9
     // 左轮速度环PID
-    PID_Speed_L.Kp = 152.32f; PID_Speed_L.Ki = 44.50f; PID_Speed_L.Kd = 0.00f;
+    PID_Speed_L.Kp = 152.32f; PID_Speed_L.Ki = 46.50f; PID_Speed_L.Kd = 0.00f;
     PID_Speed_L.output = 0; PID_Speed_L.output_limit = 9999.0f;
 
     // 右轮速度环PID
-    PID_Speed_R.Kp = 152.00f; PID_Speed_R.Ki = 44.55f; PID_Speed_R.Kd = 0.00f;
+    PID_Speed_R.Kp = 152.00f; PID_Speed_R.Ki = 446.55f; PID_Speed_R.Kd = 0.00f;
     PID_Speed_R.output = 0; PID_Speed_R.output_limit = 9999.0f;
 
 
@@ -1567,7 +1567,7 @@ void BayWatcher_Control_Init(void) {
     // PID_Cube.Kp_a = 6.725f ;  PID_Cube.Kp_b = 0.5399f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 316.10f ; PID_Cube.Kd_b = 0.00100f;
 
     // 有负压 22 0.40 70% 7.11 new tyre
-    PID_Cube.Kp_a = 6.725f ;  PID_Cube.Kp_b = 0.5459f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 316.10f ; PID_Cube.Kd_b = 0.00100f;
+    PID_Cube.Kp_a = 6.715f ;  PID_Cube.Kp_b = 0.5459f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 316.10f ; PID_Cube.Kd_b = 0.00100f;
 
     // // 7.14
     // PID_Cube.Kp_a = 6.725f ;  PID_Cube.Kp_b = 0.5485f ;  PID_Cube.Ki = 0 ; PID_Cube.Kd_a = 316.10f ; PID_Cube.Kd_b = 0.00100f;
