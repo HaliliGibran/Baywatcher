@@ -132,6 +132,7 @@ const char* VisionCodeText(BoardVisionCode code)
     case BoardVisionCode::BRICK_LEFT: return "bl";
     case BoardVisionCode::BRICK_RIGHT: return "br";
     case BoardVisionCode::NO_RESULT: return "u";
+    case BoardVisionCode::SIGN_LOSS_HOLD: return "h";
     case BoardVisionCode::CLOTH_STOP: return "c";
     case BoardVisionCode::UNKNOWN: return "n";
     default: return "-";
@@ -1030,7 +1031,9 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         {
             const bool entering_crossing =
                 crossing_early_mode && !gate_crossing_before;
-            if (gate_blocked || entering_crossing)
+            const bool preserve_sign_loss_hold =
+                entering_crossing && recognition.IsSignLossHoldActive();
+            if (gate_blocked || (entering_crossing && !preserve_sign_loss_hold))
             {
                 recognition.Reset();
                 brick_hold_code = BoardVisionCode::INVALID;
@@ -1318,8 +1321,13 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         }
 
         // 6. 状态流模式下，状态变化立即发包；未变化时按心跳周期补发。
+        const bool sign_loss_hold_active =
+            recognition.IsSignLossHoldActive() &&
+            IsRecognitionSuccessCode(code_after_chain);
         const bool hold_crossing_result =
-            crossing_early_mode && IsRecognitionSuccessCode(code_after_chain);
+            crossing_early_mode &&
+            IsRecognitionSuccessCode(code_after_chain) &&
+            !sign_loss_hold_active;
         if (hold_crossing_result && crossing_held_result != code_after_chain)
         {
             crossing_held_result = code_after_chain;
@@ -1334,7 +1342,11 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
             !crossing_early_mode && IsRecognitionSuccessCode(crossing_held_result);
         const BoardVisionCode code = hold_crossing_result
             ? BoardVisionCode::NO_RESULT
-            : (release_crossing_result ? crossing_held_result : code_after_chain);
+            : (release_crossing_result
+                   ? crossing_held_result
+                   : (sign_loss_hold_active
+                          ? BoardVisionCode::SIGN_LOSS_HOLD
+                          : code_after_chain));
         bool should_send_state = false;
         const bool state_changed = code != last_sent_code;
         uint8_t proposed_tx_seq = tx_seq;
@@ -1386,6 +1398,15 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                           << ", ok=" << (send_state_ok ? "yes" : "no")
                           << ", send_ms=" << std::fixed << std::setprecision(2)
                           << send_state_ms << std::endl;
+            }
+            if (kRecognitionResultLog &&
+                state_changed &&
+                code == BoardVisionCode::SIGN_LOSS_HOLD)
+            {
+                std::cout << "[RECOG] tx_state=h, reason=sign_loss_hold"
+                          << ", seq=" << static_cast<int>(send_state_tx_seq)
+                          << ", ok=" << (send_state_ok ? "yes" : "no")
+                          << std::endl;
             }
         }
 

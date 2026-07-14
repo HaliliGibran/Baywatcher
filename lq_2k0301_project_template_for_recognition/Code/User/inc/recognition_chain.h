@@ -67,6 +67,7 @@ public:
     bool IsIdleNoTargetState() const;
     bool HasRecentRedCandidate(uint64_t t_ms) const;
     bool IsLatchedHoldingResult() const;
+    bool IsSignLossHoldActive() const;
     BoardVisionCode GetCurrentVisionCode() const;
     double GetCurrentBlobArea() const;
     const PerfSample& GetLastPerfSample() const;
@@ -115,6 +116,7 @@ private:
     int adaptive_bad_frame_count_;
     bool circle_running_mode_;
     bool crossing_running_mode_;
+    bool crossing_preserve_sign_loss_hold_;
     int circle_marker_quality_pass_frames_;
     uint64_t circle_marker_quality_last_log_ms_;
     bool pending_trigger_roi_valid_;

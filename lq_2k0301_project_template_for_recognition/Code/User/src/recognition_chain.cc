@@ -330,6 +330,7 @@ static const char* vision_code_text(BoardVisionCode code)
     case BoardVisionCode::BRICK_LEFT: return "bl";
     case BoardVisionCode::BRICK_RIGHT: return "br";
     case BoardVisionCode::NO_RESULT: return "u";
+    case BoardVisionCode::SIGN_LOSS_HOLD: return "h";
     case BoardVisionCode::CLOTH_STOP: return "c";
     case BoardVisionCode::UNKNOWN: return "n";
     default: return "-";
@@ -1584,6 +1585,7 @@ RecognitionChain::RecognitionChain()
       adaptive_bad_frame_count_(0),
       circle_running_mode_(false),
       crossing_running_mode_(false),
+      crossing_preserve_sign_loss_hold_(false),
       circle_marker_quality_pass_frames_(0),
       circle_marker_quality_last_log_ms_(0),
       pending_trigger_roi_valid_(false),
@@ -1717,6 +1719,7 @@ void RecognitionChain::Reset()
     latched_release_pending_ = false;
     current_blob_area_ = 0.0;
     recent_red_candidate_until_ms_ = 0;
+    crossing_preserve_sign_loss_hold_ = false;
     circle_marker_quality_pass_frames_ = 0;
     circle_marker_quality_last_log_ms_ = 0;
     pending_trigger_roi_valid_ = false;
@@ -1739,6 +1742,11 @@ void RecognitionChain::SetCircleRunningMode(bool active)
 
 void RecognitionChain::SetCrossingRunningMode(bool active)
 {
+    if (crossing_running_mode_ == active)
+    {
+        return;
+    }
+    crossing_preserve_sign_loss_hold_ = active && IsSignLossHoldActive();
     crossing_running_mode_ = active;
 }
 
@@ -1776,6 +1784,13 @@ bool RecognitionChain::HasRecentRedCandidate(uint64_t t_ms) const
 bool RecognitionChain::IsLatchedHoldingResult() const
 {
     return mode_ == Mode::NORMAL && is_success_symbol_code(latched_symbol_code_);
+}
+
+bool RecognitionChain::IsSignLossHoldActive() const
+{
+    return mode_ == Mode::NORMAL &&
+           latched_release_pending_ &&
+           is_success_symbol_code(latched_symbol_code_);
 }
 
 BoardVisionCode RecognitionChain::GetCurrentVisionCode() const
@@ -2018,7 +2033,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
     {
         circle_marker_quality_pass_frames_ = 0;
         current_vision_code_ = latched_symbol_code_;
-        if (use_crossing_no_line)
+        if (use_crossing_no_line && !crossing_preserve_sign_loss_hold_)
         {
             latched_release_pending_ = false;
             latched_release_deadline_ms_ = 0;
@@ -2034,6 +2049,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         }
         if (holdable_sign_red_visible)
         {
+            crossing_preserve_sign_loss_hold_ = false;
             if (latched_release_pending_)
             {
                 if (kRecognitionTextLog)
@@ -2096,6 +2112,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
         latched_symbol_code_ = BoardVisionCode::INVALID;
         latched_release_pending_ = false;
         latched_release_deadline_ms_ = 0;
+        crossing_preserve_sign_loss_hold_ = false;
         current_vision_code_ = BoardVisionCode::UNKNOWN;
         if (render_debug)
         {

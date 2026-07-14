@@ -8,6 +8,73 @@ static std::atomic<bool> g_track_force_reset{false};
 
 namespace {
 
+struct sign_loss_element_confirmation_t
+{
+    bool active;
+    ElementType type;
+    CircleDirection circle_direction;
+    int total_frames;
+    int consecutive_pass_frames;
+    int consecutive_fail_frames;
+};
+
+static sign_loss_element_confirmation_t g_sign_loss_element_confirmation = {
+    false,
+    ElementType::NORMAL,
+    CircleDirection::CIRCLE_DIR_NONE,
+    0,
+    0,
+    0,
+};
+
+static void reset_sign_loss_element_confirmation()
+{
+    g_sign_loss_element_confirmation.active = false;
+    g_sign_loss_element_confirmation.type = ElementType::NORMAL;
+    g_sign_loss_element_confirmation.circle_direction = CircleDirection::CIRCLE_DIR_NONE;
+    g_sign_loss_element_confirmation.total_frames = 0;
+    g_sign_loss_element_confirmation.consecutive_pass_frames = 0;
+    g_sign_loss_element_confirmation.consecutive_fail_frames = 0;
+}
+
+static const char* sign_loss_element_confirmation_text(
+    ElementType type,
+    CircleDirection circle_direction)
+{
+    if (type == ElementType::CROSSING)
+    {
+        return "十字";
+    }
+    if (circle_direction == CircleDirection::CIRCLE_DIR_LEFT)
+    {
+        return "左环岛";
+    }
+    if (circle_direction == CircleDirection::CIRCLE_DIR_RIGHT)
+    {
+        return "右环岛";
+    }
+    return "元素";
+}
+
+static bool sign_loss_element_confirmation_passes(
+    ElementType type,
+    CircleDirection circle_direction)
+{
+    if (type == ElementType::CROSSING)
+    {
+        return pts_left.corner_found && pts_right.corner_found;
+    }
+    if (circle_direction == CircleDirection::CIRCLE_DIR_LEFT)
+    {
+        return pts_left.corner_found;
+    }
+    if (circle_direction == CircleDirection::CIRCLE_DIR_RIGHT)
+    {
+        return pts_right.corner_found;
+    }
+    return false;
+}
+
 static void set_runtime_normal_state(bool reset_follow_mode, bool clear_far_line)
 {
     element_type = ElementType::NORMAL;
@@ -50,6 +117,7 @@ static void enter_circle_runtime_state(CircleDirection direction)
 
 void track_reset_element_runtime_state(bool reset_follow_mode)
 {
+    reset_sign_loss_element_confirmation();
     set_runtime_normal_state(reset_follow_mode, true);
 }
 
@@ -58,6 +126,7 @@ void track_reset_element_runtime_state(bool reset_follow_mode)
 // 关键参数: 无
 void track_force_reset()
 {
+    reset_sign_loss_element_confirmation();
     // 先把全局状态置回默认（立刻生效）
     set_runtime_normal_state(true, true);
 
@@ -214,6 +283,11 @@ bool track_get_circle_candidate_direction(CircleDirection* out_direction)
     return candidate.want_circle;
 }
 
+bool track_sign_loss_element_entry_confirmation_pending()
+{
+    return g_sign_loss_element_confirmation.active;
+}
+
 // 功能: 元素判定与状态机入口（投票 + 保护帧）
 // 类型: 图像处理函数
 // 关键参数: 无（使用全局 pts_left/pts_right 等）
@@ -256,6 +330,7 @@ void element_detect()
     // 手动复位（例如键盘输入 'c'）：清空投票/保护帧/锁定态，并把元素状态回到 NORMAL。
     if (g_track_force_reset.exchange(false))
     {
+        reset_sign_loss_element_confirmation();
         set_runtime_normal_state(true, true);
 
         crossing_vote = 0;
@@ -273,6 +348,89 @@ void element_detect()
     const bool want_crossing = candidate.want_crossing;
     const bool want_circle = candidate.want_circle;
     const CircleDirection want_circle_dir = candidate.want_circle_dir;
+
+    if (g_sign_loss_element_confirmation.active)
+    {
+        const bool runtime_matches =
+            (g_sign_loss_element_confirmation.type == ElementType::CROSSING &&
+             element_type == ElementType::CROSSING &&
+             crossing_state == CrossingState::CROSSING_IN) ||
+            (g_sign_loss_element_confirmation.type == ElementType::CIRCLE &&
+             element_type == ElementType::CIRCLE &&
+             circle_state == CircleState::CIRCLE_BEGIN &&
+             circle_direction == g_sign_loss_element_confirmation.circle_direction);
+        if (!runtime_matches)
+        {
+            reset_sign_loss_element_confirmation();
+        }
+        else
+        {
+            const bool pass = sign_loss_element_confirmation_passes(
+                g_sign_loss_element_confirmation.type,
+                g_sign_loss_element_confirmation.circle_direction);
+            ++g_sign_loss_element_confirmation.total_frames;
+            if (pass)
+            {
+                ++g_sign_loss_element_confirmation.consecutive_pass_frames;
+                g_sign_loss_element_confirmation.consecutive_fail_frames = 0;
+            }
+            else
+            {
+                g_sign_loss_element_confirmation.consecutive_pass_frames = 0;
+                ++g_sign_loss_element_confirmation.consecutive_fail_frames;
+            }
+
+            const bool confirmed =
+                g_sign_loss_element_confirmation.consecutive_pass_frames >=
+                FRAME_THRESHOLD_sign_loss_element_confirm_pass;
+            const bool rejected =
+                g_sign_loss_element_confirmation.consecutive_fail_frames >=
+                    FRAME_THRESHOLD_sign_loss_element_confirm_fail ||
+                g_sign_loss_element_confirmation.total_frames >=
+                    FRAME_THRESHOLD_sign_loss_element_confirm_window;
+            if (confirmed)
+            {
+                std::printf("[h元素确认] %s连续%d帧通过，允许状态机推进\r\n",
+                            sign_loss_element_confirmation_text(
+                                g_sign_loss_element_confirmation.type,
+                                g_sign_loss_element_confirmation.circle_direction),
+                            g_sign_loss_element_confirmation.consecutive_pass_frames);
+                reset_sign_loss_element_confirmation();
+            }
+            else if (rejected)
+            {
+                const ElementType rejected_type = g_sign_loss_element_confirmation.type;
+                const CircleDirection rejected_direction =
+                    g_sign_loss_element_confirmation.circle_direction;
+                const int rejected_total = g_sign_loss_element_confirmation.total_frames;
+                const int rejected_fail =
+                    g_sign_loss_element_confirmation.consecutive_fail_frames;
+                reset_sign_loss_element_confirmation();
+                set_runtime_normal_state(true, true);
+                roundabout_reset();
+                crossing_reset();
+                crossing_vote = 0;
+                circle_vote = 0;
+                protect = 0;
+                last = ElementType::NORMAL;
+                log_crossing_lock = false;
+                publish_debug();
+                std::printf("[h元素确认] %s失败，总帧=%d，连续失败=%d，回退NORMAL\r\n",
+                            sign_loss_element_confirmation_text(
+                                rejected_type,
+                                rejected_direction),
+                            rejected_total,
+                            rejected_fail);
+                log_element_if_changed();
+                return;
+            }
+            else
+            {
+                publish_debug();
+                return;
+            }
+        }
+    }
 
     // 更新投票：
     if (want_crossing) crossing_vote = (crossing_vote < 1000) ? (crossing_vote + 1) : crossing_vote;
@@ -343,6 +501,20 @@ void element_detect()
         last = element_type;
         protect = FRAME_THRESHOLD_one_corner_crossing_protect_frame;
         circle_vote = 0;
+        if (image_remote_recognition_is_sign_loss_hold_active())
+        {
+            g_sign_loss_element_confirmation.active = true;
+            g_sign_loss_element_confirmation.type = ElementType::CROSSING;
+            g_sign_loss_element_confirmation.circle_direction = CircleDirection::CIRCLE_DIR_NONE;
+            g_sign_loss_element_confirmation.total_frames = 1;
+            const bool first_pass = sign_loss_element_confirmation_passes(
+                ElementType::CROSSING,
+                CircleDirection::CIRCLE_DIR_NONE);
+            g_sign_loss_element_confirmation.consecutive_pass_frames = first_pass ? 1 : 0;
+            g_sign_loss_element_confirmation.consecutive_fail_frames = first_pass ? 0 : 1;
+            std::printf("[h元素确认] 十字进入IN，启动%d帧确认窗\r\n",
+                        FRAME_THRESHOLD_sign_loss_element_confirm_window);
+        }
         log_element_if_changed();
         return;
     }
@@ -354,6 +526,23 @@ void element_detect()
         last = element_type;
         protect = FRAME_THRESHOLD_roundabout_protect_frame;
         crossing_vote = 0;
+        if (image_remote_recognition_is_sign_loss_hold_active())
+        {
+            g_sign_loss_element_confirmation.active = true;
+            g_sign_loss_element_confirmation.type = ElementType::CIRCLE;
+            g_sign_loss_element_confirmation.circle_direction = want_circle_dir;
+            g_sign_loss_element_confirmation.total_frames = 1;
+            const bool first_pass = sign_loss_element_confirmation_passes(
+                ElementType::CIRCLE,
+                want_circle_dir);
+            g_sign_loss_element_confirmation.consecutive_pass_frames = first_pass ? 1 : 0;
+            g_sign_loss_element_confirmation.consecutive_fail_frames = first_pass ? 0 : 1;
+            std::printf("[h元素确认] %s进入BEGIN，启动%d帧确认窗\r\n",
+                        sign_loss_element_confirmation_text(
+                            ElementType::CIRCLE,
+                            want_circle_dir),
+                        FRAME_THRESHOLD_sign_loss_element_confirm_window);
+        }
         log_element_if_changed();
         return;
     }

@@ -190,6 +190,11 @@ void crossing_update()
     {
         case CrossingState::CROSSING_IN:
         {
+            if (track_sign_loss_element_entry_confirmation_pending())
+            {
+                break;
+            }
+
             if (pts_left.pts_count == 0 && pts_right.pts_count == 0) 
             {
                 g_lost_line_counter++;

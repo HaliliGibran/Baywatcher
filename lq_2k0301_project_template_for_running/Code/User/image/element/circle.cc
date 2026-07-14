@@ -207,6 +207,11 @@ void roundabout_update()
             // BEGIN：贴外侧跟线（右环岛跟左中线，左环岛跟右中线）
             follow_mode = is_right ? FollowLine::MIDLEFT : FollowLine::MIDRIGHT;
 
+            if (track_sign_loss_element_entry_confirmation_pending())
+            {
+                break;
+            }
+
             const bool outer_missing = is_right ? (pts_right.pts_count <= 0) : (pts_left.pts_count <= 0);
             update_begin_phase(c, outer_missing);
             if (begin_to_in_ready(c))

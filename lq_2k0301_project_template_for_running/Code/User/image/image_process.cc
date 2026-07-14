@@ -30,6 +30,8 @@ typedef struct
 static pure_angle_lost_state_t g_pure_angle_lost = {0};
 static bool g_remote_inner_follow_log_active = false;
 static bool g_remote_inner_follow_log_circle = false;
+static bool g_remote_crossing_far_follow_log_active = false;
+static FollowLine g_remote_crossing_far_follow_log_mode = FollowLine::MIXED;
 static int32_t g_circle_gate_candidate_streak = 0;
 static CircleDirection g_circle_gate_candidate_direction =
     CircleDirection::CIRCLE_DIR_NONE;
@@ -643,21 +645,49 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
     follow_mode = forced_mode;
     midline.preview_curve_split_index = -1;
 
+    const bool use_crossing_far_edge =
+        image_remote_recognition_is_sign_loss_hold_active() &&
+        element_type == ElementType::CROSSING &&
+        crossing_state != CrossingState::CROSSING_NONE;
+    if (use_crossing_far_edge && !if_find_far_line)
+    {
+        g_remote_crossing_far_follow_log_active = false;
+        g_remote_crossing_far_follow_log_mode = FollowLine::MIXED;
+        return false;
+    }
+
     pts_well_processed* src = nullptr;
     bool is_left = false;
     if (forced_mode == FollowLine::MIDLEFT)
     {
-        src = &pts_left;
+        src = use_crossing_far_edge ? &pts_far_left : &pts_left;
         is_left = true;
     }
     else if (forced_mode == FollowLine::MIDRIGHT)
     {
-        src = &pts_right;
+        src = use_crossing_far_edge ? &pts_far_right : &pts_right;
         is_left = false;
     }
     else
     {
         return false;
+    }
+
+    if (use_crossing_far_edge)
+    {
+        if (!g_remote_crossing_far_follow_log_active ||
+            g_remote_crossing_far_follow_log_mode != forced_mode)
+        {
+            std::printf("[十字绕行] 红色丢失保持，绕行线使用%s远边线\n",
+                        is_left ? "左侧" : "右侧");
+        }
+        g_remote_crossing_far_follow_log_active = true;
+        g_remote_crossing_far_follow_log_mode = forced_mode;
+    }
+    else
+    {
+        g_remote_crossing_far_follow_log_active = false;
+        g_remote_crossing_far_follow_log_mode = FollowLine::MIXED;
     }
 
     if (src->pts_resample_count <= 0)

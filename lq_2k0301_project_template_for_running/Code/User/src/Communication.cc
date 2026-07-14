@@ -161,6 +161,7 @@ bool BoardComm::try_receive_state(BoardVisionCode* out_code, uint8_t* out_seq) {
                 raw_code == static_cast<uint8_t>(BoardVisionCode::BRICK_LEFT) ||
                 raw_code == static_cast<uint8_t>(BoardVisionCode::BRICK_RIGHT) ||
                 raw_code == static_cast<uint8_t>(BoardVisionCode::NO_RESULT) ||
+                raw_code == static_cast<uint8_t>(BoardVisionCode::SIGN_LOSS_HOLD) ||
                 raw_code == static_cast<uint8_t>(BoardVisionCode::CLOTH_STOP) ||
                 raw_code == static_cast<uint8_t>(BoardVisionCode::UNKNOWN);
             if (!valid_code) {

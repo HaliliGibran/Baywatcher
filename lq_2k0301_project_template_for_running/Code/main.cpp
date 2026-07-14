@@ -146,6 +146,7 @@ static const char* board_comm_code_text(BoardVisionCode code)
     case BoardVisionCode::BRICK_LEFT: return "bl";
     case BoardVisionCode::BRICK_RIGHT: return "br";
     case BoardVisionCode::NO_RESULT: return "u";
+    case BoardVisionCode::SIGN_LOSS_HOLD: return "h";
     case BoardVisionCode::CLOTH_STOP: return "c";
     case BoardVisionCode::UNKNOWN: return "n";
     default: return "-";
