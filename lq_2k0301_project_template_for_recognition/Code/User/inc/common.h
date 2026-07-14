@@ -91,7 +91,7 @@
 
 // [谨慎调] 成功识别后短暂丢目标时保持上次成功结果的时间。
 #ifndef BW_RECOG_SIGN_LOSS_HOLD_MS
-#define BW_RECOG_SIGN_LOSS_HOLD_MS 200
+#define BW_RECOG_SIGN_LOSS_HOLD_MS 300
 #endif
 
 // [谨慎调] 红砖 b/bl/br 短暂丢失时的输出保持帧数。
