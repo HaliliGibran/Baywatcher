@@ -85,6 +85,13 @@
 #define BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_POINT_COUNT 5
 #endif
 
+// [开关] 启动采光。
+// 1：进入五点采光交互；0：不等待按键，自动读取并应用上次保存的采光配置。
+// 关闭时若配置文件缺失或损坏，才回退下方预设固定相机参数。
+#ifndef BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_ENABLE
+#define BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_ENABLE 0
+#endif
+
 #pragma endregion
 
 #pragma region D. 现场常调：识别结果保持
@@ -291,10 +298,6 @@
 
 #ifndef BW_RECOG_CAMERA_TRY_0CPU_MJPG
 #define BW_RECOG_CAMERA_TRY_0CPU_MJPG 1
-#endif
-
-#ifndef BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_ENABLE
-#define BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_ENABLE 1
 #endif
 
 #ifndef BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_CONFIG_FILE

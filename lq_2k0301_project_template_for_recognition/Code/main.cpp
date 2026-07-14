@@ -695,7 +695,7 @@ void system_init()
 #if BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_ENABLE
         printf("[Lighting] 已启用启动五点采光，暂缓写入固定曝光/增益/白平衡。\n");
 #else
-        apply_camera_manual_settings(build_configured_camera_manual_settings(), "Camera");
+        printf("[Lighting] 启动采光已关闭，将自动读取上次保存的采光配置。\n");
 #endif
     }
     if (camera && camera->is_cam_opened())
@@ -725,19 +725,29 @@ int main(int argc, char** argv)
     // 系统初始化
     system_init();
 
-#if BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_ENABLE
     if (camera && camera->is_cam_opened())
     {
         CameraManualSettings startup_camera_settings;
+#if BW_RECOG_STARTUP_FIVE_POINT_LIGHTING_ENABLE
         if (!run_startup_five_point_lighting(&startup_camera_settings))
         {
             startup_camera_settings = build_configured_camera_manual_settings();
             printf("[Lighting] 使用预设固定参数作为启动相机参数。\n");
         }
+#else
+        if (!load_startup_lighting_config(&startup_camera_settings))
+        {
+            startup_camera_settings = build_configured_camera_manual_settings();
+            printf("[Lighting] 自动读取上次采光配置失败，回退预设固定参数。\n");
+        }
+        else
+        {
+            printf("[Lighting] 启动采光已关闭，已自动使用上次保存参数，无需按 q。\n");
+        }
+#endif
         apply_camera_manual_settings(startup_camera_settings, "Lighting");
         print_current_camera_readback("Lighting");
     }
-#endif
 
     // 设置终端为非阻塞（用于按键 'c' 快速复位识别链状态）
     {

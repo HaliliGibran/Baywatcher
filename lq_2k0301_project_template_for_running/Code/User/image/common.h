@@ -24,12 +24,13 @@
 #define PUREANGLE_LOST_TREND_ENABLE 1
 #endif
 
-// 斑马线冲线模式。
-// - 1：单次冲线。第一次识别到斑马线就冲线，消失后延迟停车。
-// - 2：双次冲线。第一次只冲线并恢复正常巡线，第二次再冲线并延迟停车。
-// 说明：无论哪种模式，只要当前仍看见斑马线，都会强制冲线并锁 MIXED。
-#ifndef BW_ZEBRA_RUSH_MODE
-#define BW_ZEBRA_RUSH_MODE 2
+// 第几次看到斑马线后停车。
+// - 1：第一次斑马线消失后延迟停车。
+// - 2：第一次只冲线并恢复巡线，第二次消失后延迟停车。
+// - n：前 n-1 次均恢复巡线，第 n 次消失后延迟停车。
+// 说明：配置小于 1 时按 1 处理；每次看见斑马线期间都会强制冲线并锁 MIXED。
+#ifndef BW_ZEBRA_STOP_ON_COUNT
+#define BW_ZEBRA_STOP_ON_COUNT 3
 #endif
 
 // 图传链默认开关。
@@ -261,25 +262,24 @@
 // 检测到斑马线后延迟停车的时间（毫秒）：
 // 使用位置：image_process.cc。
 // 作用：
-// - 单次冲线模式：第一次斑马线消失后，等待这么久再停车。
-// - 双次冲线模式：第二次斑马线消失后，等待这么久再停车。
+// - 第 BW_ZEBRA_STOP_ON_COUNT 次斑马线消失后，等待这么久再停车。
 // 调大：车会冲得更深。
 // 调小：更早刹停。
 #ifndef ZEBRA_STOP_DELAY_MS
 #define ZEBRA_STOP_DELAY_MS 1000
 #endif
 
-// 双次冲线模式下，第一次命中斑马线后的“新判定休眠”时间（毫秒）。
+// 尚未达到目标次数时，每次命中斑马线后的“重新计数休眠”时间（毫秒）。
 // 使用位置：image_process.cc / update_zebra_rush_state()。
 // 作用：
-// - 只在 BW_ZEBRA_RUSH_MODE >= 2 且刚完成第一次命中计数后生效。
+// - 只在当前次数小于 BW_ZEBRA_STOP_ON_COUNT 时生效。
 // - 休眠期内不再接受新的斑马线上升沿，避免同一条斑马线因为多帧抖动/短时漏检被误当成第二次经过。
 // 说明：
-// - 这不会打断当前这一次冲线；它只阻止“第一次结束后立刻又被重新计数”。
-// - 调大：更不容易把同一条斑马线算成两次，但第二次真实斑马线必须离第一次更远。
-// - 调小：更灵敏，但更容易被连续帧误触发第二次。
-#ifndef BW_ZEBRA_DOUBLE_FIRST_SLEEP_MS
-#define BW_ZEBRA_DOUBLE_FIRST_SLEEP_MS 5000
+// - 这不会打断当前这一次冲线；它只阻止“本次结束后立刻又被重新计数”。
+// - 调大：更不容易把同一条斑马线重复计数，但下一次真实斑马线必须离本次更远。
+// - 调小：更灵敏，但更容易把同一条斑马线误计为下一次。
+#ifndef BW_ZEBRA_RECOUNT_SLEEP_MS
+#define BW_ZEBRA_RECOUNT_SLEEP_MS 5000
 #endif
 
 #pragma endregion

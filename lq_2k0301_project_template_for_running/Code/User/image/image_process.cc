@@ -161,7 +161,7 @@ struct zebra_gate_state_t
 {
     bool prev_stop;
     uint64_t cooldown_until_ms;
-    uint64_t first_rush_sleep_until_ms;
+    uint64_t recount_sleep_until_ms;
     bool stripe_visible;
     bool pending_stop;
     bool rush_active;
@@ -190,13 +190,9 @@ static uint64_t image_now_ms()
         .count();
 }
 
-static inline int zebra_required_rush_count()
+static inline int zebra_stop_on_count()
 {
-#if BW_ZEBRA_RUSH_MODE >= 2
-    return 2;
-#else
-    return 1;
-#endif
+    return BW_ZEBRA_STOP_ON_COUNT > 0 ? BW_ZEBRA_STOP_ON_COUNT : 1;
 }
 
 static void sync_zebra_runtime_outputs()
@@ -382,11 +378,11 @@ static bool update_zebra_rush_state(const uint8_t (&img)[IMAGE_H][IMAGE_W], uint
 {
     const bool zebra_can_check = (t_ms >= g_zebra_gate.cooldown_until_ms);
     const bool raw_zebra_now = zebra_can_check && zebra_detection(img);
-    const bool first_rush_sleeping =
+    const bool recount_sleeping =
         (g_zebra_gate.rush_count > 0 &&
-         t_ms < g_zebra_gate.first_rush_sleep_until_ms);
+         t_ms < g_zebra_gate.recount_sleep_until_ms);
     const bool allow_new_zebra_hit =
-        (!first_rush_sleeping || g_zebra_gate.stripe_visible);
+        (!recount_sleeping || g_zebra_gate.stripe_visible);
     const bool zebra_now =
         g_zebra_gate.stripe_visible ? raw_zebra_now : (raw_zebra_now && allow_new_zebra_hit);
 
@@ -399,29 +395,29 @@ static bool update_zebra_rush_state(const uint8_t (&img)[IMAGE_H][IMAGE_W], uint
         g_zebra_gate.stop_deadline_ms = 0;
         g_zebra_gate.rush_count++;
 
-        if (g_zebra_gate.rush_count == 1 && zebra_required_rush_count() >= 2)
+        const int required_count = zebra_stop_on_count();
+        if (g_zebra_gate.rush_count < required_count)
         {
-            g_zebra_gate.first_rush_sleep_until_ms =
-                t_ms + static_cast<uint64_t>(BW_ZEBRA_DOUBLE_FIRST_SLEEP_MS);
+            g_zebra_gate.recount_sleep_until_ms =
+                t_ms + static_cast<uint64_t>(BW_ZEBRA_RECOUNT_SLEEP_MS);
         }
 
         image_remote_recognition_reset();
         track_force_reset();
         follow_mode = FollowLine::MIXED;
 
-        if (g_zebra_gate.rush_count < zebra_required_rush_count())
+        if (g_zebra_gate.rush_count < required_count)
         {
-            printf("[ZEBRA] rush #%d -> lock mixed, resume after disappear\r\n",
-                   g_zebra_gate.rush_count);
-            if (g_zebra_gate.rush_count == 1 && zebra_required_rush_count() >= 2)
-            {
-                printf("[ZEBRA] first rush sleep %d ms\r\n", (int)BW_ZEBRA_DOUBLE_FIRST_SLEEP_MS);
-            }
+            printf("[ZEBRA] rush #%d/%d -> lock mixed, resume after disappear\r\n",
+                   g_zebra_gate.rush_count,
+                   required_count);
+            printf("[ZEBRA] recount sleep %d ms\r\n", (int)BW_ZEBRA_RECOUNT_SLEEP_MS);
         }
         else
         {
-            printf("[ZEBRA] rush #%d -> lock mixed, stop after disappear\r\n",
-                   g_zebra_gate.rush_count);
+            printf("[ZEBRA] rush #%d/%d -> lock mixed, stop after disappear\r\n",
+                   g_zebra_gate.rush_count,
+                   required_count);
         }
     }
 
@@ -431,7 +427,7 @@ static bool update_zebra_rush_state(const uint8_t (&img)[IMAGE_H][IMAGE_W], uint
         g_zebra_gate.rush_active = false;
         g_zebra_gate.special_lock_active = false;
 
-        if (g_zebra_gate.rush_count >= zebra_required_rush_count())
+        if (g_zebra_gate.rush_count >= zebra_stop_on_count())
         {
             g_zebra_gate.pending_stop = true;
             g_zebra_gate.stop_deadline_ms = t_ms + (uint64_t)ZEBRA_STOP_DELAY_MS;
@@ -439,7 +435,9 @@ static bool update_zebra_rush_state(const uint8_t (&img)[IMAGE_H][IMAGE_W], uint
         }
         else
         {
-            printf("[ZEBRA] first rush clear -> resume normal track\r\n");
+            printf("[ZEBRA] rush #%d/%d clear -> resume normal track\r\n",
+                   g_zebra_gate.rush_count,
+                   zebra_stop_on_count());
         }
     }
 
