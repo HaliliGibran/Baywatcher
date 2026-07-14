@@ -1125,7 +1125,7 @@ static const Inner_PID_Param_t recog_inner_pid_param = {
 // 识别模式外部 Cube 环 PID。
 // 默认沿用当前 23+8 普通巡线外环初值；需要识别模式单独调外环时只改这里。
 static const Cube_PID_Param_t recog_cube_pid_param = {
-    6.865f, 0.5389f, 0.0f, 316.10f, 0.00100f, STEER_LIMIT, 100.0f
+    6.865f, 0.5269f, 0.0f, 316.10f, 0.00100f, STEER_LIMIT, 100.0f
 };
 
 static void Save_Normal_Inner_PID_Param()
