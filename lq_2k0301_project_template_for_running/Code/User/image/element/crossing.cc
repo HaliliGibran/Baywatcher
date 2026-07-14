@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstdio>
 #include "common.h"
+#include "../element.h"
 #include "image_data.h"
 #include "image_handle.h"
 #include "image_math.h"
