@@ -263,8 +263,12 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap);
 // 类型: 全局状态查询函数
 // 说明：
 // - w/s/v 冻结状态机。
-// - u 虽进入 vehicle 特殊巡线并减速，但不冻结状态机。
+// - u 不保留绕行路线，也不冻结状态机。
+// - h 保留已有绕行路线，但不冻结状态机，允许在红色丢失保持期进入十字。
 bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms);
+
+// 当前是否为已有绕行结果的红色丢失保持窗口；该窗口允许元素状态机推进。
+bool image_remote_recognition_is_sign_loss_hold_active();
 
 // 功能: 查询当前是否锁定到单边边线跟线
 // 类型: 全局状态查询函数

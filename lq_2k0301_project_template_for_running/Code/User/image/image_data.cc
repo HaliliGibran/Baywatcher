@@ -328,9 +328,29 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
     g_remote_recognition.current_code = code;
     const bool edge_follow_code =
         code == BoardVisionCode::WEAPON || code == BoardVisionCode::SUPPLY;
-    if (!edge_follow_code || code != previous_code)
+    const bool preserve_route_for_sign_loss_hold =
+        code == BoardVisionCode::SIGN_LOSS_HOLD &&
+        g_remote_recognition.follow_state != remote_follow_state_t::NONE;
+    if (!preserve_route_for_sign_loss_hold &&
+        (!edge_follow_code || code != previous_code))
     {
         image_remote_recognition_set_follow_path_state(false, false);
+    }
+
+    if (code == BoardVisionCode::SIGN_LOSS_HOLD)
+    {
+        g_remote_recognition.brick_block_until_ms = 0;
+        if (!preserve_route_for_sign_loss_hold)
+        {
+            g_remote_recognition.current_code = BoardVisionCode::UNKNOWN;
+            g_remote_recognition.vehicle_hold_until_ms = 0;
+            g_remote_recognition.vehicle_hold_yaw = 0.0f;
+            follow_mode = FollowLine::MIXED;
+            std::printf("[绕行保持] 收到h但没有既有绕行方向，忽略\n");
+            return;
+        }
+        std::printf("[绕行保持] 红色丢失，允许十字状态机推进并保持原绕行方向\n");
+        return;
     }
 
     if (code == BoardVisionCode::UNKNOWN)
@@ -501,6 +521,10 @@ bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms)
     {
         return false;
     }
+    if (g_remote_recognition.current_code == BoardVisionCode::SIGN_LOSS_HOLD)
+    {
+        return false;
+    }
 
     if (g_remote_recognition.follow_state == remote_follow_state_t::LEFT_EDGE_ROUTE ||
         g_remote_recognition.follow_state == remote_follow_state_t::RIGHT_EDGE_ROUTE)
@@ -510,6 +534,12 @@ bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms)
 
     return g_remote_recognition.current_code == BoardVisionCode::VEHICLE &&
            image_remote_recognition_is_vehicle_active(t_ms);
+}
+
+bool image_remote_recognition_is_sign_loss_hold_active()
+{
+    return !image_circle_recognition_gate_is_blocked() &&
+           g_remote_recognition.current_code == BoardVisionCode::SIGN_LOSS_HOLD;
 }
 
 bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode)

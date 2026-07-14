@@ -527,6 +527,10 @@
 #define FRAME_THRESHOLD_one_corner_crossing_protect_frame (3) // 十字保护帧
 // 角点对侧直线性窗口判断阈值
 #define WINDOW_THRESHOLD_roundabout_opposite_straightness (10) // 对侧直线性窗口半宽（点数）
+// h 状态切入环岛/十字首状态后的二次确认
+#define FRAME_THRESHOLD_sign_loss_element_confirm_pass (3) // 连续满足原元素候选条件后才允许推进
+#define FRAME_THRESHOLD_sign_loss_element_confirm_window (5) // 首状态确认总窗口帧数
+#define FRAME_THRESHOLD_sign_loss_element_confirm_fail (2) // 连续不满足候选条件时回退普通赛道
 #pragma endregion
 
 #pragma region 元素状态机帧阈值参数

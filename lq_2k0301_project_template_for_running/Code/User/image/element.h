@@ -14,6 +14,10 @@ void element_detect();
 // 说明：与 element_detect 复用完全相同的候选判定，供识别门控抢在远端接管前生效。
 bool track_get_circle_candidate_direction(CircleDirection* out_direction);
 
+// 功能: 查询 h 状态切入的环岛/十字首状态是否仍在二次确认
+// 说明：确认期间 CIRCLE_BEGIN/CROSSING_IN 只保持首状态，不推进内部迁移计数。
+bool track_sign_loss_element_entry_confirmation_pending();
+
 // 功能: 强制复位当前元素状态量（调试用）
 // 类型: 全局功能函数
 // 关键参数: 无
