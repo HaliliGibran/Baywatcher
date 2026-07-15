@@ -449,7 +449,8 @@ bool load_startup_lighting_config(CameraManualSettings* out_settings)
     }
 
     *out_settings = settings;
-    printf("[Lighting] 已读取持久化配置：exposure=%d gain=%.2f wb_blue=%.2f wb_red=%.2f\n",
+    printf("[Lighting] 参数来源=已有采光配置文件：%s\n", path.c_str());
+    printf("[Lighting] 已读取参数：exposure=%d gain=%.2f wb_blue=%.2f wb_red=%.2f\n",
            settings.exposure,
            settings.gain,
            settings.wb_blue,
@@ -484,10 +485,11 @@ bool run_startup_five_point_lighting(CameraManualSettings* out_settings)
         {
             if (load_startup_lighting_config(out_settings))
             {
-                printf("[Lighting] 已使用持久化配置，跳过五点采光。\n");
+                printf("[Lighting] q仅读取旧配置：本次已采样%d点全部丢弃，已有配置文件不会被修改。\n",
+                       static_cast<int>(samples.size()));
                 return true;
             }
-            printf("[Lighting] 读取持久化配置失败，请继续五点采光或按 s 回退默认参数。\n");
+            printf("[Lighting] q读取旧配置失败，已有配置文件未修改；请继续五点采光或按 s 回退默认参数。\n");
             continue;
         }
         if (cmd == 's' || cmd == 'S')
@@ -732,17 +734,25 @@ int main(int argc, char** argv)
         if (!run_startup_five_point_lighting(&startup_camera_settings))
         {
             startup_camera_settings = build_configured_camera_manual_settings();
-            printf("[Lighting] 使用预设固定参数作为启动相机参数。\n");
+            printf("[Lighting] 参数来源=common.h预设回退：exposure=%d gain=%.2f wb_blue=%.2f wb_red=%.2f\n",
+                   startup_camera_settings.exposure,
+                   startup_camera_settings.gain,
+                   startup_camera_settings.wb_blue,
+                   startup_camera_settings.wb_red);
         }
 #else
         if (!load_startup_lighting_config(&startup_camera_settings))
         {
             startup_camera_settings = build_configured_camera_manual_settings();
-            printf("[Lighting] 自动读取上次采光配置失败，回退预设固定参数。\n");
+            printf("[Lighting] 自动读取旧配置失败，参数来源=common.h预设回退：exposure=%d gain=%.2f wb_blue=%.2f wb_red=%.2f\n",
+                   startup_camera_settings.exposure,
+                   startup_camera_settings.gain,
+                   startup_camera_settings.wb_blue,
+                   startup_camera_settings.wb_red);
         }
         else
         {
-            printf("[Lighting] 启动采光已关闭，已自动使用上次保存参数，无需按 q。\n");
+            printf("[Lighting] 启动采光已关闭，旧配置读取成功并将应用，无需按 q。\n");
         }
 #endif
         apply_camera_manual_settings(startup_camera_settings, "Lighting");
