@@ -28,6 +28,10 @@ constexpr int kRecognitionMaxSearchYExclusive = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr uint64_t kRecognitionRecentCandidateHoldMs = BW_RECOG_U_LOSS_HOLD_MS;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
+constexpr bool kRecognitionResultDisplayOnly =
+    (BW_RECOG_RESULT_DISPLAY_ONLY_ENABLE != 0);
+constexpr bool kRecognitionResultDetailLog =
+    kRecognitionResultLog && !kRecognitionResultDisplayOnly;
 constexpr bool kRecognitionVerboseLog = kRecognitionTextLog && (BW_RECOG_VERBOSE_LOG != 0);
 constexpr float kRecognitionDecisionTop1Threshold = BW_RECOG_DECISION_TOP1_THRESHOLD;
 constexpr float kRecognitionDecisionMarginThreshold = BW_RECOG_DECISION_MARGIN_THRESHOLD;
@@ -1129,7 +1133,7 @@ static void maybe_log_manual_mlp_compare(const RoiClassificationResult& manual_r
                                          const std::array<float, kRecognitionMaxClasses>& manual_logits,
                                          const std::array<float, kRecognitionMaxClasses>& onnx_logits)
 {
-    if (!kRecognitionResultLog)
+    if (!kRecognitionResultDetailLog)
     {
         return;
     }
@@ -1242,7 +1246,7 @@ static void warmup_recognition_net(cv::dnn::Net& net,
         const auto begin = std::chrono::steady_clock::now();
         (void)classify_roi_index_onnx(net, dummy_roi, calibration_temperature, logit_bias);
         const auto end = std::chrono::steady_clock::now();
-        if (kRecognitionResultLog)
+        if (kRecognitionResultDetailLog)
         {
             const double warmup_ms = std::chrono::duration<double, std::milli>(end - begin).count();
             std::cout << "[ONNX] warmup " << (i + 1) << "/" << kRecognitionOnnxWarmupRuns
@@ -1591,7 +1595,10 @@ RecognitionChain::RecognitionChain()
       pending_trigger_roi_valid_(false),
       pending_trigger_roi_(),
       pending_trigger_perf_(),
-      last_perf_sample_()
+      last_perf_sample_(),
+      result_display_pending_(false),
+      pending_result_display_line_(),
+      result_display_inactive_since_ms_(0)
 {
 }
 
@@ -1727,6 +1734,60 @@ void RecognitionChain::Reset()
     pending_trigger_perf_ = PerfSample();
     ClearAdaptiveDecision();
     last_perf_sample_ = PerfSample();
+}
+
+void RecognitionChain::QueueResultDisplayLine(const std::string& line)
+{
+    if (!kRecognitionResultLog)
+    {
+        return;
+    }
+    if (!kRecognitionResultDisplayOnly)
+    {
+        std::cout << line << std::endl;
+        return;
+    }
+
+    // The newest decision replaces earlier decisions from the same visible target.
+    pending_result_display_line_ = line;
+    result_display_pending_ = true;
+    result_display_inactive_since_ms_ = 0;
+}
+
+void RecognitionChain::TickResultDisplay(uint64_t t_ms)
+{
+    if (!kRecognitionResultDisplayOnly || !result_display_pending_)
+    {
+        return;
+    }
+
+    const bool encounter_active =
+        mode_ == Mode::RECOGNITION ||
+        pending_trigger_roi_valid_ ||
+        adaptive_decision_pending_ ||
+        is_success_symbol_code(latched_symbol_code_) ||
+        current_vision_code_ == BoardVisionCode::NO_RESULT;
+    if (encounter_active)
+    {
+        result_display_inactive_since_ms_ = 0;
+        return;
+    }
+
+    if (result_display_inactive_since_ms_ == 0)
+    {
+        result_display_inactive_since_ms_ = t_ms;
+        return;
+    }
+    if (t_ms < result_display_inactive_since_ms_ +
+                   static_cast<uint64_t>(BW_RECOG_RESULT_DISPLAY_QUIET_MS))
+    {
+        return;
+    }
+
+    std::cout << pending_result_display_line_ << std::endl;
+    result_display_pending_ = false;
+    pending_result_display_line_.clear();
+    result_display_inactive_since_ms_ = 0;
 }
 
 void RecognitionChain::SetCircleRunningMode(bool active)
@@ -2291,7 +2352,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
             ClearAdaptiveDecision();
 
             const bool should_log =
-                kRecognitionResultLog &&
+                kRecognitionResultDetailLog &&
                 (circle_marker_quality_last_log_ms_ == 0 ||
                  t_ms >= circle_marker_quality_last_log_ms_ +
                              kRecognitionTriggerRejectLogIntervalMs);
@@ -2338,7 +2399,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
             return false;
         }
 
-        if (kRecognitionResultLog)
+        if (kRecognitionResultDetailLog)
         {
             std::cout << "[环岛识别质量] 通过"
                       << ", 模式=" << (circle_quality.immediate ? "近端立即" : "连续稳定")
@@ -2516,20 +2577,24 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
             if (kRecognitionResultLog)
             {
-                std::cout << "[RECOG] result="
-                          << runtime_decision_label(cached_summary.top1_index, class_names_)
-                          << ", valid_frames=" << adaptive_valid_frame_count_
-                          << ", mode=cached_first_frame_fallback"
-                          << ", top1_prob=" << std::fixed << std::setprecision(4)
-                          << cached_summary.top1_prob
-                          << ", margin=" << cached_summary.margin
-                          << ", reason=" << reason
-                          << std::endl;
-                std::cout << "[RECOG] state_out="
-                          << vision_code_text(current_vision_code_)
-                          << ", blob_area=" << std::fixed << std::setprecision(1)
-                          << current_blob_area_
-                          << std::endl;
+                std::ostringstream result_line;
+                result_line << "[RECOG] result="
+                            << runtime_decision_label(cached_summary.top1_index, class_names_)
+                            << ", valid_frames=" << adaptive_valid_frame_count_
+                            << ", mode=cached_first_frame_fallback"
+                            << ", top1_prob=" << std::fixed << std::setprecision(4)
+                            << cached_summary.top1_prob
+                            << ", margin=" << cached_summary.margin
+                            << ", reason=" << reason;
+                QueueResultDisplayLine(result_line.str());
+                if (kRecognitionResultDetailLog)
+                {
+                    std::cout << "[RECOG] state_out="
+                              << vision_code_text(current_vision_code_)
+                              << ", blob_area=" << std::fixed << std::setprecision(1)
+                              << current_blob_area_
+                              << std::endl;
+                }
             }
 
             ClearAdaptiveDecision();
@@ -2566,7 +2631,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                             cv::Point(16, 84), cv::FONT_HERSHEY_SIMPLEX,
                             0.65, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
             }
-            if (kRecognitionResultLog)
+            if (kRecognitionResultDetailLog)
             {
                 std::cout << "[RECOG] result=wait_second_frame_roi_not_ready"
                           << ", bad_frames=" << adaptive_bad_frame_count_
@@ -2765,7 +2830,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
             latched_symbol_code_ = BoardVisionCode::INVALID;
             latched_release_pending_ = false;
             latched_release_deadline_ms_ = 0;
-            if (kRecognitionResultLog)
+            if (kRecognitionResultDetailLog)
             {
                 std::cout << "[RECOG] result=wait_second_frame_invalid_model_output"
                           << ", bad_frames=" << adaptive_bad_frame_count_
@@ -2814,7 +2879,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                         0.70, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
         }
 
-        if (kRecognitionResultLog)
+        if (kRecognitionResultDetailLog)
         {
             std::cout << "[RECOG] result=wait_second_frame"
                       << ", valid_frames=" << frame_valid_count
@@ -2911,19 +2976,20 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     if (kRecognitionResultLog)
     {
-        std::cout << "[RECOG] result=" << label
-                  << ", valid_frames=" << decision_valid_count
-                  << ", mode=" << (forced_two_frame_top1 ? "two_frame_forced_avg" : "single_high_conf")
-                  << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
-                  << ", forward_ms=" << cls_timing.forward_ms
-                  << ", cls_ms=" << last_perf_sample_.classify_total_ms
-                  << ", top1_prob=" << std::fixed << std::setprecision(4) << prob_summary.top1_prob
-                  << ", margin=" << prob_summary.margin;
+        std::ostringstream result_line;
+        result_line << "[RECOG] result=" << label
+                    << ", valid_frames=" << decision_valid_count
+                    << ", mode=" << (forced_two_frame_top1 ? "two_frame_forced_avg" : "single_high_conf")
+                    << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
+                    << ", forward_ms=" << cls_timing.forward_ms
+                    << ", cls_ms=" << last_perf_sample_.classify_total_ms
+                    << ", top1_prob=" << std::fixed << std::setprecision(4) << prob_summary.top1_prob
+                    << ", margin=" << prob_summary.margin;
         if (forced_two_frame_top1 || !has_final_decision)
         {
-            std::cout << ", reason=" << failure_reason;
+            result_line << ", reason=" << failure_reason;
         }
-        std::cout << std::endl;
+        QueueResultDisplayLine(result_line.str());
     }
 
     current_vision_code_ = has_final_decision ? final_code : BoardVisionCode::NO_RESULT;
@@ -2933,7 +2999,7 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
     latched_release_pending_ = false;
     latched_release_deadline_ms_ = 0;
 
-    if (kRecognitionResultLog)
+    if (kRecognitionResultDetailLog)
     {
         std::cout << "[RECOG] state_out=" << vision_code_text(current_vision_code_)
                   << ", blob_area=" << std::fixed << std::setprecision(1) << current_blob_area_

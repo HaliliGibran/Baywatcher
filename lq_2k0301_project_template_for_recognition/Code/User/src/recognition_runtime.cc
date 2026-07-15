@@ -20,6 +20,8 @@ using steady_clock_t = std::chrono::steady_clock;
 using steady_time_point_t = std::chrono::time_point<steady_clock_t>;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
+constexpr bool kRecognitionResultDetailLog =
+    kRecognitionResultLog && (BW_RECOG_RESULT_DISPLAY_ONLY_ENABLE == 0);
 constexpr bool kRecognitionUToResultTimingLog = (BW_RECOG_U_TO_RESULT_TIMING_LOG_ENABLE != 0);
 constexpr bool kRecognitionTriggerFrameEarlyUSend =
     (BW_RECOG_TRIGGER_FRAME_EARLY_U_SEND_ENABLE != 0);
@@ -1093,6 +1095,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                     last_send_ms = gate_poll_ms;
                 }
             }
+            recognition.TickResultDisplay(gate_poll_ms);
             usleep(5 * 1000);
             continue;
         }
@@ -1360,7 +1363,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                 }
                 last_send_ms = t_ms;
             }
-            if (kRecognitionResultLog && state_changed && IsBrickCode(code))
+            if (kRecognitionResultDetailLog && state_changed && IsBrickCode(code))
             {
                 std::cout << "[RECOG] tx_state=" << VisionCodeText(code)
                           << ", seq=" << static_cast<int>(send_state_tx_seq)
@@ -1368,7 +1371,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                           << ", send_ms=" << std::fixed << std::setprecision(2)
                           << send_state_ms << std::endl;
             }
-            if (kRecognitionResultLog &&
+            if (kRecognitionResultDetailLog &&
                 state_changed &&
                 code == BoardVisionCode::SIGN_LOSS_HOLD)
             {
@@ -1378,6 +1381,9 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                           << std::endl;
             }
         }
+
+        // Display-only debounce runs after control-state transmission.
+        recognition.TickResultDisplay(t_ms);
 
         // 7. 发布图传画面；比赛关闭图传时不构造发布视图。
         if (stream_enabled)
