@@ -20,10 +20,10 @@ using steady_clock_t = std::chrono::steady_clock;
 using steady_time_point_t = std::chrono::time_point<steady_clock_t>;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
-constexpr bool kRecognitionNonResultLog =
-    (BW_RECOG_NON_RESULT_LOG_ENABLE != 0);
+constexpr bool kRecognitionResultOnlyLog =
+    (BW_RECOG_RESULT_ONLY_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultDetailLog =
-    kRecognitionResultLog && (BW_RECOG_RESULT_DISPLAY_ONLY_ENABLE == 0);
+    kRecognitionResultLog && !kRecognitionResultOnlyLog;
 constexpr bool kRecognitionUToResultTimingLog = (BW_RECOG_U_TO_RESULT_TIMING_LOG_ENABLE != 0);
 constexpr bool kRecognitionTriggerFrameEarlyUSend =
     (BW_RECOG_TRIGGER_FRAME_EARLY_U_SEND_ENABLE != 0);
@@ -1046,7 +1046,7 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                 manual_cycle_finished = false;
                 view.release();
             }
-            if (kRecognitionNonResultLog)
+            if (!kRecognitionResultOnlyLog)
             {
                 const char* gate_text = gate_blocked
                     ? "BLOCK，识别链已清空"
@@ -1100,7 +1100,6 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                     last_send_ms = gate_poll_ms;
                 }
             }
-            recognition.TickResultDisplay(gate_poll_ms);
             usleep(5 * 1000);
             continue;
         }
@@ -1386,9 +1385,6 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                           << std::endl;
             }
         }
-
-        // Display-only debounce runs after control-state transmission.
-        recognition.TickResultDisplay(t_ms);
 
         // 7. 发布图传画面；比赛关闭图传时不构造发布视图。
         if (stream_enabled)

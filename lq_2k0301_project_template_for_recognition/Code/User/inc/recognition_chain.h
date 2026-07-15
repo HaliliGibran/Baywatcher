@@ -71,8 +71,6 @@ public:
     BoardVisionCode GetCurrentVisionCode() const;
     double GetCurrentBlobArea() const;
     const PerfSample& GetLastPerfSample() const;
-    // 非阻塞提交终端结果；识别、状态更新和发包不经过此显示层。
-    void TickResultDisplay(uint64_t t_ms);
     // [Recognition Chain Step 2-3] 在普通态里检测红色触发器并切入识别态。
     // 作用：识别链自己管理 NORMAL -> RECOGNITION 的切换，并进入自适应判定。
     bool TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_ms, cv::Mat& view, bool render_debug);
@@ -84,7 +82,6 @@ public:
 
 private:
     void ClearAdaptiveDecision();
-    void QueueResultDisplayLine(const std::string& line);
 
     enum class TargetClass : uint8_t {
         UNKNOWN = 0,
@@ -126,7 +123,4 @@ private:
     RoiExtractionResult pending_trigger_roi_;
     PerfSample pending_trigger_perf_;
     PerfSample last_perf_sample_;
-    bool result_display_pending_;
-    std::string pending_result_display_line_;
-    uint64_t result_display_inactive_since_ms_;
 };

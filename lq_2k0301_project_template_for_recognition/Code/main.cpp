@@ -19,8 +19,8 @@
 
 using namespace cv;
 
-#if BW_RECOG_NON_RESULT_LOG_ENABLE == 0
-// main.cpp 中的 printf 全部是启动/采光/相机/串口诊断，不参与业务逻辑。
+#if BW_RECOG_RESULT_ONLY_LOG_ENABLE
+// 本文件中的 printf 均为启动、采光、相机或串口诊断日志。
 #define printf(...) ((void)0)
 #endif
 

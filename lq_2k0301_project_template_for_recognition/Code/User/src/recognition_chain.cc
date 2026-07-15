@@ -28,12 +28,10 @@ constexpr int kRecognitionMaxSearchYExclusive = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr uint64_t kRecognitionRecentCandidateHoldMs = BW_RECOG_U_LOSS_HOLD_MS;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
-constexpr bool kRecognitionNonResultLog =
-    (BW_RECOG_NON_RESULT_LOG_ENABLE != 0);
-constexpr bool kRecognitionResultDisplayOnly =
-    (BW_RECOG_RESULT_DISPLAY_ONLY_ENABLE != 0);
+constexpr bool kRecognitionResultOnlyLog =
+    (BW_RECOG_RESULT_ONLY_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultDetailLog =
-    kRecognitionResultLog && !kRecognitionResultDisplayOnly;
+    kRecognitionResultLog && !kRecognitionResultOnlyLog;
 constexpr bool kRecognitionVerboseLog = kRecognitionTextLog && (BW_RECOG_VERBOSE_LOG != 0);
 constexpr float kRecognitionDecisionTop1Threshold = BW_RECOG_DECISION_TOP1_THRESHOLD;
 constexpr float kRecognitionDecisionMarginThreshold = BW_RECOG_DECISION_MARGIN_THRESHOLD;
@@ -1597,10 +1595,7 @@ RecognitionChain::RecognitionChain()
       pending_trigger_roi_valid_(false),
       pending_trigger_roi_(),
       pending_trigger_perf_(),
-      last_perf_sample_(),
-      result_display_pending_(false),
-      pending_result_display_line_(),
-      result_display_inactive_since_ms_(0)
+      last_perf_sample_()
 {
 }
 
@@ -1627,7 +1622,7 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
         (kRecognitionManualMlpCompareOnnx && !file_exists(model_path)))
     {
         enabled_ = false;
-        if (kRecognitionNonResultLog)
+        if (!kRecognitionResultOnlyLog)
         {
             std::cerr << "[MLP] deployment files missing: classes=" << class_path
                       << ", calibration=" << calibration_path;
@@ -1680,7 +1675,7 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
     catch (const std::exception& e)
     {
         enabled_ = false;
-        if (kRecognitionNonResultLog)
+        if (!kRecognitionResultOnlyLog)
         {
             std::cerr << "[MLP] disabled: " << e.what() << std::endl;
         }
@@ -1742,60 +1737,6 @@ void RecognitionChain::Reset()
     pending_trigger_perf_ = PerfSample();
     ClearAdaptiveDecision();
     last_perf_sample_ = PerfSample();
-}
-
-void RecognitionChain::QueueResultDisplayLine(const std::string& line)
-{
-    if (!kRecognitionResultLog)
-    {
-        return;
-    }
-    if (!kRecognitionResultDisplayOnly)
-    {
-        std::cout << line << std::endl;
-        return;
-    }
-
-    // The newest decision replaces earlier decisions from the same visible target.
-    pending_result_display_line_ = line;
-    result_display_pending_ = true;
-    result_display_inactive_since_ms_ = 0;
-}
-
-void RecognitionChain::TickResultDisplay(uint64_t t_ms)
-{
-    if (!kRecognitionResultDisplayOnly || !result_display_pending_)
-    {
-        return;
-    }
-
-    const bool encounter_active =
-        mode_ == Mode::RECOGNITION ||
-        pending_trigger_roi_valid_ ||
-        adaptive_decision_pending_ ||
-        is_success_symbol_code(latched_symbol_code_) ||
-        current_vision_code_ == BoardVisionCode::NO_RESULT;
-    if (encounter_active)
-    {
-        result_display_inactive_since_ms_ = 0;
-        return;
-    }
-
-    if (result_display_inactive_since_ms_ == 0)
-    {
-        result_display_inactive_since_ms_ = t_ms;
-        return;
-    }
-    if (t_ms < result_display_inactive_since_ms_ +
-                   static_cast<uint64_t>(BW_RECOG_RESULT_DISPLAY_QUIET_MS))
-    {
-        return;
-    }
-
-    std::cout << pending_result_display_line_ << std::endl;
-    result_display_pending_ = false;
-    pending_result_display_line_.clear();
-    result_display_inactive_since_ms_ = 0;
 }
 
 void RecognitionChain::SetCircleRunningMode(bool active)
@@ -2585,19 +2526,18 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
             if (kRecognitionResultLog)
             {
-                std::ostringstream result_line;
-                result_line << "[RECOG] result="
-                            << runtime_decision_label(cached_summary.top1_index, class_names_)
-                            << ", valid_frames=" << adaptive_valid_frame_count_
-                            << ", mode=cached_first_frame_fallback"
-                            << ", top1_prob=" << std::fixed << std::setprecision(4)
-                            << cached_summary.top1_prob
-                            << ", margin=" << cached_summary.margin;
+                std::cout << "[RECOG] result="
+                          << runtime_decision_label(cached_summary.top1_index, class_names_)
+                          << ", valid_frames=" << adaptive_valid_frame_count_
+                          << ", mode=cached_first_frame_fallback"
+                          << ", top1_prob=" << std::fixed << std::setprecision(4)
+                          << cached_summary.top1_prob
+                          << ", margin=" << cached_summary.margin;
                 if (kRecognitionResultDetailLog)
                 {
-                    result_line << ", reason=" << reason;
+                    std::cout << ", reason=" << reason;
                 }
-                QueueResultDisplayLine(result_line.str());
+                std::cout << std::endl;
                 if (kRecognitionResultDetailLog)
                 {
                     std::cout << "[RECOG] state_out="
@@ -2626,14 +2566,10 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
             ++adaptive_bad_frame_count_;
             if (adaptive_bad_frame_count_ >= kRecognitionAdaptiveTwoFrameMaxBadFrames)
             {
-                if (kRecognitionResultDetailLog)
-                {
-                    const std::string fallback_reason =
-                        std::string("second_frame_roi_timeout:") +
-                        roi_status + ":" + reject_text;
-                    return force_cached_first_frame_decision(fallback_reason.c_str());
-                }
-                return force_cached_first_frame_decision("second_frame_roi_timeout");
+                const std::string fallback_reason =
+                    std::string("second_frame_roi_timeout:") +
+                    roi_status + ":" + reject_text;
+                return force_cached_first_frame_decision(fallback_reason.c_str());
             }
 
             current_vision_code_ = BoardVisionCode::NO_RESULT;
@@ -2991,21 +2927,20 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
 
     if (kRecognitionResultLog)
     {
-        std::ostringstream result_line;
-        result_line << "[RECOG] result=" << label
-                    << ", valid_frames=" << decision_valid_count
-                    << ", mode=" << (forced_two_frame_top1 ? "two_frame_forced_avg" : "single_high_conf")
-                    << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
-                    << ", forward_ms=" << cls_timing.forward_ms
-                    << ", cls_ms=" << last_perf_sample_.classify_total_ms
-                    << ", top1_prob=" << std::fixed << std::setprecision(4) << prob_summary.top1_prob
-                    << ", margin=" << prob_summary.margin;
+        std::cout << "[RECOG] result=" << label
+                  << ", valid_frames=" << decision_valid_count
+                  << ", mode=" << (forced_two_frame_top1 ? "two_frame_forced_avg" : "single_high_conf")
+                  << ", infer_ms=" << std::fixed << std::setprecision(2) << infer_ms
+                  << ", forward_ms=" << cls_timing.forward_ms
+                  << ", cls_ms=" << last_perf_sample_.classify_total_ms
+                  << ", top1_prob=" << std::fixed << std::setprecision(4) << prob_summary.top1_prob
+                  << ", margin=" << prob_summary.margin;
         if (kRecognitionResultDetailLog &&
             (forced_two_frame_top1 || !has_final_decision))
         {
-            result_line << ", reason=" << failure_reason;
+            std::cout << ", reason=" << failure_reason;
         }
-        QueueResultDisplayLine(result_line.str());
+        std::cout << std::endl;
     }
 
     current_vision_code_ = has_final_decision ? final_code : BoardVisionCode::NO_RESULT;

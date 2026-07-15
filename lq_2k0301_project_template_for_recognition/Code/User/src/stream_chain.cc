@@ -97,7 +97,7 @@ bool StreamChain::Initialize(bool enabled_by_switch)
     if (server_ == nullptr)
     {
         // 防御式保护：如果外部没有传入 server 实例，则不给图传链继续启动。
-        if (BW_RECOG_NON_RESULT_LOG_ENABLE != 0)
+        if (BW_RECOG_RESULT_ONLY_LOG_ENABLE == 0)
         {
             std::cerr << "[BOOT] Stream server missing." << std::endl;
         }
@@ -120,7 +120,7 @@ bool StreamChain::Initialize(bool enabled_by_switch)
     }
     else
     {
-        if (BW_RECOG_NON_RESULT_LOG_ENABLE != 0)
+        if (BW_RECOG_RESULT_ONLY_LOG_ENABLE == 0)
         {
             std::cerr << "[BOOT] Stream start failed." << std::endl;
         }

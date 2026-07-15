@@ -2,7 +2,7 @@
 #include "common.h"
 #include <stdio.h>
 
-#if BW_RECOG_NON_RESULT_LOG_ENABLE == 0
+#if BW_RECOG_RESULT_ONLY_LOG_ENABLE
 #define printf(...) ((void)0)
 #endif
 
