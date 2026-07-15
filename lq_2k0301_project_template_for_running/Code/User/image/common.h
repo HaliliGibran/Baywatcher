@@ -30,7 +30,7 @@
 // - n：前 n-1 次均恢复巡线，第 n 次消失后延迟停车。
 // 说明：配置小于 1 时按 1 处理；每次看见斑马线期间都会强制冲线并锁 MIXED。
 #ifndef BW_ZEBRA_STOP_ON_COUNT
-#define BW_ZEBRA_STOP_ON_COUNT 3
+#define BW_ZEBRA_STOP_ON_COUNT 2
 #endif
 
 // 图传链默认开关。
