@@ -262,7 +262,7 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap);
 // 功能: 查询当前远端状态是否需要冻结运行板元素状态机
 // 类型: 全局状态查询函数
 // 说明：
-// - w/s/v 冻结状态机。
+// - 普通赛道 w/s/v 冻结状态机；十字 IN/RUNNING 内不冻结，允许十字继续推进。
 // - u 不保留绕行路线，也不冻结状态机。
 // - h 保留已有绕行路线，但不冻结状态机，允许在红色丢失保持期进入十字。
 bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms);

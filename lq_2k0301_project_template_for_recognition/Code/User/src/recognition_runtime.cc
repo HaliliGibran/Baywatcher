@@ -973,7 +973,6 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
     uint64_t runtime_frame_seq = 0;
     BoardVisionCode brick_hold_code = BoardVisionCode::INVALID;
     int brick_hold_remaining_frames = 0;
-    BoardVisionCode crossing_held_result = BoardVisionCode::INVALID;
     UToResultTimingState u_to_result_timing;
     RecognitionGateRuntime recognition_gate;
     const bool render_debug = stream_enabled;
@@ -1038,7 +1037,6 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                 recognition.Reset();
                 brick_hold_code = BoardVisionCode::INVALID;
                 brick_hold_remaining_frames = 0;
-                crossing_held_result = BoardVisionCode::INVALID;
                 u_to_result_timing = UToResultTimingState();
                 prev_in_recognition = false;
                 manual_cycle_finished = false;
@@ -1324,29 +1322,9 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
         const bool sign_loss_hold_active =
             recognition.IsSignLossHoldActive() &&
             IsRecognitionSuccessCode(code_after_chain);
-        const bool hold_crossing_result =
-            crossing_early_mode &&
-            IsRecognitionSuccessCode(code_after_chain) &&
-            !sign_loss_hold_active;
-        if (hold_crossing_result && crossing_held_result != code_after_chain)
-        {
-            crossing_held_result = code_after_chain;
-            if (kRecognitionResultLog)
-            {
-                std::cout << "[十字提前识别] 已锁存结果="
-                          << VisionCodeText(crossing_held_result)
-                          << "，十字退出后发送" << std::endl;
-            }
-        }
-        const bool release_crossing_result =
-            !crossing_early_mode && IsRecognitionSuccessCode(crossing_held_result);
-        const BoardVisionCode code = hold_crossing_result
-            ? BoardVisionCode::NO_RESULT
-            : (release_crossing_result
-                   ? crossing_held_result
-                   : (sign_loss_hold_active
-                          ? BoardVisionCode::SIGN_LOSS_HOLD
-                          : code_after_chain));
+        const BoardVisionCode code = sign_loss_hold_active
+            ? BoardVisionCode::SIGN_LOSS_HOLD
+            : code_after_chain;
         bool should_send_state = false;
         const bool state_changed = code != last_sent_code;
         uint8_t proposed_tx_seq = tx_seq;
@@ -1381,15 +1359,6 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                     last_sent_code = code;
                 }
                 last_send_ms = t_ms;
-                if (release_crossing_result)
-                {
-                    if (kRecognitionResultLog)
-                    {
-                        std::cout << "[十字提前识别] 十字已退出，锁存结果发送成功="
-                                  << VisionCodeText(crossing_held_result) << std::endl;
-                    }
-                    crossing_held_result = BoardVisionCode::INVALID;
-                }
             }
             if (kRecognitionResultLog && state_changed && IsBrickCode(code))
             {

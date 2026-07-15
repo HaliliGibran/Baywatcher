@@ -59,7 +59,7 @@ public:
     void Reset();
     // 运行板处于 CIRCLE_RUNNING 时启用环岛专用 marker 质量门控。
     void SetCircleRunningMode(bool active);
-    // 运行板处于十字 IN/RUNNING 时启用无边线提前识别，并锁存结果到十字退出。
+    // 运行板处于十字 IN/RUNNING 时启用无边线识别，结果完成后立即输出。
     void SetCrossingRunningMode(bool active);
 
     bool IsEnabled() const;

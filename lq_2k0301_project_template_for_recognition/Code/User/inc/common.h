@@ -476,7 +476,7 @@
 #endif
 
 // 十字内无边线提前识别。只在收到运行板 ALLOW_CROSSING 时生效；
-// 使用严格红阈值和画面中心门控，推理结果锁存到退出十字后再发送。
+// 使用严格红阈值和画面中心门控，推理完成后立即发送结果并允许十字内绕行。
 #ifndef BW_RECOG_CROSSING_NO_LINE_ENABLE
 #define BW_RECOG_CROSSING_NO_LINE_ENABLE 1
 #endif

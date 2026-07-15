@@ -511,6 +511,7 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap)
 bool image_remote_recognition_is_vehicle_active(uint64_t t_ms)
 {
     return !image_circle_recognition_gate_is_blocked() &&
+           crossing_state == CrossingState::CROSSING_NONE &&
            (g_remote_recognition.follow_state == remote_follow_state_t::VEHICLE_ROUTE) &&
            (t_ms < g_remote_recognition.vehicle_hold_until_ms);
 }
@@ -518,6 +519,10 @@ bool image_remote_recognition_is_vehicle_active(uint64_t t_ms)
 bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms)
 {
     if (image_circle_recognition_gate_is_blocked())
+    {
+        return false;
+    }
+    if (crossing_state != CrossingState::CROSSING_NONE)
     {
         return false;
     }

@@ -2039,7 +2039,7 @@ bool RecognitionChain::TryEnterRecognition(const cv::Mat& frame_bgr, uint64_t t_
             latched_release_deadline_ms_ = 0;
             if (render_debug)
             {
-                cv::putText(view, "CROSSING RESULT LATCHED -> u",
+                cv::putText(view, "CROSSING RESULT ACTIVE",
                             cv::Point(16, 112), cv::FONT_HERSHEY_SIMPLEX,
                             0.60, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
             }

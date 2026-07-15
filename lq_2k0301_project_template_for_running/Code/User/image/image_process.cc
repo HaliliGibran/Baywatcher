@@ -32,6 +32,9 @@ static bool g_remote_inner_follow_log_active = false;
 static bool g_remote_inner_follow_log_circle = false;
 static bool g_remote_crossing_far_follow_log_active = false;
 static FollowLine g_remote_crossing_far_follow_log_mode = FollowLine::MIXED;
+static bool g_remote_crossing_offset_lock_active = false;
+static FollowLine g_remote_crossing_offset_lock_mode = FollowLine::MIXED;
+static bool g_remote_crossing_offset_lock_inner = false;
 static int32_t g_circle_gate_candidate_streak = 0;
 static CircleDirection g_circle_gate_candidate_direction =
     CircleDirection::CIRCLE_DIR_NONE;
@@ -637,20 +640,19 @@ static bool is_circle_running_inner_follow(bool is_left)
 // 功能: 远端 w/s 锁边时，基于锁定侧边线生成绕行 path
 // 类型: 局部功能函数
 // 关键参数: forced_mode-锁定到左/右边线
-// 说明：内外绕都直接跟随对应外推线，不再包含内绕平滑横移等附加链。
+// 说明：十字内使用对应远边线，退出十字后使用对应近边线；两者共用同一推移类型与比例。
 static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 {
     follow_mode = forced_mode;
     midline.preview_curve_split_index = -1;
 
     const bool use_crossing_far_edge =
-        image_remote_recognition_is_sign_loss_hold_active() &&
-        element_type == ElementType::CROSSING &&
         crossing_state != CrossingState::CROSSING_NONE;
     if (use_crossing_far_edge && !if_find_far_line)
     {
         g_remote_crossing_far_follow_log_active = false;
         g_remote_crossing_far_follow_log_mode = FollowLine::MIXED;
+        follow_mode = FollowLine::MIXED;
         return false;
     }
 
@@ -676,7 +678,7 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         if (!g_remote_crossing_far_follow_log_active ||
             g_remote_crossing_far_follow_log_mode != forced_mode)
         {
-            std::printf("[十字绕行] 红色丢失保持，绕行线使用%s远边线\n",
+            std::printf("[十字绕行] 识别绕行线使用%s远边线\n",
                         is_left ? "左侧" : "右侧");
         }
         g_remote_crossing_far_follow_log_active = true;
@@ -690,6 +692,10 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 
     if (src->pts_resample_count <= 0)
     {
+        if (use_crossing_far_edge)
+        {
+            follow_mode = FollowLine::MIXED;
+        }
         return false;
     }
 
@@ -699,11 +705,17 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
          circle_direction == CircleDirection::CIRCLE_DIR_RIGHT);
     const bool circle_inner_follow =
         circle_running && is_circle_running_inner_follow(is_left);
+    const bool use_crossing_offset_lock =
+        !circle_running &&
+        g_remote_crossing_offset_lock_active &&
+        g_remote_crossing_offset_lock_mode == forced_mode;
     const float initial_offset_ratio = circle_running
         ? (circle_inner_follow
             ? BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO
             : BW_REMOTE_FOLLOW_CIRCLE_OUTER_OFFSET_RATIO)
-        : BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO;
+        : (use_crossing_offset_lock && g_remote_crossing_offset_lock_inner
+            ? BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO
+            : BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO);
 
     float forced_line[PT_MAXLEN][2] = {};
     int32_t forced_count = 0;
@@ -713,13 +725,20 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
                                initial_offset_ratio);
     if (forced_count <= 0)
     {
+        if (use_crossing_far_edge)
+        {
+            follow_mode = FollowLine::MIXED;
+        }
         return false;
     }
 
     const bool inner_follow = circle_running
         ? circle_inner_follow
-        : is_remote_follow_inner(is_left, forced_line, forced_count);
-    if (inner_follow && !circle_running)
+        : (use_crossing_offset_lock
+            ? g_remote_crossing_offset_lock_inner
+            : is_remote_follow_inner(is_left, forced_line, forced_count));
+    if (inner_follow && !circle_running &&
+        !(use_crossing_offset_lock && g_remote_crossing_offset_lock_inner))
     {
         forced_count = 0;
         BuildRemoteFollowOuterLine(is_left,
@@ -728,6 +747,10 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
                                    BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO);
         if (forced_count <= 0)
         {
+            if (use_crossing_far_edge)
+            {
+                follow_mode = FollowLine::MIXED;
+            }
             return false;
         }
     }
@@ -737,7 +760,18 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 
     if (midline.mid_count <= 0 || midline.path_count <= 0)
     {
+        if (use_crossing_far_edge)
+        {
+            follow_mode = FollowLine::MIXED;
+        }
         return false;
+    }
+
+    if (use_crossing_far_edge && !use_crossing_offset_lock)
+    {
+        g_remote_crossing_offset_lock_active = true;
+        g_remote_crossing_offset_lock_mode = forced_mode;
+        g_remote_crossing_offset_lock_inner = inner_follow;
     }
 
     if (inner_follow &&
@@ -1093,6 +1127,14 @@ void img_processing(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     FollowLine forced_follow_mode = FollowLine::MIXED;
     const bool remote_follow_locked =
         image_remote_recognition_get_forced_follow_mode(&forced_follow_mode);
+    if (!remote_follow_locked ||
+        (g_remote_crossing_offset_lock_active &&
+         g_remote_crossing_offset_lock_mode != forced_follow_mode))
+    {
+        g_remote_crossing_offset_lock_active = false;
+        g_remote_crossing_offset_lock_mode = FollowLine::MIXED;
+        g_remote_crossing_offset_lock_inner = false;
+    }
     bool remote_follow_override_applied = false;
     if (remote_follow_locked && !zebra_special_lock)
     {

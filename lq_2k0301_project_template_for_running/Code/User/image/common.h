@@ -412,7 +412,7 @@
 #endif
 
 // 十字内提前识别总开关。开启后运行板把 CROSSING_IN/RUNNING 发送给识别板，
-// 识别板可在无边线时提前推理，但识别结果要等退出十字后才发送。
+// 识别板可在无边线时推理，并在结果完成后立即使用十字远边线绕行。
 #ifndef BW_CROSSING_RECOGNITION_EARLY_ENABLE
 #define BW_CROSSING_RECOGNITION_EARLY_ENABLE 1
 #endif
