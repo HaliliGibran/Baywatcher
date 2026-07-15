@@ -709,12 +709,16 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         !circle_running &&
         g_remote_crossing_offset_lock_active &&
         g_remote_crossing_offset_lock_mode == forced_mode;
+    const bool use_crossing_offset_profile =
+        use_crossing_far_edge || use_crossing_offset_lock;
     const float initial_offset_ratio = circle_running
         ? (circle_inner_follow
             ? BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO
             : BW_REMOTE_FOLLOW_CIRCLE_OUTER_OFFSET_RATIO)
-        : (use_crossing_offset_lock && g_remote_crossing_offset_lock_inner
-            ? BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO
+        : (use_crossing_offset_profile
+            ? (use_crossing_offset_lock && g_remote_crossing_offset_lock_inner
+                ? BW_REMOTE_FOLLOW_CROSSING_INNER_OFFSET_RATIO
+                : BW_REMOTE_FOLLOW_CROSSING_OUTER_OFFSET_RATIO)
             : BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO);
 
     float forced_line[PT_MAXLEN][2] = {};
@@ -744,7 +748,9 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         BuildRemoteFollowOuterLine(is_left,
                                    src->pts_resample, &src->pts_resample_count,
                                    forced_line, &forced_count,
-                                   BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO);
+                                   use_crossing_offset_profile
+                                       ? BW_REMOTE_FOLLOW_CROSSING_INNER_OFFSET_RATIO
+                                       : BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO);
         if (forced_count <= 0)
         {
             if (use_crossing_far_edge)

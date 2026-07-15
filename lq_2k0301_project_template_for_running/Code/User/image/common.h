@@ -322,6 +322,18 @@
 #define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.05f
 #endif
 
+// 十字内识别绕行的外绕推移比例。
+// 十字内远边线及退出十字后的近边线，在同一次绕行中都使用该值。
+#ifndef BW_REMOTE_FOLLOW_CROSSING_OUTER_OFFSET_RATIO
+#define BW_REMOTE_FOLLOW_CROSSING_OUTER_OFFSET_RATIO 0.10f
+#endif
+
+// 十字内识别绕行的内绕推移比例。
+// 内外绕类型在十字远线首次成功时锁定，切换近线后不会改变推移量。
+#ifndef BW_REMOTE_FOLLOW_CROSSING_INNER_OFFSET_RATIO
+#define BW_REMOTE_FOLLOW_CROSSING_INNER_OFFSET_RATIO 0.05f
+#endif
+
 // 外绕时左右轮目标平均速度的倍率。
 // 只缩放两轮目标速度的平均值，左右轮差速量保持不变；1.0 表示不减速。
 #ifndef BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO
