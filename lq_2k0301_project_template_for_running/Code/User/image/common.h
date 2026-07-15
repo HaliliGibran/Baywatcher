@@ -325,7 +325,7 @@
 // 十字内识别绕行的外绕推移比例。
 // 十字内远边线及退出十字后的近边线，在同一次绕行中都使用该值。
 #ifndef BW_REMOTE_FOLLOW_CROSSING_OUTER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_CROSSING_OUTER_OFFSET_RATIO 0.10f
+#define BW_REMOTE_FOLLOW_CROSSING_OUTER_OFFSET_RATIO 0.15f
 #endif
 
 // 十字内识别绕行的内绕推移比例。
