@@ -319,19 +319,19 @@
 // 内绕时，锁定边线向外推的赛道宽比例。
 // 内绕比外绕更容易撞目标板，因此默认比 BW_REMOTE_FOLLOW_OUTER_OFFSET_RATIO 大。
 #ifndef BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO
-#define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.01f
+#define BW_REMOTE_FOLLOW_INNER_OFFSET_RATIO 0.05f
 #endif
 
 // 外绕时左右轮目标平均速度的倍率。
 // 只缩放两轮目标速度的平均值，左右轮差速量保持不变；1.0 表示不减速。
 #ifndef BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO
-#define BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO 0.50f
+#define BW_REMOTE_FOLLOW_OUTER_AVERAGE_SPEED_RATIO 0.60f
 #endif
 
 // 内绕时左右轮目标平均速度的倍率。
 // 只缩放两轮目标速度的平均值，左右轮差速量保持不变。
 #ifndef BW_REMOTE_FOLLOW_INNER_AVERAGE_SPEED_RATIO
-#define BW_REMOTE_FOLLOW_INNER_AVERAGE_SPEED_RATIO 0.46f
+#define BW_REMOTE_FOLLOW_INNER_AVERAGE_SPEED_RATIO 0.6f
 #endif
 
 // 内外绕共用的小角解除减速阈值（度）。
@@ -487,7 +487,7 @@
 // 调大：u 阶段更快，更接近普通速度。
 // 调小：u 阶段更稳，但车更慢。
 #ifndef BW_REMOTE_U_SLOWDOWN_RATIO
-#define BW_REMOTE_U_SLOWDOWN_RATIO 0.5f
+#define BW_REMOTE_U_SLOWDOWN_RATIO 0.6f
 #endif
 
 // 收到 c 后的强制停车级速度上限。
