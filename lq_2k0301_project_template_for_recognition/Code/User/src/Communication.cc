@@ -2,6 +2,10 @@
 #include "common.h"
 #include <stdio.h>
 
+#if BW_RECOG_NON_RESULT_LOG_ENABLE == 0
+#define printf(...) ((void)0)
+#endif
+
 // ==================== 双板通信实现 ====================
 BoardComm comm;
 

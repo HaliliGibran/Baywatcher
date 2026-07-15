@@ -20,6 +20,8 @@ using steady_clock_t = std::chrono::steady_clock;
 using steady_time_point_t = std::chrono::time_point<steady_clock_t>;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
+constexpr bool kRecognitionNonResultLog =
+    (BW_RECOG_NON_RESULT_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultDetailLog =
     kRecognitionResultLog && (BW_RECOG_RESULT_DISPLAY_ONLY_ENABLE == 0);
 constexpr bool kRecognitionUToResultTimingLog = (BW_RECOG_U_TO_RESULT_TIMING_LOG_ENABLE != 0);
@@ -1044,18 +1046,21 @@ void RunRecognitionBoard(bool stream_enabled, bool recognition_enabled_by_switch
                 manual_cycle_finished = false;
                 view.release();
             }
-            const char* gate_text = gate_blocked
-                ? "BLOCK，识别链已清空"
-                : (crossing_early_mode
-                       ? "ALLOW_CROSSING，启用十字无边线提前识别"
-                       : (recognition_gate.circle_running
-                              ? "ALLOW_CIRCLE，启用环岛质量门控"
-                              : "ALLOW，使用普通识别条件"));
-            std::cout << "[识别门控] "
-                      << gate_text
-                      << ", seq=" << static_cast<int>(recognition_gate.last_seq)
-                      << (gate_stale_fail_open ? ", 原因=门控心跳超时自动放行" : "")
-                      << std::endl;
+            if (kRecognitionNonResultLog)
+            {
+                const char* gate_text = gate_blocked
+                    ? "BLOCK，识别链已清空"
+                    : (crossing_early_mode
+                           ? "ALLOW_CROSSING，启用十字无边线提前识别"
+                           : (recognition_gate.circle_running
+                                  ? "ALLOW_CIRCLE，启用环岛质量门控"
+                                  : "ALLOW，使用普通识别条件"));
+                std::cout << "[识别门控] "
+                          << gate_text
+                          << ", seq=" << static_cast<int>(recognition_gate.last_seq)
+                          << (gate_stale_fail_open ? ", 原因=门控心跳超时自动放行" : "")
+                          << std::endl;
+            }
         }
 
         if (gate_blocked)

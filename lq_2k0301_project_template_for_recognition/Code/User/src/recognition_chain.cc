@@ -3,15 +3,11 @@
 #include "common.h"
 #include "image_switch_utils.h"
 #include "recognition_mlp_weights.h"
-#include "recognition_result_output.h"
 #include "recognition_white_reference.h"
 #include "roi_runtime_geometry.h"
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
-#include <fcntl.h>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -32,6 +28,8 @@ constexpr int kRecognitionMaxSearchYExclusive = BW_RECOG_TRIGGER_SEARCH_Y_MAX;
 constexpr uint64_t kRecognitionRecentCandidateHoldMs = BW_RECOG_U_LOSS_HOLD_MS;
 constexpr bool kRecognitionTextLog = (BW_RECOG_TEXT_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultLog = (BW_RECOG_RESULT_LOG_ENABLE != 0);
+constexpr bool kRecognitionNonResultLog =
+    (BW_RECOG_NON_RESULT_LOG_ENABLE != 0);
 constexpr bool kRecognitionResultDisplayOnly =
     (BW_RECOG_RESULT_DISPLAY_ONLY_ENABLE != 0);
 constexpr bool kRecognitionResultDetailLog =
@@ -65,7 +63,6 @@ constexpr const char* kRecognitionModelRootDir =
 constexpr const char* kRecognitionModelName = "rgb32_boardroi8_manual_mlp_128";
 constexpr int kRecognitionModelClassToGrouped[8] = {1, 1, 2, 0, 1, 0, 0, 2};
 constexpr size_t kRecognitionMaxClasses = RecognitionChain::kMaxModelClasses;
-int g_recognition_result_output_fd = -1;
 
 struct CircleMarkerQualityObservation
 {
@@ -1524,72 +1521,6 @@ static void copy_roi_timing_to_perf(const RoiExtractionResult& roi_result,
 
 } // namespace
 
-void ConfigureRecognitionResultOutput()
-{
-    if (BW_RECOG_EXCLUSIVE_RESULT_OUTPUT_ENABLE == 0 ||
-        g_recognition_result_output_fd >= 0)
-    {
-        return;
-    }
-
-    const int result_fd = dup(STDOUT_FILENO);
-    const int null_fd = open("/dev/null", O_WRONLY);
-    std::fflush(stdout);
-    std::fflush(stderr);
-    const bool stdout_silenced =
-        null_fd >= 0 && dup2(null_fd, STDOUT_FILENO) >= 0;
-    const bool stderr_silenced =
-        null_fd >= 0 && dup2(null_fd, STDERR_FILENO) >= 0;
-    if (null_fd >= 0)
-    {
-        close(null_fd);
-    }
-    if (!stdout_silenced)
-    {
-        close(STDOUT_FILENO);
-    }
-    if (!stderr_silenced)
-    {
-        close(STDERR_FILENO);
-    }
-    if (result_fd >= 0)
-    {
-        g_recognition_result_output_fd = result_fd;
-    }
-}
-
-void PrintRecognitionResultLine(const std::string& line)
-{
-    if (BW_RECOG_EXCLUSIVE_RESULT_OUTPUT_ENABLE == 0)
-    {
-        std::cout << line << std::endl;
-        return;
-    }
-    if (g_recognition_result_output_fd < 0)
-    {
-        return;
-    }
-
-    const std::string output = line + "\n";
-    size_t offset = 0;
-    while (offset < output.size())
-    {
-        const ssize_t written = write(
-            g_recognition_result_output_fd,
-            output.data() + offset,
-            output.size() - offset);
-        if (written < 0 && errno == EINTR)
-        {
-            continue;
-        }
-        if (written <= 0)
-        {
-            break;
-        }
-        offset += static_cast<size_t>(written);
-    }
-}
-
 bool RecognitionChain::DefaultEnabled()
 {
     return (BW_ENABLE_RECOGNITION != 0);
@@ -1696,15 +1627,18 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
         (kRecognitionManualMlpCompareOnnx && !file_exists(model_path)))
     {
         enabled_ = false;
-        std::cerr << "[MLP] deployment files missing: classes=" << class_path
-                  << ", calibration=" << calibration_path;
-        if (kRecognitionManualMlpCompareOnnx)
+        if (kRecognitionNonResultLog)
         {
-            std::cerr << ", compare_model=" << model_path;
+            std::cerr << "[MLP] deployment files missing: classes=" << class_path
+                      << ", calibration=" << calibration_path;
+            if (kRecognitionManualMlpCompareOnnx)
+            {
+                std::cerr << ", compare_model=" << model_path;
+            }
+            std::cerr << std::endl;
+            std::cerr << "[MLP] cwd=" << get_current_working_directory()
+                      << ", exe_dir=" << get_executable_directory() << std::endl;
         }
-        std::cerr << std::endl;
-        std::cerr << "[MLP] cwd=" << get_current_working_directory()
-                  << ", exe_dir=" << get_executable_directory() << std::endl;
         return false;
     }
 
@@ -1746,7 +1680,10 @@ bool RecognitionChain::Initialize(bool enabled_by_switch)
     catch (const std::exception& e)
     {
         enabled_ = false;
-        std::cerr << "[MLP] disabled: " << e.what() << std::endl;
+        if (kRecognitionNonResultLog)
+        {
+            std::cerr << "[MLP] disabled: " << e.what() << std::endl;
+        }
     }
 
     if (enabled_)
@@ -1815,7 +1752,7 @@ void RecognitionChain::QueueResultDisplayLine(const std::string& line)
     }
     if (!kRecognitionResultDisplayOnly)
     {
-        PrintRecognitionResultLine(line);
+        std::cout << line << std::endl;
         return;
     }
 
@@ -1855,7 +1792,7 @@ void RecognitionChain::TickResultDisplay(uint64_t t_ms)
         return;
     }
 
-    PrintRecognitionResultLine(pending_result_display_line_);
+    std::cout << pending_result_display_line_ << std::endl;
     result_display_pending_ = false;
     pending_result_display_line_.clear();
     result_display_inactive_since_ms_ = 0;
@@ -2655,8 +2592,11 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                             << ", mode=cached_first_frame_fallback"
                             << ", top1_prob=" << std::fixed << std::setprecision(4)
                             << cached_summary.top1_prob
-                            << ", margin=" << cached_summary.margin
-                            << ", reason=" << reason;
+                            << ", margin=" << cached_summary.margin;
+                if (kRecognitionResultDetailLog)
+                {
+                    result_line << ", reason=" << reason;
+                }
                 QueueResultDisplayLine(result_line.str());
                 if (kRecognitionResultDetailLog)
                 {
@@ -2686,10 +2626,14 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
             ++adaptive_bad_frame_count_;
             if (adaptive_bad_frame_count_ >= kRecognitionAdaptiveTwoFrameMaxBadFrames)
             {
-                const std::string fallback_reason =
-                    std::string("second_frame_roi_timeout:") +
-                    roi_status + ":" + reject_text;
-                return force_cached_first_frame_decision(fallback_reason.c_str());
+                if (kRecognitionResultDetailLog)
+                {
+                    const std::string fallback_reason =
+                        std::string("second_frame_roi_timeout:") +
+                        roi_status + ":" + reject_text;
+                    return force_cached_first_frame_decision(fallback_reason.c_str());
+                }
+                return force_cached_first_frame_decision("second_frame_roi_timeout");
             }
 
             current_vision_code_ = BoardVisionCode::NO_RESULT;
@@ -3056,7 +3000,8 @@ void RecognitionChain::ProcessRecognitionFrame(const cv::Mat& frame_bgr, uint64_
                     << ", cls_ms=" << last_perf_sample_.classify_total_ms
                     << ", top1_prob=" << std::fixed << std::setprecision(4) << prob_summary.top1_prob
                     << ", margin=" << prob_summary.margin;
-        if (forced_two_frame_top1 || !has_final_decision)
+        if (kRecognitionResultDetailLog &&
+            (forced_two_frame_top1 || !has_final_decision))
         {
             result_line << ", reason=" << failure_reason;
         }

@@ -392,15 +392,15 @@
 #define BW_RECOG_RESULT_LOG_ENABLE 1
 #endif
 
+// 非结果日志总开关。0：关闭启动、相机、采光、串口、门控及错误诊断输出。
+// 仅控制日志表达式，不重定向 stdout/stderr，不影响识别和通信。
+#ifndef BW_RECOG_NON_RESULT_LOG_ENABLE
+#define BW_RECOG_NON_RESULT_LOG_ENABLE 0
+#endif
+
 // 只保留最终 [RECOG] result=...，隐藏等待、发包和状态明细；不改变识别与发包行为。
 #ifndef BW_RECOG_RESULT_DISPLAY_ONLY_ENABLE
 #define BW_RECOG_RESULT_DISPLAY_ONLY_ENABLE 1
-#endif
-
-// 展示专用终端输出：1 时静默普通 stdout/stderr，仅保留最终延迟识别结果。
-// 排查相机、采光、串口或模型加载问题时改为 0，恢复全部原始日志。
-#ifndef BW_RECOG_EXCLUSIVE_RESULT_OUTPUT_ENABLE
-#define BW_RECOG_EXCLUSIVE_RESULT_OUTPUT_ENABLE 1
 #endif
 
 // 最终结果锁存解除后继续等待的日志静默时间；只延迟终端输出，不延迟识别或发包。

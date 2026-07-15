@@ -1,6 +1,5 @@
 #include "main.hpp"
 #include "recognition_chain.h"
-#include "recognition_result_output.h"
 #include "recognition_runtime.h"
 #include "roi_capture_runtime.h"
 #include "stream_chain.h"
@@ -19,6 +18,11 @@
 #include <vector>
 
 using namespace cv;
+
+#if BW_RECOG_NON_RESULT_LOG_ENABLE == 0
+// main.cpp 中的 printf 全部是启动/采光/相机/串口诊断，不参与业务逻辑。
+#define printf(...) ((void)0)
+#endif
 
 // ==================== 全局对象与外部声明 ====================
 std::unique_ptr<lq_camera_ex> camera;
@@ -725,8 +729,6 @@ void system_init()
 // ==================== 主函数 ====================
 int main(int argc, char** argv)
 {
-    ConfigureRecognitionResultOutput();
-
     // 系统初始化
     system_init();
 
