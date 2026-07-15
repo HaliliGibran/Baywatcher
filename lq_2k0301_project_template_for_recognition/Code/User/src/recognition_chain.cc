@@ -3,11 +3,15 @@
 #include "common.h"
 #include "image_switch_utils.h"
 #include "recognition_mlp_weights.h"
+#include "recognition_result_output.h"
 #include "recognition_white_reference.h"
 #include "roi_runtime_geometry.h"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <fcntl.h>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -61,6 +65,7 @@ constexpr const char* kRecognitionModelRootDir =
 constexpr const char* kRecognitionModelName = "rgb32_boardroi8_manual_mlp_128";
 constexpr int kRecognitionModelClassToGrouped[8] = {1, 1, 2, 0, 1, 0, 0, 2};
 constexpr size_t kRecognitionMaxClasses = RecognitionChain::kMaxModelClasses;
+int g_recognition_result_output_fd = -1;
 
 struct CircleMarkerQualityObservation
 {
@@ -1519,6 +1524,72 @@ static void copy_roi_timing_to_perf(const RoiExtractionResult& roi_result,
 
 } // namespace
 
+void ConfigureRecognitionResultOutput()
+{
+    if (BW_RECOG_EXCLUSIVE_RESULT_OUTPUT_ENABLE == 0 ||
+        g_recognition_result_output_fd >= 0)
+    {
+        return;
+    }
+
+    const int result_fd = dup(STDOUT_FILENO);
+    const int null_fd = open("/dev/null", O_WRONLY);
+    std::fflush(stdout);
+    std::fflush(stderr);
+    const bool stdout_silenced =
+        null_fd >= 0 && dup2(null_fd, STDOUT_FILENO) >= 0;
+    const bool stderr_silenced =
+        null_fd >= 0 && dup2(null_fd, STDERR_FILENO) >= 0;
+    if (null_fd >= 0)
+    {
+        close(null_fd);
+    }
+    if (!stdout_silenced)
+    {
+        close(STDOUT_FILENO);
+    }
+    if (!stderr_silenced)
+    {
+        close(STDERR_FILENO);
+    }
+    if (result_fd >= 0)
+    {
+        g_recognition_result_output_fd = result_fd;
+    }
+}
+
+void PrintRecognitionResultLine(const std::string& line)
+{
+    if (BW_RECOG_EXCLUSIVE_RESULT_OUTPUT_ENABLE == 0)
+    {
+        std::cout << line << std::endl;
+        return;
+    }
+    if (g_recognition_result_output_fd < 0)
+    {
+        return;
+    }
+
+    const std::string output = line + "\n";
+    size_t offset = 0;
+    while (offset < output.size())
+    {
+        const ssize_t written = write(
+            g_recognition_result_output_fd,
+            output.data() + offset,
+            output.size() - offset);
+        if (written < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        if (written <= 0)
+        {
+            break;
+        }
+        offset += static_cast<size_t>(written);
+    }
+}
+
 bool RecognitionChain::DefaultEnabled()
 {
     return (BW_ENABLE_RECOGNITION != 0);
@@ -1744,7 +1815,7 @@ void RecognitionChain::QueueResultDisplayLine(const std::string& line)
     }
     if (!kRecognitionResultDisplayOnly)
     {
-        std::cout << line << std::endl;
+        PrintRecognitionResultLine(line);
         return;
     }
 
@@ -1784,7 +1855,7 @@ void RecognitionChain::TickResultDisplay(uint64_t t_ms)
         return;
     }
 
-    std::cout << pending_result_display_line_ << std::endl;
+    PrintRecognitionResultLine(pending_result_display_line_);
     result_display_pending_ = false;
     pending_result_display_line_.clear();
     result_display_inactive_since_ms_ = 0;

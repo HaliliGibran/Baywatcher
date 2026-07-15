@@ -1,5 +1,6 @@
 #include "main.hpp"
 #include "recognition_chain.h"
+#include "recognition_result_output.h"
 #include "recognition_runtime.h"
 #include "roi_capture_runtime.h"
 #include "stream_chain.h"
@@ -724,6 +725,8 @@ void system_init()
 // ==================== 主函数 ====================
 int main(int argc, char** argv)
 {
+    ConfigureRecognitionResultOutput();
+
     // 系统初始化
     system_init();
 

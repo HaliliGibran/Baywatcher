@@ -397,6 +397,12 @@
 #define BW_RECOG_RESULT_DISPLAY_ONLY_ENABLE 1
 #endif
 
+// 展示专用终端输出：1 时静默普通 stdout/stderr，仅保留最终延迟识别结果。
+// 排查相机、采光、串口或模型加载问题时改为 0，恢复全部原始日志。
+#ifndef BW_RECOG_EXCLUSIVE_RESULT_OUTPUT_ENABLE
+#define BW_RECOG_EXCLUSIVE_RESULT_OUTPUT_ENABLE 1
+#endif
+
 // 最终结果锁存解除后继续等待的日志静默时间；只延迟终端输出，不延迟识别或发包。
 // 当前结果丢失保持 300ms，再静默 200ms，约 0.5s 后提交同一目标的最后一次结果。
 #ifndef BW_RECOG_RESULT_DISPLAY_QUIET_MS
