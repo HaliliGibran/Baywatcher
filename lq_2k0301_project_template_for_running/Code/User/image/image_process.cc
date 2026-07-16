@@ -640,7 +640,8 @@ static bool is_circle_running_inner_follow(bool is_left)
 // 功能: 远端 w/s 锁边时，基于锁定侧边线生成绕行 path
 // 类型: 局部功能函数
 // 关键参数: forced_mode-锁定到左/右边线
-// 说明：CROSSING_IN 红色仍可见时使用近线；红色丢失保持及 RUNNING 使用远线。
+// 说明：CROSSING_IN 红色仍可见时使用近线，并在对应侧角点处截断；
+// 红色丢失保持及 RUNNING 使用远线。
 // 十字内外切线时共用并锁定同一推移类型与比例。
 static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 {
@@ -705,6 +706,21 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         return false;
     }
 
+    int32_t source_count = src->pts_resample_count;
+    if (crossing_in_visible_sign)
+    {
+        if (!src->corner_found ||
+            src->corner_id < 0 ||
+            src->corner_id >= source_count)
+        {
+            follow_mode = FollowLine::MIXED;
+            return false;
+        }
+
+        // 近线点序从车端向远端，保留角点本身，排除角点后的十字内部线段。
+        source_count = src->corner_id + 1;
+    }
+
     const bool circle_running =
         circle_state == CircleState::CIRCLE_RUNNING &&
         (circle_direction == CircleDirection::CIRCLE_DIR_LEFT ||
@@ -730,7 +746,7 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
     float forced_line[PT_MAXLEN][2] = {};
     int32_t forced_count = 0;
     BuildRemoteFollowOuterLine(is_left,
-                               src->pts_resample, &src->pts_resample_count,
+                               src->pts_resample, &source_count,
                                forced_line, &forced_count,
                                initial_offset_ratio);
     if (forced_count <= 0)
@@ -752,7 +768,7 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
     {
         forced_count = 0;
         BuildRemoteFollowOuterLine(is_left,
-                                   src->pts_resample, &src->pts_resample_count,
+                                   src->pts_resample, &source_count,
                                    forced_line, &forced_count,
                                    use_crossing_offset_profile
                                        ? BW_REMOTE_FOLLOW_CROSSING_INNER_OFFSET_RATIO
