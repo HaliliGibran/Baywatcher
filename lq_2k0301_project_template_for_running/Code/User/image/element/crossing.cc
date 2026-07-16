@@ -35,6 +35,45 @@ static int g_far_line_miss_counter = 0;
 static bool g_far_line_cache_valid = false;
 static pts_well_processed g_far_line_cache_left = {};
 static pts_well_processed g_far_line_cache_right = {};
+static int g_far_line_start_y_limit = IMAGE_H;
+
+static int crossing_near_line_top_y(const pts_well_processed& line)
+{
+    int top_y = IMAGE_H;
+    int count = line.pts_count;
+    if (count > PT_MAXLEN) count = PT_MAXLEN;
+    for (int i = 0; i < count; ++i)
+    {
+        const int y = line.pts[i][0];
+        if (y >= 0 && y < top_y)
+        {
+            top_y = y;
+        }
+    }
+    return top_y;
+}
+
+static int crossing_near_top_y()
+{
+    const int left_top_y = crossing_near_line_top_y(pts_left);
+    const int right_top_y = crossing_near_line_top_y(pts_right);
+    return (left_top_y < right_top_y) ? left_top_y : right_top_y;
+}
+
+static bool crossing_cached_far_start_within_current_limit()
+{
+    if (g_far_line_start_y_limit >= IMAGE_H)
+    {
+        return true;
+    }
+    if (g_far_line_cache_left.pts_count <= 0 ||
+        g_far_line_cache_right.pts_count <= 0)
+    {
+        return false;
+    }
+    return g_far_line_cache_left.pts[0][0] <= g_far_line_start_y_limit &&
+           g_far_line_cache_right.pts[0][0] <= g_far_line_start_y_limit;
+}
 
 static void crossing_reset_far_line_hold()
 {
@@ -55,7 +94,8 @@ static void crossing_finalize_far_line_search()
 
     if (g_far_line_cache_valid &&
         FRAME_THRESHOLD_crossing_far_line_miss_hold_counter > 0 &&
-        g_far_line_miss_counter < FRAME_THRESHOLD_crossing_far_line_miss_hold_counter)
+        g_far_line_miss_counter < FRAME_THRESHOLD_crossing_far_line_miss_hold_counter &&
+        crossing_cached_far_start_within_current_limit())
     {
         pts_far_left = g_far_line_cache_left;
         pts_far_right = g_far_line_cache_right;
@@ -246,6 +286,8 @@ void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
 {
     image_reset_far_line_state();
     crossing_far_line_search_scope_t finalize_search;
+    const int near_top_y = crossing_near_top_y();
+    g_far_line_start_y_limit = near_top_y;
 
 
     if(pts_left.corner_found && pts_right.corner_found && pts_left.corner_id >=9 && pts_right.corner_id >=9)
@@ -315,7 +357,9 @@ void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
             return;
         }
 
-        const int y_limit = (ly > ry) ? ly : ry; // 只在“角点以上(更远处)”尝试
+        // 原图 y 越小位置越高；双角点分支只在最高角点及其上方尝试。
+        const int y_limit = (ly < ry) ? ly : ry;
+        g_far_line_start_y_limit = y_limit;
 
         // 每步大约 1 像素，最多向前试探到图像上半部分。
         const int max_step = IMAGE_H;
@@ -372,15 +416,10 @@ void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
     else
     {
         int start_y = SET_IMAGE_CORE_Y;
-        int start_y1 = IMAGE_H;
-        int start_y2 = IMAGE_H;
-        if(pts_left.pts_count > 0)
-            start_y1 = pts_left.pts[clip(pts_left.pts_count - 1 , 0 , pts_left.pts_count - 1)][0] ;
-        if(pts_right.pts_count > 0)
-            start_y2 = pts_right.pts[clip(pts_right.pts_count - 1 , 0 , pts_right.pts_count - 1)][0] ;
-
-        int start_y_min = (start_y1 < start_y2)? start_y1 : start_y2;
-        start_y = (start_y_min < start_y)? start_y_min : start_y;
+        if (near_top_y < start_y)
+        {
+            start_y = near_top_y;
+        }
         for (; start_y > 20; start_y--)
         {
             const int start_x = SET_IMAGE_CORE_X;
