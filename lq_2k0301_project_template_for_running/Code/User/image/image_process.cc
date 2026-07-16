@@ -327,16 +327,36 @@ static track_search_result_t process_track_edges(const uint8_t (&img)[IMAGE_H][I
     reset_pts(pts_right);
 
     int search_y = SET_IMAGE_CORE_Y;
-    if (vehicle_active)
+    const bool abandon_bypass_skip_black =
+        BW_ABANDON_BYPASS_SKIP_CENTER_BLACK_ENABLE != 0;
+    if (vehicle_active || abandon_bypass_skip_black)
     {
         if (!try_find_vehicle_search_start_y(img, &search_y))
         {
-            return TRACK_SEARCH_VEHICLE_FALLBACK_HOLD;
+            return vehicle_active
+                ? TRACK_SEARCH_VEHICLE_FALLBACK_HOLD
+                : TRACK_SEARCH_OK;
         }
     }
 
-    SearchLine_Lpt(img, SET_IMAGE_CORE_X, search_y, pts_left.pts, &pts_left.pts_count);
-    SearchLine_Rpt(img, SET_IMAGE_CORE_X, search_y, pts_right.pts, &pts_right.pts_count);
+    if (abandon_bypass_skip_black)
+    {
+        bool left_start_found = false;
+        bool right_start_found = false;
+        int32_t left_start_pt[2] = {0, 0};
+        int32_t right_start_pt[2] = {0, 0};
+        SearchLine_LptEx(img, SET_IMAGE_CORE_X, search_y,
+                         pts_left.pts, &pts_left.pts_count,
+                         true, &left_start_found, left_start_pt, true);
+        SearchLine_RptEx(img, SET_IMAGE_CORE_X, search_y,
+                         pts_right.pts, &pts_right.pts_count,
+                         true, &right_start_found, right_start_pt, true);
+    }
+    else
+    {
+        SearchLine_Lpt(img, SET_IMAGE_CORE_X, search_y, pts_left.pts, &pts_left.pts_count);
+        SearchLine_Rpt(img, SET_IMAGE_CORE_X, search_y, pts_right.pts, &pts_right.pts_count);
+    }
 
     process_line(true, pts_left);
     process_line(false, pts_right);

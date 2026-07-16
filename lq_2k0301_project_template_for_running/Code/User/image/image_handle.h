@@ -34,13 +34,15 @@ void SearchLineAdaptive_Right(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h,
 // 关键参数: climb_line-是否执行爬线, out_find_start_pt/out_start_pt-起点输出
 void SearchLine_LptEx(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, int32_t start_y,
                      int32_t (&pts)[PT_MAXLEN][2], int32_t* pts_count,
-                     bool climb_line, bool* out_find_start_pt, int32_t (&out_start_pt)[2]);
+                     bool climb_line, bool* out_find_start_pt, int32_t (&out_start_pt)[2],
+                     bool search_current_row = false);
 // 功能: 右侧寻线扩展版（可只找起点或完整爬线）
 // 类型: 图像处理函数
 // 关键参数: climb_line-是否执行爬线, out_find_start_pt/out_start_pt-起点输出
 void SearchLine_RptEx(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, int32_t start_y,
                      int32_t (&pts)[PT_MAXLEN][2], int32_t* pts_count,
-                     bool climb_line, bool* out_find_start_pt, int32_t (&out_start_pt)[2]);
+                     bool climb_line, bool* out_find_start_pt, int32_t (&out_start_pt)[2],
+                     bool search_current_row = false);
 
 // 功能: 点列重采样（严格等距）
 // 类型: 图像处理函数

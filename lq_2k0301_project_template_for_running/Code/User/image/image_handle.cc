@@ -237,7 +237,8 @@ void SearchLineAdaptive_Right(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t h,
 // 关键参数: climb_line-是否爬线, out_find_start_pt/out_start_pt-起点输出
 void SearchLine_LptEx(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, int32_t start_y,
                      int32_t (&pts)[PT_MAXLEN][2], int32_t* pts_count,
-                     bool climb_line, bool* out_find_start_pt, int32_t (&out_start_pt)[2])
+                     bool climb_line, bool* out_find_start_pt, int32_t (&out_start_pt)[2],
+                     bool search_current_row)
 {
     if (pts_count == nullptr)
     {
@@ -259,7 +260,7 @@ void SearchLine_LptEx(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, i
     if (y_cur > IMAGE_H - 1) y_cur = IMAGE_H - 1;
     const uint8_t* row = img[y_cur];
 
-    if(element_type != ElementType::CROSSING)
+    if(element_type != ElementType::CROSSING && !search_current_row)
     {
         while ((!found) && y_cur > IMAGE_H * 2 / 3)
         {
@@ -290,7 +291,7 @@ void SearchLine_LptEx(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, i
         }
 
     }
-    else if(element_type == ElementType::CROSSING)
+    else
     {
         for (int i = x_cur - 1; i > 1; --i)
         {
@@ -340,7 +341,8 @@ void SearchLine_Lpt(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, int
 // 关键参数: climb_line-是否爬线, out_find_start_pt/out_start_pt-起点输出
 void SearchLine_RptEx(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, int32_t start_y,
                      int32_t (&pts)[PT_MAXLEN][2], int32_t* pts_count,
-                     bool climb_line, bool* out_find_start_pt, int32_t (&out_start_pt)[2])
+                     bool climb_line, bool* out_find_start_pt, int32_t (&out_start_pt)[2],
+                     bool search_current_row)
 {
     if (pts_count == nullptr)
     {
@@ -363,7 +365,7 @@ void SearchLine_RptEx(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, i
     const uint8_t* row = img[y_cur];
 
     // 十字寻远线需要在任意 y 上探测起点：不做“只在底部 1/3 扫描”的限制。
-    if (element_type == ElementType::CROSSING)
+    if (element_type == ElementType::CROSSING || search_current_row)
     {
         for (int i = x_cur; i < IMAGE_W - 2; ++i)
         {

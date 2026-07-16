@@ -27,6 +27,13 @@
 #define BW_REMOTE_FOLLOW_ELEMENT_TRANSITION_ENABLE 0
 #endif
 
+// “放弃绕行躲黑块”总开关。
+// 0：保持当前行为，仅 v 使用中央黑块跳过寻线；
+// 1：普通寻线也先跳过中央黑块，再走原有左右边线、中线和 path 流程。
+#ifndef BW_ABANDON_BYPASS_SKIP_CENTER_BLACK_ENABLE
+#define BW_ABANDON_BYPASS_SKIP_CENTER_BLACK_ENABLE 0
+#endif
+
 // pure_angle 预瞄图像行过渡总开关。
 // 使用位置：image_handle.cc / pure_angle_apply_preview_transition()。
 // - 1：限制 preview_img_y 帧间跳变。
