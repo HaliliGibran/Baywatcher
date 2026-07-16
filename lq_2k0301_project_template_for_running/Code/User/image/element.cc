@@ -445,9 +445,14 @@ void element_detect()
         --protect;
     }
 
-    // 误入复位检测：在环岛/十字状态时，如果两侧边线都判定为“大直线”，则必然不是环岛/十字，直接复位。
+    // 误入复位检测：保持原双侧直线前提；十字中任一侧仍有角点时禁止复位。
     // 注：这里使用 process_line 输出的 is_straight（整体判直道）而不是 window_is_straight（局部窗口），避免误判/迟滞。
-    if ((last == ElementType::CIRCLE || last == ElementType::CROSSING) && pts_left.is_straight && pts_right.is_straight)
+    const bool crossing_corner_blocks_straight_reset =
+        last == ElementType::CROSSING &&
+        (pts_left.corner_found || pts_right.corner_found);
+    if ((last == ElementType::CIRCLE || last == ElementType::CROSSING) &&
+        !crossing_corner_blocks_straight_reset &&
+        pts_left.is_straight && pts_right.is_straight)
     {
         // 强制复位所有状态与计数
         set_runtime_normal_state(false, false);

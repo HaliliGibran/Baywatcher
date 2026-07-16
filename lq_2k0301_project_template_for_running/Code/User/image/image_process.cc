@@ -640,8 +640,8 @@ static bool is_circle_running_inner_follow(bool is_left)
 // 功能: 远端 w/s 锁边时，基于锁定侧边线生成绕行 path
 // 类型: 局部功能函数
 // 关键参数: forced_mode-锁定到左/右边线
-// 说明：CROSSING_IN 红色仍可见时使用近线，并在对应侧角点处截断；
-// 红色丢失保持及 RUNNING 使用远线。
+// 说明：CROSSING_IN 红色仍可见时优先使用近线，并在对应侧角点处截断；
+// 对应角点无效、红色丢失保持或进入 RUNNING 时使用远线。
 // 十字内外切线时共用并锁定同一推移类型与比例。
 static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 {
@@ -653,30 +653,45 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
     const bool crossing_in_visible_sign =
         crossing_state == CrossingState::CROSSING_IN &&
         image_remote_recognition_is_visible_sign_follow_active();
-    const bool use_crossing_far_edge =
+    bool use_crossing_far_edge =
         crossing_active && !crossing_in_visible_sign;
+
+    bool is_left = false;
+    if (forced_mode == FollowLine::MIDLEFT)
+    {
+        is_left = true;
+    }
+    else if (forced_mode == FollowLine::MIDRIGHT)
+    {
+        is_left = false;
+    }
+    else
+    {
+        return false;
+    }
+
+    pts_well_processed* src = is_left
+        ? (use_crossing_far_edge ? &pts_far_left : &pts_left)
+        : (use_crossing_far_edge ? &pts_far_right : &pts_right);
+    if (crossing_in_visible_sign && !use_crossing_far_edge)
+    {
+        const bool near_corner_valid =
+            src->pts_resample_count > 0 &&
+            src->corner_found &&
+            src->corner_id >= 0 &&
+            src->corner_id < src->pts_resample_count;
+        if (!near_corner_valid)
+        {
+            use_crossing_far_edge = true;
+            src = is_left ? &pts_far_left : &pts_far_right;
+        }
+    }
+
     if (use_crossing_far_edge && !if_find_far_line)
     {
         g_remote_crossing_far_follow_log_active = false;
         g_remote_crossing_far_follow_log_mode = FollowLine::MIXED;
         follow_mode = FollowLine::MIXED;
-        return false;
-    }
-
-    pts_well_processed* src = nullptr;
-    bool is_left = false;
-    if (forced_mode == FollowLine::MIDLEFT)
-    {
-        src = use_crossing_far_edge ? &pts_far_left : &pts_left;
-        is_left = true;
-    }
-    else if (forced_mode == FollowLine::MIDRIGHT)
-    {
-        src = use_crossing_far_edge ? &pts_far_right : &pts_right;
-        is_left = false;
-    }
-    else
-    {
         return false;
     }
 
@@ -707,16 +722,8 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
     }
 
     int32_t source_count = src->pts_resample_count;
-    if (crossing_in_visible_sign)
+    if (crossing_in_visible_sign && !use_crossing_far_edge)
     {
-        if (!src->corner_found ||
-            src->corner_id < 0 ||
-            src->corner_id >= source_count)
-        {
-            follow_mode = FollowLine::MIXED;
-            return false;
-        }
-
         // 近线点序从车端向远端，保留角点本身，排除角点后的十字内部线段。
         source_count = src->corner_id + 1;
     }
