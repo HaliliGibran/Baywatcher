@@ -31,7 +31,7 @@
 // 0：保持当前行为，仅 v 使用中央黑块跳过寻线；
 // 1：普通寻线也先跳过中央黑块，再走原有左右边线、中线和 path 流程。
 #ifndef BW_ABANDON_BYPASS_SKIP_CENTER_BLACK_ENABLE
-#define BW_ABANDON_BYPASS_SKIP_CENTER_BLACK_ENABLE 0
+#define BW_ABANDON_BYPASS_SKIP_CENTER_BLACK_ENABLE 1
 #endif
 
 // pure_angle 预瞄图像行过渡总开关。
@@ -305,7 +305,7 @@
 // - 调大：更不容易把同一条斑马线重复计数，但下一次真实斑马线必须离本次更远。
 // - 调小：更灵敏，但更容易把同一条斑马线误计为下一次。
 #ifndef BW_ZEBRA_RECOUNT_SLEEP_MS
-#define BW_ZEBRA_RECOUNT_SLEEP_MS 5000
+#define BW_ZEBRA_RECOUNT_SLEEP_MS 12000
 #endif
 
 #pragma endregion
