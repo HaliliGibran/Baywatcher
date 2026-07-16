@@ -27,6 +27,16 @@
 #define BW_RECOG_REQUIRE_MANUAL_START 0
 #endif
 
+// [开关] 接收并执行运行板环岛识别门控。
+#ifndef BW_RECOG_CIRCLE_GATE_ENABLE
+#define BW_RECOG_CIRCLE_GATE_ENABLE 1
+#endif
+
+// [开关] 收到 ALLOW_CROSSING 后启用十字无边线提前识别。
+#ifndef BW_RECOG_CROSSING_NO_LINE_ENABLE
+#define BW_RECOG_CROSSING_NO_LINE_ENABLE 0
+#endif
+
 #pragma endregion
 
 #pragma region B. 现场常调：软件盲盒任务
@@ -470,21 +480,10 @@
 #define BW_RECOG_STATE_HEARTBEAT_INTERVAL_MS 50
 #endif
 
-// 运行板环岛识别门控。BLOCK 时识别板清空整条识别链并只输出 n。
-#ifndef BW_RECOG_CIRCLE_GATE_ENABLE
-#define BW_RECOG_CIRCLE_GATE_ENABLE 1
-#endif
-
 // BLOCK 后是否允许因门控心跳超时自动恢复 ALLOW。
 // 设为 0：关闭超时自动放行，必须收到运行板明确 ALLOW 才解除环岛门控。
 #ifndef BW_RECOG_CIRCLE_GATE_STALE_MS
 #define BW_RECOG_CIRCLE_GATE_STALE_MS 0
-#endif
-
-// 十字内无边线提前识别。只在收到运行板 ALLOW_CROSSING 时生效；
-// 使用严格红阈值和画面中心门控，推理完成后立即发送结果并允许十字内绕行。
-#ifndef BW_RECOG_CROSSING_NO_LINE_ENABLE
-#define BW_RECOG_CROSSING_NO_LINE_ENABLE 1
 #endif
 
 // --- 概率阈值、ROI 几何与相对阈值 ---

@@ -264,11 +264,14 @@ bool image_remote_recognition_get_speed_cap_override(float* out_cap);
 // 说明：
 // - 普通赛道 w/s/v 冻结状态机；十字 IN/RUNNING 内不冻结，允许十字继续推进。
 // - u 不保留绕行路线，也不冻结状态机。
-// - h 保留已有绕行路线，但不冻结状态机，允许在红色丢失保持期进入十字。
+// - h 保留已有绕行路线；是否允许元素状态切换由 BW_REMOTE_FOLLOW_ELEMENT_TRANSITION_ENABLE 控制。
 bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms);
 
-// 当前是否为已有绕行结果的红色丢失保持窗口；该窗口允许元素状态机推进。
+// 当前是否为已有绕行结果的红色丢失保持窗口。
 bool image_remote_recognition_is_sign_loss_hold_active();
+
+// 当前 w/s 绕行结果对应的标识红色是否仍可见；收到 h 后返回 false。
+bool image_remote_recognition_is_visible_sign_follow_active();
 
 // 功能: 查询当前是否锁定到单边边线跟线
 // 类型: 全局状态查询函数

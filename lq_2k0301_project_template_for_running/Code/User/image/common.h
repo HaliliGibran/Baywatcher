@@ -8,6 +8,25 @@
 
 #pragma region 图像总开关与模式切换
 
+// 环岛识别门控总开关。
+// 1：环岛候选及 BEGIN/IN/OUT/END 阻断识别，RUNNING 使用环岛专用识别条件。
+// 0：不发送环岛专用门控，识别板始终使用普通识别条件。
+#ifndef BW_CIRCLE_RECOGNITION_GATE_ENABLE
+#define BW_CIRCLE_RECOGNITION_GATE_ENABLE 0
+#endif
+
+// 十字内提前识别总开关。
+// 1：CROSSING_IN/RUNNING 通知识别板启用无边线提前识别；0：关闭该特殊链。
+#ifndef BW_CROSSING_RECOGNITION_EARLY_ENABLE
+#define BW_CROSSING_RECOGNITION_EARLY_ENABLE 0
+#endif
+
+// 绕行期间元素状态切换总开关。
+// 1：收到 h 后保留绕行方向，并允许切入十字/环岛；0：保持绕行并冻结元素状态机。
+#ifndef BW_REMOTE_FOLLOW_ELEMENT_TRANSITION_ENABLE
+#define BW_REMOTE_FOLLOW_ELEMENT_TRANSITION_ENABLE 0
+#endif
+
 // pure_angle 预瞄图像行过渡总开关。
 // 使用位置：image_handle.cc / pure_angle_apply_preview_transition()。
 // - 1：限制 preview_img_y 帧间跳变。
@@ -323,13 +342,13 @@
 #endif
 
 // 十字内识别绕行的外绕推移比例。
-// 十字内远边线及退出十字后的近边线，在同一次绕行中都使用该值。
+// CROSSING_IN 的近线、十字远线及退出十字后的近线，在同一次绕行中都使用该值。
 #ifndef BW_REMOTE_FOLLOW_CROSSING_OUTER_OFFSET_RATIO
 #define BW_REMOTE_FOLLOW_CROSSING_OUTER_OFFSET_RATIO 0.15f
 #endif
 
 // 十字内识别绕行的内绕推移比例。
-// 内外绕类型在十字远线首次成功时锁定，切换近线后不会改变推移量。
+// 内外绕类型在十字内首次绕行成功时锁定，后续切换近线/远线不会改变推移量。
 #ifndef BW_REMOTE_FOLLOW_CROSSING_INNER_OFFSET_RATIO
 #define BW_REMOTE_FOLLOW_CROSSING_INNER_OFFSET_RATIO 0.05f
 #endif
@@ -415,19 +434,6 @@
 #endif
 
 // ===== 远端状态保持与减速参数 =====
-
-// 环岛识别门控总开关。
-// 开启后，运行板在环岛候选、BEGIN、IN、OUT、END 阶段阻断识别板；
-// 普通赛道和 CIRCLE_RUNNING 阶段允许识别。
-#ifndef BW_CIRCLE_RECOGNITION_GATE_ENABLE
-#define BW_CIRCLE_RECOGNITION_GATE_ENABLE 0
-#endif
-
-// 十字内提前识别总开关。开启后运行板把 CROSSING_IN/RUNNING 发送给识别板，
-// 识别板可在无边线时推理，并在结果完成后立即使用十字远边线绕行。
-#ifndef BW_CROSSING_RECOGNITION_EARLY_ENABLE
-#define BW_CROSSING_RECOGNITION_EARLY_ENABLE 1
-#endif
 
 // 环岛候选消失或环岛退出后的门控保持时间（毫秒），用于抑制边界抖动。
 #ifndef BW_CIRCLE_RECOGNITION_GATE_HOLD_MS

@@ -349,7 +349,14 @@ void image_remote_recognition_apply_state(BoardVisionCode code,
             std::printf("[绕行保持] 收到h但没有既有绕行方向，忽略\n");
             return;
         }
-        std::printf("[绕行保持] 红色丢失，允许十字状态机推进并保持原绕行方向\n");
+        if (BW_REMOTE_FOLLOW_ELEMENT_TRANSITION_ENABLE != 0)
+        {
+            std::printf("[绕行保持] 红色丢失，允许元素状态机推进并保持原绕行方向\n");
+        }
+        else
+        {
+            std::printf("[绕行保持] 红色丢失，保持原绕行方向并冻结元素状态切换\n");
+        }
         return;
     }
 
@@ -528,7 +535,11 @@ bool image_remote_recognition_should_freeze_state_machine(uint64_t t_ms)
     }
     if (g_remote_recognition.current_code == BoardVisionCode::SIGN_LOSS_HOLD)
     {
-        return false;
+        if (BW_REMOTE_FOLLOW_ELEMENT_TRANSITION_ENABLE != 0)
+        {
+            return false;
+        }
+        return g_remote_recognition.follow_state != remote_follow_state_t::NONE;
     }
 
     if (g_remote_recognition.follow_state == remote_follow_state_t::LEFT_EDGE_ROUTE ||
@@ -545,6 +556,13 @@ bool image_remote_recognition_is_sign_loss_hold_active()
 {
     return !image_circle_recognition_gate_is_blocked() &&
            g_remote_recognition.current_code == BoardVisionCode::SIGN_LOSS_HOLD;
+}
+
+bool image_remote_recognition_is_visible_sign_follow_active()
+{
+    return !image_circle_recognition_gate_is_blocked() &&
+           (g_remote_recognition.current_code == BoardVisionCode::WEAPON ||
+            g_remote_recognition.current_code == BoardVisionCode::SUPPLY);
 }
 
 bool image_remote_recognition_get_forced_follow_mode(FollowLine* out_mode)

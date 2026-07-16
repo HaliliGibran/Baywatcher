@@ -640,14 +640,20 @@ static bool is_circle_running_inner_follow(bool is_left)
 // 功能: 远端 w/s 锁边时，基于锁定侧边线生成绕行 path
 // 类型: 局部功能函数
 // 关键参数: forced_mode-锁定到左/右边线
-// 说明：十字内使用对应远边线，退出十字后使用对应近边线；两者共用同一推移类型与比例。
+// 说明：CROSSING_IN 红色仍可见时使用近线；红色丢失保持及 RUNNING 使用远线。
+// 十字内外切线时共用并锁定同一推移类型与比例。
 static bool build_path_from_remote_follow_override(FollowLine forced_mode)
 {
     follow_mode = forced_mode;
     midline.preview_curve_split_index = -1;
 
-    const bool use_crossing_far_edge =
+    const bool crossing_active =
         crossing_state != CrossingState::CROSSING_NONE;
+    const bool crossing_in_visible_sign =
+        crossing_state == CrossingState::CROSSING_IN &&
+        image_remote_recognition_is_visible_sign_follow_active();
+    const bool use_crossing_far_edge =
+        crossing_active && !crossing_in_visible_sign;
     if (use_crossing_far_edge && !if_find_far_line)
     {
         g_remote_crossing_far_follow_log_active = false;
@@ -710,7 +716,7 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         g_remote_crossing_offset_lock_active &&
         g_remote_crossing_offset_lock_mode == forced_mode;
     const bool use_crossing_offset_profile =
-        use_crossing_far_edge || use_crossing_offset_lock;
+        crossing_active || use_crossing_offset_lock;
     const float initial_offset_ratio = circle_running
         ? (circle_inner_follow
             ? BW_REMOTE_FOLLOW_CIRCLE_INNER_OFFSET_RATIO
@@ -773,7 +779,7 @@ static bool build_path_from_remote_follow_override(FollowLine forced_mode)
         return false;
     }
 
-    if (use_crossing_far_edge && !use_crossing_offset_lock)
+    if (crossing_active && !use_crossing_offset_lock)
     {
         g_remote_crossing_offset_lock_active = true;
         g_remote_crossing_offset_lock_mode = forced_mode;
