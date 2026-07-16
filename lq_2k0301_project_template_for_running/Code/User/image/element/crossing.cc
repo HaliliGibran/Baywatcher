@@ -385,8 +385,10 @@ void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
             int32_t dummy_count = 0;
 
             // 先只找起点，不爬线
-            SearchLine_LptEx(img, start_x, start_y, pts_far_left.pts, &dummy_count, false, &if_find_far_left_start_pt, far_left_start_pt);
-            SearchLine_RptEx(img, start_x, start_y, pts_far_right.pts, &dummy_count, false, &if_find_far_right_start_pt, far_right_start_pt);
+            SearchLine_LptEx(img, start_x, start_y, pts_far_left.pts, &dummy_count,
+                             false, &if_find_far_left_start_pt, far_left_start_pt, false);
+            SearchLine_RptEx(img, start_x, start_y, pts_far_right.pts, &dummy_count,
+                             false, &if_find_far_right_start_pt, far_right_start_pt, false);
 
             if(if_find_far_left_start_pt && if_find_far_right_start_pt)
             {
@@ -431,8 +433,10 @@ void crossing_far_line_check(const uint8_t (&img)[IMAGE_H][IMAGE_W])
             int32_t dummy_count = 0;
 
             // 先只找起点，不爬线
-            SearchLine_LptEx(img, start_x, start_y, pts_far_left.pts, &dummy_count, false, &if_find_far_left_start_pt, far_left_start_pt);
-            SearchLine_RptEx(img, start_x, start_y, pts_far_right.pts, &dummy_count, false, &if_find_far_right_start_pt, far_right_start_pt);
+            SearchLine_LptEx(img, start_x, start_y, pts_far_left.pts, &dummy_count,
+                             false, &if_find_far_left_start_pt, far_left_start_pt, false);
+            SearchLine_RptEx(img, start_x, start_y, pts_far_right.pts, &dummy_count,
+                             false, &if_find_far_right_start_pt, far_right_start_pt, false);
 
             if(if_find_far_left_start_pt && if_find_far_right_start_pt &&
                crossing_far_start_ipm_distance_ok(far_left_start_pt, far_right_start_pt))

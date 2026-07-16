@@ -332,7 +332,8 @@ void SearchLine_Lpt(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, int
 {
     bool dummy_found = false;
     int32_t dummy_pt[2] = {0, 0};
-    SearchLine_LptEx(img, start_x, start_y, pts, pts_count, true, &dummy_found, dummy_pt);
+    SearchLine_LptEx(img, start_x, start_y, pts, pts_count,
+                     true, &dummy_found, dummy_pt, false);
 }
 
 
@@ -436,7 +437,8 @@ void SearchLine_Rpt(const uint8_t (&img)[IMAGE_H][IMAGE_W], int32_t start_x, int
 {
     bool dummy_found = false;
     int32_t dummy_pt[2] = {0, 0};
-    SearchLine_RptEx(img, start_x, start_y, pts, pts_count, true, &dummy_found, dummy_pt);
+    SearchLine_RptEx(img, start_x, start_y, pts, pts_count,
+                     true, &dummy_found, dummy_pt, false);
 }
 
 
